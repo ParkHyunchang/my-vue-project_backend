@@ -146,6 +146,8 @@ COPY --from=build /app/target/todo-api-0.0.1-SNAPSHOT.jar app.jar
 EXPOSE 3200
 ENTRYPOINT ["java", "-jar", "app.jar"] 
 
+======================================================================
+
 위에는 ai 자동완성
 이제부터 내가 작성한것들
 
@@ -215,4 +217,22 @@ docker-compose build --no-cache
 docker-compose up -d
 # 상태확인
 docker ps
+```
+
+### NAS 업데이트 판 배포
+
+```bash
+# 1. 빌드 및 tar 파일 생성 쉘 실행 (단 도커데스크탑 실행하고 이거 실행해야 에러안남!)
+./build_backend.ps1
+
+
+# 2. NAS로 파일/이미지 전송
+
+# 로컬의 my-vue-project-backend 폴더 전체를 NAS의 /docker/my-vue-project-backend 에 업어쳐
+
+
+# 3. NAS 접속해서 실행
+cd /volume1/docker
+./vue_personal_project_backend_deploy.sh
+
 ```
