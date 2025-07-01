@@ -1,12 +1,12 @@
-package com.example.todoapi;
+package com.hyunchang.webapp;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-public class TodoApiApplication {
-    
+public class WebApplication {
+
     public static void main(String[] args) {
-        SpringApplication.run(TodoApiApplication.class, args);
+        SpringApplication.run(WebApplication.class, args);
     }
 } 
