@@ -37,6 +37,10 @@ public class TodoService {
 
     @Transactional
     public Todo create(Todo todo) {
+        if (todo.getDone() == null) {
+            todo.setDone(false);
+        }
+        
         Todo savedTodo = todoRepository.save(todo);
         
         History history = new History();
@@ -53,17 +57,19 @@ public class TodoService {
     public Todo update(Long id, Todo todo) {
         Todo existingTodo = findById(id);
         existingTodo.setTitle(todo.getTitle());
-        existingTodo.setDone(todo.getDone());
+        existingTodo.setDone(todo.getDone() != null ? todo.getDone() : false);
         existingTodo.setDescription(todo.getDescription());
+        
+        Todo updatedTodo = todoRepository.save(existingTodo);
         
         History history = new History();
         history.setAction("UPDATE");
-        history.setTodoId(existingTodo.getId());
-        history.setTodoTitle(existingTodo.getTitle());
+        history.setTodoId(updatedTodo.getId());
+        history.setTodoTitle(updatedTodo.getTitle());
         history.setCreatedAt(LocalDateTime.now());
         historyRepository.save(history);
         
-        return todoRepository.save(existingTodo);
+        return updatedTodo;
     }
 
     @Transactional
