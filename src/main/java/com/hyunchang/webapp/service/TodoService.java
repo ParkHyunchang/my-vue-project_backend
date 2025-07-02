@@ -1,9 +1,9 @@
 package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.domain.Todo;
-import com.hyunchang.webapp.domain.History;
+import com.hyunchang.webapp.domain.todo.TodoHistory;
 import com.hyunchang.webapp.repository.TodoRepository;
-import com.hyunchang.webapp.repository.HistoryRepository;
+import com.hyunchang.webapp.repository.todo.TodoHistoryRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
@@ -15,11 +15,11 @@ import java.util.List;
 @Service
 public class TodoService {
     private final TodoRepository todoRepository;
-    private final HistoryRepository historyRepository;
+    private final TodoHistoryRepository todoHistoryRepository;
 
-    public TodoService(TodoRepository todoRepository, HistoryRepository historyRepository) {
+    public TodoService(TodoRepository todoRepository, TodoHistoryRepository todoHistoryRepository) {
         this.todoRepository = todoRepository;
-        this.historyRepository = historyRepository;
+        this.todoHistoryRepository = todoHistoryRepository;
     }
 
     public List<Todo> findAll() {
@@ -43,12 +43,12 @@ public class TodoService {
         
         Todo savedTodo = todoRepository.save(todo);
         
-        History history = new History();
+        TodoHistory history = new TodoHistory();
         history.setAction("CREATE");
         history.setTodoId(savedTodo.getId());
         history.setTodoTitle(savedTodo.getTitle());
         history.setCreatedAt(LocalDateTime.now());
-        historyRepository.save(history);
+        todoHistoryRepository.save(history);
         
         return savedTodo;
     }
@@ -62,12 +62,12 @@ public class TodoService {
         
         Todo updatedTodo = todoRepository.save(existingTodo);
         
-        History history = new History();
+        TodoHistory history = new TodoHistory();
         history.setAction("UPDATE");
         history.setTodoId(updatedTodo.getId());
         history.setTodoTitle(updatedTodo.getTitle());
         history.setCreatedAt(LocalDateTime.now());
-        historyRepository.save(history);
+        todoHistoryRepository.save(history);
         
         return updatedTodo;
     }
@@ -76,12 +76,12 @@ public class TodoService {
     public void delete(Long id) {
         Todo todo = findById(id);
         
-        History history = new History();
+        TodoHistory history = new TodoHistory();
         history.setAction("DELETE");
         history.setTodoId(todo.getId());
         history.setTodoTitle(todo.getTitle());
         history.setCreatedAt(LocalDateTime.now());
-        historyRepository.save(history);
+        todoHistoryRepository.save(history);
         
         todoRepository.deleteById(id);
     }

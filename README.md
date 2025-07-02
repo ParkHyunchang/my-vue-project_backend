@@ -68,8 +68,18 @@ docker ps -a
 docker-compose down --rmi all --volumes --remove-orphans
 # build --no-cache: 새로 빌드된 JAR 파일을 반영하여 이미지를 새로 만듭니다.
 docker-compose build --no-cache
+
 # up -d: 컨테이너를 백그라운드로 실행합니다.
 docker-compose up -d
+
+# 아래  2개는 로컬 실행시 컨테이너 실행하고 있다는 에러 나면 실행
+# 컨테이너 중지
+# docker stop vue_personal_project-backend vue_personal_project-backend-db
+# 컨테이너 삭제
+# docker rm vue_personal_project-backend vue_personal_project-backend-db
+
+# 백엔드 서비스만 재빌드
+# docker-compose up -d --build backend
 
 # 도커 올라온거 확인 후
 # http://localhost:3200/my-vue-project/todos
