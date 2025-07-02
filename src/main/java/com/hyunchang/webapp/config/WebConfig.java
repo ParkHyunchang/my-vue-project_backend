@@ -9,11 +9,11 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/api/**")
+        registry.addMapping("/**")  // 모든 경로에 대해 CORS 허용
                 .allowedOrigins(
-                    "http://localhost:8080",     // 로컬 Vue 개발 서버
-                    "http://localhost:3100",     // 로컬 Docker Vue
-                    "http://125.141.20.218:3100" // NAS Vue
+                    "http://localhost:8080",      // 로컬 Vue 개발 서버
+                    "http://localhost:3100",      // 로컬 Docker Vue
+                    "http://125.141.20.218:3100"  // NAS Vue HTTP
                 )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")

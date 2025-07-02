@@ -126,3 +126,10 @@ cd /volume1/docker
 ./vue_personal_project_backend_deploy.sh
 
 ```
+
+도커 로그확인방법
+
+```bash
+docker logs vue_personal_project-backend
+docker logs -f vue_personal_project-backend
+```

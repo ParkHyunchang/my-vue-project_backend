@@ -4,6 +4,8 @@ import com.hyunchang.webapp.domain.Todo;
 import com.hyunchang.webapp.domain.History;
 import com.hyunchang.webapp.repository.TodoRepository;
 import com.hyunchang.webapp.repository.HistoryRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +24,10 @@ public class TodoService {
 
     public List<Todo> findAll() {
         return todoRepository.findAll();
+    }
+
+    public Page<Todo> findAll(Pageable pageable) {
+        return todoRepository.findAll(pageable);
     }
 
     public Todo findById(Long id) {
