@@ -1,4 +1,4 @@
-package com.hyunchang.webapp.domain;
+package com.hyunchang.webapp.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import jakarta.persistence.Entity;

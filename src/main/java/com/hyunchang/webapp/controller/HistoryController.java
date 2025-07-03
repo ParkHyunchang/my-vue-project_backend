@@ -1,6 +1,6 @@
 package com.hyunchang.webapp.controller;
 
-import com.hyunchang.webapp.domain.History;
+import com.hyunchang.webapp.entity.History;
 import com.hyunchang.webapp.service.HistoryService;
 import org.springframework.web.bind.annotation.*;
 

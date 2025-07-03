@@ -1,6 +1,6 @@
 package com.hyunchang.webapp.controller;
 
-import com.hyunchang.webapp.domain.Todo;
+import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.service.TodoService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
