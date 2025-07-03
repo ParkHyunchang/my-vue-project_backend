@@ -1,13 +1,13 @@
 package com.hyunchang.webapp.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
-import jakarta.persistence.Entity;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
+import jakarta.persistence.*;
 import java.time.LocalDate;
 
 @Entity
+@Table(indexes = {
+    @Index(name = "idx_history_date", columnList = "date")
+})
 public class History {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

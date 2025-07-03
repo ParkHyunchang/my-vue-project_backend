@@ -47,7 +47,7 @@ public class TodoService {
         history.setAction("CREATE");
         history.setTodoId(savedTodo.getId());
         history.setTodoTitle(savedTodo.getTitle());
-        history.setCreatedAt(LocalDateTime.now());
+        history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
         
         return savedTodo;
@@ -66,7 +66,7 @@ public class TodoService {
         history.setAction("UPDATE");
         history.setTodoId(updatedTodo.getId());
         history.setTodoTitle(updatedTodo.getTitle());
-        history.setCreatedAt(LocalDateTime.now());
+        history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
         
         return updatedTodo;
@@ -80,7 +80,7 @@ public class TodoService {
         history.setAction("DELETE");
         history.setTodoId(todo.getId());
         history.setTodoTitle(todo.getTitle());
-        history.setCreatedAt(LocalDateTime.now());
+        history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
         
         todoRepository.deleteById(id);

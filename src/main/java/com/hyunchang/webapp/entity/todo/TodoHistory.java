@@ -14,7 +14,7 @@ public class TodoHistory {
     private String action;
     private String todoTitle;
     private Long todoId;
-    private LocalDateTime createdAt;
+    private LocalDateTime createdDt;
 
     public TodoHistory() {
     }
@@ -51,11 +51,11 @@ public class TodoHistory {
         this.todoId = todoId;
     }
 
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
+    public LocalDateTime getCreatedDt() {
+        return createdDt;
     }
 
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
+    public void setCreatedDt(LocalDateTime createdDt) {
+        this.createdDt = createdDt;
     }
 } 
