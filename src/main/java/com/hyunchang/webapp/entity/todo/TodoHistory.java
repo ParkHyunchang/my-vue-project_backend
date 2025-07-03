@@ -1,4 +1,4 @@
-package com.hyunchang.webapp.domain.todo;
+package com.hyunchang.webapp.entity.todo;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;

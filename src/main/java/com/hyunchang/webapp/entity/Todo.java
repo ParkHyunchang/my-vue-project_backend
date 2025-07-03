@@ -1,4 +1,4 @@
-package com.hyunchang.webapp.domain;
+package com.hyunchang.webapp.entity;
 
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;

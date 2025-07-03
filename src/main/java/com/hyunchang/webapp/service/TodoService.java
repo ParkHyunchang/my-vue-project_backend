@@ -1,7 +1,7 @@
 package com.hyunchang.webapp.service;
 
-import com.hyunchang.webapp.domain.Todo;
-import com.hyunchang.webapp.domain.todo.TodoHistory;
+import com.hyunchang.webapp.entity.Todo;
+import com.hyunchang.webapp.entity.todo.TodoHistory;
 import com.hyunchang.webapp.repository.TodoRepository;
 import com.hyunchang.webapp.repository.todo.TodoHistoryRepository;
 import org.springframework.data.domain.Page;

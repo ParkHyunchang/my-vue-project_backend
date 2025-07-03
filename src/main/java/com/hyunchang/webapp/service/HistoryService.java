@@ -1,6 +1,6 @@
 package com.hyunchang.webapp.service;
 
-import com.hyunchang.webapp.domain.History;
+import com.hyunchang.webapp.entity.History;
 import com.hyunchang.webapp.repository.HistoryRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
