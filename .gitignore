@@ -14,3 +14,6 @@ Thumbs.db
 
 # 로그 파일
 *.log 
+
+# 배포용 tar 파일 무시
+backend_deployment_*.tar.gz 

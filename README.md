@@ -121,20 +121,18 @@ docker ps
 
 ### NAS 업데이트 판 배포
 
+#### JAR 파일만 압축
 ```bash
-# 1. 빌드 및 tar 파일 생성 쉘 실행 (단 도커데스크탑 실행하고 이거 실행해야 에러안남!)
-./build_backend.ps1
+# 1. 로컬에서 빌드 및 tar 파일 생성
+./build_and_package.ps1
+# 생성된 파일: backend_deployment_YYYYMMDD_HHMMSS.tar.gz
 
-
-# 2. NAS로 파일/이미지 전송
-
-# 로컬의 my-vue-project-backend 폴더 전체를 NAS의 /docker/my-vue-project-backend 에 업어쳐
-
+# 2. NAS로 tar 파일만 전송
+# FileZilla 등으로 backend_deployment_*.tar.gz 파일만 NAS의 /docker/my-vue-project-backend/ 에 업로드
 
 # 3. NAS 접속해서 실행
-cd /volume1/docker
+cd /volume1/docker/my-vue-project-backend
 ./vue_personal_project_backend_deploy.sh
-
 ```
 
 도커 로그확인방법
