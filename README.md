@@ -21,25 +21,125 @@ Spring Boot와 MySQL을 사용하여 구축되었습니다.
 - **IDE**: IntelliJ IDEA, Eclipse, VS Code
 - **Database**: MySQL 8.0
 - **Build Tool**: Maven
-- **Java Version**: 17
+- **Java Version**: 21
 
-## 빌드용 이미지
-FROM maven:3.9.6-eclipse-temurin-17 AS build
-WORKDIR /app
-COPY . .
-RUN mvn clean package -DskipTests
 
-# 실행용 이미지
-FROM eclipse-temurin:17-jre
-WORKDIR /app
-COPY --from=build /app/target/todo-api-0.0.1-SNAPSHOT.jar app.jar
-EXPOSE 3200
-ENTRYPOINT ["java", "-jar", "app.jar"] 
+### Spring Boot 프로파일 설정
 
-======================================================================
+프로젝트는 환경에 따라 자동으로 다른 설정을 사용합니다:
 
-위에는 ai 자동완성
-이제부터 내가 작성한것들
+- **local**: 로컬 개발용 (localhost:3306)
+- **docker**: Docker 컨테이너용 (db:3306)  
+- **prod**: NAS/배포용 (db:3306)
+
+### 개발시 실행 명령어
+
+1. **로컬 개발용 백엔드 서버 실행**
+   ```bash
+   # my-vue-project-backend 디렉토리에서
+   mvn spring-boot:run -Dspring.profiles.active=local
+   ```
+
+2. **Docker 환경용 백엔드 서버 실행**
+   ```bash
+   # my-vue-project-backend 디렉토리에서
+   mvn spring-boot:run -Dspring.profiles.active=docker
+   ```
+
+3. **배포용 백엔드 서버 실행**
+   ```bash
+   # my-vue-project-backend 디렉토리에서
+   mvn spring-boot:run -Dspring.profiles.active=prod
+   ```
+
+4. **기본 실행 (local 프로파일 자동 적용)**
+   ```bash
+   # my-vue-project-backend 디렉토리에서
+   mvn spring-boot:run
+   ```
+
+2. 프론트엔드(Vue) 개발 서버 실행
+
+```bash
+# my-vue-project 디렉토리에서
+npm run serve
+
+# 포트 확인 명령어
+netstat -ano | findstr :3100
+taskkill /PID 확인한pid숫자작성  /F
+```
+
+
+### 로컬 실행
+
+#### 방법 1: 개발 모드
+1. **사전 요구사항 확인**
+   - Java 17 이상 설치 확인: `java -version`
+   - Maven 설치 확인: `mvn -version`
+   - MySQL 8.0 설치 및 실행 확인
+
+2. **백엔드 서버 실행**
+   ```bash
+   # my-vue-project-backend 디렉토리에서
+   # Windows PowerShell/CMD에서
+   mvnw.cmd spring-boot:run
+   
+   # Maven이 설치되어 있다면
+    mvn spring-boot:run
+   # 또는
+   mvn spring-boot:run -Dspring.profiles.active=local
+   ```
+   - 백엔드 서버가 http://localhost:3200 에서 실행됩니다
+   - API 엔드포인트: http://localhost:3200/my-vue-project/todos
+
+3. **프론트엔드 서버 실행 (별도 터미널)**
+   ```bash
+   # my-vue-project 디렉토리에서
+   cd ../my-vue-project
+   npm run serve
+   ```
+   - 프론트엔드가 http://localhost:3100 에서 실행됩니다
+
+4. **브라우저에서 확인**
+   - http://localhost:3100 접속하여 전체 애플리케이션 확인
+   - http://localhost:3200/my-vue-project/todos 접속하여 API 직접 확인
+
+#### 방법 2: Docker 컨테이너 실행
+1. **Docker Desktop 실행**
+   - Docker Desktop이 실행 중인지 확인
+
+2. **백엔드 + DB 컨테이너 실행**
+   ```bash
+   cd my-vue-project-backend
+   docker-compose up -d --build
+   ```
+
+3. **컨테이너 상태 확인**
+   ```bash
+   docker ps -a
+   ```
+
+4. **로그 확인 (문제 발생시)**
+   ```bash
+   docker logs vue_personal_project-backend
+   ```
+
+5. **브라우저에서 확인**
+   - http://localhost:3200/my-vue-project/todos 접속하여 API 확인
+
+#### 컨테이너 완전 초기화 (문제 발생시)
+```bash
+# 컨테이너, 볼륨, 네트워크 모두 정리
+docker-compose down --rmi all --volumes --remove-orphans
+
+# 이미지 새로 빌드
+docker-compose build --no-cache
+
+# 컨테이너 재실행
+docker-compose up -d
+```
+
+
 
 ### 도커 컨테이너 만들기 위해서 실행
 
