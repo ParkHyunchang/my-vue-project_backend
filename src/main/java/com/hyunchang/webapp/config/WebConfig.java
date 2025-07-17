@@ -14,7 +14,9 @@ public class WebConfig implements WebMvcConfigurer {
                     "http://localhost:8080",      // 로컬 Vue 개발 서버
                     "http://localhost:3100",      // 로컬 Docker Vue
                     "http://localhost:3200",      // 현재 프론트엔드
-                    "http://125.141.20.218:3100"  // NAS Vue HTTP
+                    "http://125.141.20.218:3100",  // NAS Vue HTTP
+                    "http://125.141.20.218:3200",  // NAS 백엔드
+                    "http://125.141.20.218:3200/my-vue-project"
                 )
                 .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS")
                 .allowedHeaders("*")
