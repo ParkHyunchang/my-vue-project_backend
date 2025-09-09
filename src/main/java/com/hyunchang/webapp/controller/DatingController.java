@@ -57,17 +57,36 @@ public class DatingController {
 
     @PostMapping
     public Dating create(@RequestBody Dating dating) {
+        System.out.println("=== Create Dating Request ===");
+        System.out.println("Title: " + dating.getTitle());
+        System.out.println("Images: " + dating.getImages());
+        System.out.println("Image: " + dating.getImage());
         return datingService.create(dating);
     }
 
     @PutMapping("/{id}")
     public Dating update(@PathVariable Long id, @RequestBody Dating dating) {
+        System.out.println("=== Update Dating Request ===");
+        System.out.println("ID: " + id);
+        System.out.println("Title: " + dating.getTitle());
+        System.out.println("Images: " + dating.getImages());
+        System.out.println("Image: " + dating.getImage());
         return datingService.update(id, dating);
     }
 
     @DeleteMapping("/{id}")
     public void delete(@PathVariable Long id) {
         datingService.delete(id);
+    }
+
+    @DeleteMapping("/image")
+    public ResponseEntity<String> deleteImage(@RequestParam("imagePath") String imagePath) {
+        try {
+            datingService.deleteImageFile(imagePath);
+            return ResponseEntity.ok("이미지가 삭제되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body("이미지 삭제에 실패했습니다: " + e.getMessage());
+        }
     }
 
     @PostMapping("/upload")

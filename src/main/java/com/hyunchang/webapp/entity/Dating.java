@@ -20,7 +20,8 @@ public class Dating {
     private String partner;
     private String description;
     private String location;
-    private String image;
+    private String image; // 기존 단일 이미지 필드 (호환성 유지)
+    private String images; // 다중 이미지를 JSON 문자열로 저장
 
     public Dating() {
     }
@@ -87,5 +88,13 @@ public class Dating {
 
     public void setImage(String image) {
         this.image = image;
+    }
+
+    public String getImages() {
+        return images;
+    }
+
+    public void setImages(String images) {
+        this.images = images;
     }
 }

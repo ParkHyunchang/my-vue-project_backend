@@ -5,12 +5,29 @@ import com.hyunchang.webapp.repository.DatingRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.List;
 
 @Service
 public class DatingService {
     private final DatingRepository datingRepository;
+    private static final String UPLOAD_DIR = getUploadDirectory();
+    
+    private static String getUploadDirectory() {
+        // Docker 환경에서는 /app/uploads/images/ 사용, 로컬에서는 상대 경로 사용
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("linux") || os.contains("unix")) {
+            // Linux/Unix 환경 (Docker 컨테이너)
+            return "/app/uploads/images/";
+        } else {
+            // Windows 환경 (로컬 개발)
+            return System.getProperty("user.dir") + "/uploads/images/";
+        }
+    }
 
     public DatingService(DatingRepository datingRepository) {
         this.datingRepository = datingRepository;
@@ -57,21 +74,73 @@ public class DatingService {
         existingDating.setDescription(dating.getDescription());
         existingDating.setLocation(dating.getLocation());
         
-        // 이미지 업데이트 시 기존 이미지 파일은 보존
-        // 새로운 이미지가 제공된 경우에만 업데이트
+        // 이미지 업데이트 처리
         if (dating.getImage() != null && !dating.getImage().trim().isEmpty()) {
             existingDating.setImage(dating.getImage());
+        } else {
+            existingDating.setImage(null);
         }
-        // 이미지가 빈 문자열로 제공된 경우에도 기존 이미지는 유지
-        // (이미지 삭제를 원하는 경우 명시적으로 처리해야 함)
+        
+        // 다중 이미지 업데이트 처리
+        if (dating.getImages() != null && !dating.getImages().trim().isEmpty()) {
+            existingDating.setImages(dating.getImages());
+        } else {
+            existingDating.setImages(null);
+        }
         
         return datingRepository.save(existingDating);
     }
 
     @Transactional
     public void delete(Long id) {
-        // 데이터베이스에서만 레코드 삭제
-        // 이미지 파일은 서버에 보존됨 (실수로 삭제되는 것을 방지)
+        Dating existingDating = findById(id);
+        
+        // 이미지 파일들 삭제
+        deleteImageFiles(existingDating);
+        
+        // 데이터베이스에서 레코드 삭제
         datingRepository.deleteById(id);
+    }
+    
+    private void deleteImageFiles(Dating dating) {
+        try {
+            // 단일 이미지 파일 삭제
+            if (dating.getImage() != null && !dating.getImage().trim().isEmpty()) {
+                deleteImageFile(dating.getImage());
+            }
+            
+            // 다중 이미지 파일들 삭제
+            if (dating.getImages() != null && !dating.getImages().trim().isEmpty()) {
+                // JSON 문자열을 파싱하여 각 이미지 파일 삭제
+                String[] imagePaths = dating.getImages().replace("[", "").replace("]", "").replace("\"", "").split(",");
+                for (String imagePath : imagePaths) {
+                    if (imagePath != null && !imagePath.trim().isEmpty()) {
+                        deleteImageFile(imagePath.trim());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("이미지 파일 삭제 중 오류 발생: " + e.getMessage());
+            // 파일 삭제 실패해도 데이터베이스 삭제는 계속 진행
+        }
+    }
+    
+    public void deleteImageFile(String imagePath) {
+        try {
+            if (imagePath != null && !imagePath.trim().isEmpty()) {
+                // URL에서 파일명만 추출
+                String fileName = imagePath.substring(imagePath.lastIndexOf("/") + 1);
+                Path filePath = Paths.get(UPLOAD_DIR + fileName);
+                
+                if (Files.exists(filePath)) {
+                    Files.delete(filePath);
+                    System.out.println("이미지 파일 삭제됨: " + filePath.toString());
+                } else {
+                    System.out.println("삭제할 이미지 파일이 존재하지 않음: " + filePath.toString());
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("이미지 파일 삭제 실패: " + imagePath + " - " + e.getMessage());
+        }
     }
 }
