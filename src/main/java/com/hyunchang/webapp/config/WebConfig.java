@@ -28,9 +28,22 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         // 업로드된 이미지 파일을 정적 리소스로 서빙
-        String uploadPath = System.getProperty("user.dir") + "/uploads/images/";
+        String uploadPath = getUploadDirectory();
         registry.addResourceHandler("/uploads/images/**")
-                .addResourceLocations("file:" + uploadPath);
+                .addResourceLocations("file:" + uploadPath)
+                .setCachePeriod(3600); // 1시간 캐시
+    }
+    
+    private String getUploadDirectory() {
+        // Docker 환경에서는 /app/uploads/images/ 사용, 로컬에서는 상대 경로 사용
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("linux") || os.contains("unix")) {
+            // Linux/Unix 환경 (Docker 컨테이너)
+            return "/app/uploads/images/";
+        } else {
+            // Windows 환경 (로컬 개발)
+            return System.getProperty("user.dir") + "/uploads/images/";
+        }
     }
 
     @Bean

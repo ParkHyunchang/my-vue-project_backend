@@ -18,7 +18,22 @@ import java.util.UUID;
 @RequestMapping("/dating")
 public class DatingController {
     private final DatingService datingService;
-    private static final String UPLOAD_DIR = System.getProperty("user.dir") + "/uploads/images/";
+    private static final String UPLOAD_DIR = getUploadDirectory();
+    
+    private static String getUploadDirectory() {
+        // Docker 환경에서는 /app/uploads/images/ 사용, 로컬에서는 상대 경로 사용
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("linux") || os.contains("unix")) {
+            // Linux/Unix 환경 (Docker 컨테이너)
+            return "/app/uploads/images/";
+        } else {
+            // Windows 환경 (로컬 개발)
+            return System.getProperty("user.dir") + "/uploads/images/";
+        }
+    }
+    
+    // 주의: 이 컨트롤러는 이미지 파일을 삭제하지 않습니다.
+    // 업로드된 이미지 파일은 서버에 영구 보존됩니다.
 
     public DatingController(DatingService datingService) {
         this.datingService = datingService;

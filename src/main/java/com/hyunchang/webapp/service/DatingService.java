@@ -56,12 +56,22 @@ public class DatingService {
         existingDating.setPartner(dating.getPartner());
         existingDating.setDescription(dating.getDescription());
         existingDating.setLocation(dating.getLocation());
-        existingDating.setImage(dating.getImage());
+        
+        // 이미지 업데이트 시 기존 이미지 파일은 보존
+        // 새로운 이미지가 제공된 경우에만 업데이트
+        if (dating.getImage() != null && !dating.getImage().trim().isEmpty()) {
+            existingDating.setImage(dating.getImage());
+        }
+        // 이미지가 빈 문자열로 제공된 경우에도 기존 이미지는 유지
+        // (이미지 삭제를 원하는 경우 명시적으로 처리해야 함)
+        
         return datingRepository.save(existingDating);
     }
 
     @Transactional
     public void delete(Long id) {
+        // 데이터베이스에서만 레코드 삭제
+        // 이미지 파일은 서버에 보존됨 (실수로 삭제되는 것을 방지)
         datingRepository.deleteById(id);
     }
 }
