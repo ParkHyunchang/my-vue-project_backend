@@ -1,6 +1,6 @@
 package com.hyunchang.webapp.config;
 
-처ㄴ해주주import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
