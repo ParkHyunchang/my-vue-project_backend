@@ -6,6 +6,7 @@ import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
+import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 import java.util.Arrays;
@@ -22,6 +23,14 @@ public class WebConfig implements WebMvcConfigurer {
                 .exposedHeaders("X-Total-Count")  // X-Total-Count 헤더 노출
                 .allowCredentials(true)
                 .maxAge(3600);
+    }
+
+    @Override
+    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+        // 업로드된 이미지 파일을 정적 리소스로 서빙
+        String uploadPath = System.getProperty("user.dir") + "/uploads/images/";
+        registry.addResourceHandler("/uploads/images/**")
+                .addResourceLocations("file:" + uploadPath);
     }
 
     @Bean
