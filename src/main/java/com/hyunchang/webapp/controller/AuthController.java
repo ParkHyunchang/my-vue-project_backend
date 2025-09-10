@@ -59,6 +59,14 @@ public class AuthController {
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
         try {
+            // 먼저 사용자 존재 여부 확인
+            if (!userService.existsByUsername(request.getUsername())) {
+                AuthResponse response = AuthResponse.builder()
+                    .message("로그인 실패: 존재하지 않는 아이디입니다.")
+                    .build();
+                return ResponseEntity.badRequest().body(response);
+            }
+            
             Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
             );
@@ -77,6 +85,12 @@ public class AuthController {
                 .build();
             
             return ResponseEntity.ok(response);
+        } catch (org.springframework.security.authentication.BadCredentialsException e) {
+            // 사용자는 존재하지만 비밀번호가 틀린 경우
+            AuthResponse response = AuthResponse.builder()
+                .message("로그인 실패: 비밀번호가 올바르지 않습니다.")
+                .build();
+            return ResponseEntity.badRequest().body(response);
         } catch (Exception e) {
             AuthResponse response = AuthResponse.builder()
                 .message("로그인 실패: " + e.getMessage())
