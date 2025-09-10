@@ -18,14 +18,14 @@ public class DatingService {
     private static final String UPLOAD_DIR = getUploadDirectory();
     
     private static String getUploadDirectory() {
-        // Docker 환경에서는 /app/uploads/images/ 사용, 로컬에서는 상대 경로 사용
+        // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
         String os = System.getProperty("os.name").toLowerCase();
         if (os.contains("linux") || os.contains("unix")) {
-            // Linux/Unix 환경 (Docker 컨테이너)
-            return "/app/uploads/images/";
+            // Linux/Unix 환경 (Docker 컨테이너) - 실제 NAS 경로
+            return "/volume1/docker/my-vue-project_backend/uploads/images/dating/";
         } else {
             // Windows 환경 (로컬 개발)
-            return System.getProperty("user.dir") + "/uploads/images/";
+            return System.getProperty("user.dir") + "/uploads/images/dating/";
         }
     }
 
@@ -134,9 +134,6 @@ public class DatingService {
                 
                 if (Files.exists(filePath)) {
                     Files.delete(filePath);
-                    System.out.println("이미지 파일 삭제됨: " + filePath.toString());
-                } else {
-                    System.out.println("삭제할 이미지 파일이 존재하지 않음: " + filePath.toString());
                 }
             }
         } catch (IOException e) {

@@ -5,12 +5,29 @@ import com.hyunchang.webapp.repository.HistoryRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.List;
 
 @Service
 public class HistoryService {
     private final HistoryRepository historyRepository;
+    private static final String UPLOAD_DIR = getUploadDirectory();
+    
+    private static String getUploadDirectory() {
+        // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
+        String os = System.getProperty("os.name").toLowerCase();
+        if (os.contains("linux") || os.contains("unix")) {
+            // Linux/Unix 환경 (Docker 컨테이너) - 실제 NAS 경로
+            return "/volume1/docker/my-vue-project_backend/uploads/images/history/";
+        } else {
+            // Windows 환경 (로컬 개발)
+            return System.getProperty("user.dir") + "/uploads/images/history/";
+        }
+    }
 
     public HistoryService(HistoryRepository historyRepository) {
         this.historyRepository = historyRepository;
@@ -61,6 +78,28 @@ public class HistoryService {
 
     @Transactional
     public void delete(Long id) {
+        History existingHistory = findById(id);
+        
+        // 이미지 파일 삭제
+        deleteImageFile(existingHistory.getImage());
+        
+        // 데이터베이스에서 레코드 삭제
         historyRepository.deleteById(id);
+    }
+    
+    public void deleteImageFile(String imagePath) {
+        try {
+            if (imagePath != null && !imagePath.trim().isEmpty()) {
+                // URL에서 파일명만 추출
+                String fileName = imagePath.substring(imagePath.lastIndexOf("/") + 1);
+                Path filePath = Paths.get(UPLOAD_DIR + fileName);
+                
+                if (Files.exists(filePath)) {
+                    Files.delete(filePath);
+                }
+            }
+        } catch (IOException e) {
+            System.err.println("히스토리 이미지 파일 삭제 실패: " + imagePath + " - " + e.getMessage());
+        }
     }
 } 

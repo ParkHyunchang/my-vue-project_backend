@@ -21,19 +21,17 @@ public class DatingController {
     private static final String UPLOAD_DIR = getUploadDirectory();
     
     private static String getUploadDirectory() {
-        // Docker 환경에서는 /app/uploads/images/ 사용, 로컬에서는 상대 경로 사용
+        // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
         String os = System.getProperty("os.name").toLowerCase();
         if (os.contains("linux") || os.contains("unix")) {
-            // Linux/Unix 환경 (Docker 컨테이너)
-            return "/app/uploads/images/";
+            // Linux/Unix 환경 (Docker 컨테이너) - 실제 NAS 경로
+            return "/volume1/docker/my-vue-project_backend/uploads/images/dating/";
         } else {
             // Windows 환경 (로컬 개발)
-            return System.getProperty("user.dir") + "/uploads/images/";
+            return System.getProperty("user.dir") + "/uploads/images/dating/";
         }
     }
     
-    // 주의: 이 컨트롤러는 이미지 파일을 삭제하지 않습니다.
-    // 업로드된 이미지 파일은 서버에 영구 보존됩니다.
 
     public DatingController(DatingService datingService) {
         this.datingService = datingService;
@@ -57,20 +55,11 @@ public class DatingController {
 
     @PostMapping
     public Dating create(@RequestBody Dating dating) {
-        System.out.println("=== Create Dating Request ===");
-        System.out.println("Title: " + dating.getTitle());
-        System.out.println("Images: " + dating.getImages());
-        System.out.println("Image: " + dating.getImage());
         return datingService.create(dating);
     }
 
     @PutMapping("/{id}")
     public Dating update(@PathVariable Long id, @RequestBody Dating dating) {
-        System.out.println("=== Update Dating Request ===");
-        System.out.println("ID: " + id);
-        System.out.println("Title: " + dating.getTitle());
-        System.out.println("Images: " + dating.getImages());
-        System.out.println("Image: " + dating.getImage());
         return datingService.update(id, dating);
     }
 
@@ -92,15 +81,8 @@ public class DatingController {
     @PostMapping("/upload")
     public ResponseEntity<String> uploadImage(@RequestParam("file") MultipartFile file) {
         try {
-            System.out.println("=== Image Upload Request ===");
-            System.out.println("File name: " + file.getOriginalFilename());
-            System.out.println("File size: " + file.getSize());
-            System.out.println("Content type: " + file.getContentType());
-            System.out.println("Upload directory: " + UPLOAD_DIR);
-            
             // 파일이 비어있는지 확인
             if (file.isEmpty()) {
-                System.out.println("Error: File is empty");
                 return ResponseEntity.badRequest().body("파일이 선택되지 않았습니다.");
             }
 
@@ -116,23 +98,17 @@ public class DatingController {
             
             // 파일 저장
             Path targetPath = Paths.get(UPLOAD_DIR + uniqueFilename);
-            System.out.println("Target path: " + targetPath.toString());
-            
             Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-            System.out.println("File saved successfully to: " + targetPath.toString());
 
             // 저장된 파일의 URL 반환
-            String fileUrl = "/uploads/images/" + uniqueFilename;
-            System.out.println("Returning file URL: " + fileUrl);
+            String fileUrl = "/uploads/images/dating/" + uniqueFilename;
             return ResponseEntity.ok(fileUrl);
 
         } catch (IOException e) {
-            System.out.println("IOException during file upload: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("파일 업로드 중 IOException 발생: " + e.getMessage());
             return ResponseEntity.internalServerError().body("파일 업로드 중 오류가 발생했습니다: " + e.getMessage());
         } catch (Exception e) {
-            System.out.println("Unexpected error during file upload: " + e.getMessage());
-            e.printStackTrace();
+            System.err.println("파일 업로드 중 예상치 못한 오류 발생: " + e.getMessage());
             return ResponseEntity.internalServerError().body("예상치 못한 오류가 발생했습니다: " + e.getMessage());
         }
     }
