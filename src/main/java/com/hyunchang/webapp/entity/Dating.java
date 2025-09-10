@@ -22,6 +22,10 @@ public class Dating {
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
     private String images; // 다중 이미지를 JSON 문자열로 저장
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
 
     public Dating() {
     }
@@ -96,5 +100,13 @@ public class Dating {
 
     public void setImages(String images) {
         this.images = images;
+    }
+    
+    public User getUser() {
+        return user;
+    }
+    
+    public void setUser(User user) {
+        this.user = user;
     }
 }

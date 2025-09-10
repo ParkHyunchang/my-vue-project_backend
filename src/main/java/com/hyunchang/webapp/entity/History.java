@@ -20,6 +20,10 @@ public class History {
     private String description;
     private String location;
     private String image;
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
 
     public History() {
     }
@@ -78,5 +82,13 @@ public class History {
 
     public void setImage(String image) {
         this.image = image;
+    }
+    
+    public User getUser() {
+        return user;
+    }
+    
+    public void setUser(User user) {
+        this.user = user;
     }
 } 

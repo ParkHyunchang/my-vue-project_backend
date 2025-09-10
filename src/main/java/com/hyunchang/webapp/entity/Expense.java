@@ -16,6 +16,10 @@ public class Expense {
     private String category;
     private LocalDateTime createdAt;
     private String type; // "INCOME" or "EXPENSE"
+    
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id")
+    private User user;
 
     public Expense() {
         this.createdAt = LocalDateTime.now();
@@ -85,5 +89,13 @@ public class Expense {
 
     public void setType(String type) {
         this.type = type;
+    }
+    
+    public User getUser() {
+        return user;
+    }
+    
+    public void setUser(User user) {
+        this.user = user;
     }
 } 

@@ -8,6 +8,24 @@ Spring Boot와 MySQL을 사용하여 구축되었습니다.
 - **Database**: MySQL 8.0
 - **ORM**: Spring Data JPA
 - **Language**: Java 17
+- **Security**: Spring Security + JWT
+- **Authentication**: JWT Token 기반 인증
+
+## 권한별 접근 가능한 기능
+
+### 🔵 일반 사용자 (USER)
+- ✅ **HOME** - 메인 페이지
+- ✅ **TODOS** - 할일 관리
+- ✅ **TODOS 생성/수정** - 할일 CRUD 기능
+
+### 🟡 프리미엄 사용자 (PREMIUM)
+- ✅ **일반 사용자 모든 기능**
+- ✅ **HISTORY** - 히스토리 페이지
+- ✅ **DATING** - 데이팅 페이지
+
+### 🔴 관리자 (ADMIN)
+- ✅ **프리미엄 사용자 모든 기능**
+- ✅ **가계부** - 가계부 관리
 
 
 ### 개발시 실행 명령어

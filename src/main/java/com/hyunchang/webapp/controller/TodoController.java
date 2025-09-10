@@ -8,7 +8,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import jakarta.annotation.PostConstruct;
 import java.util.List;
 
 @RestController
@@ -20,14 +19,6 @@ public class TodoController {
         this.todoService = todoService;
     }
 
-    @PostConstruct
-    public void init() {
-        // 테스트용 초기 데이터 추가
-        if (todoService.findAll().isEmpty()) {
-            todoService.create(new Todo(null, "테스트 할일 1", "설명 1", false));
-            todoService.create(new Todo(null, "테스트 할일 2", "설명 2", false));
-        }
-    }
 
     @GetMapping
     public ResponseEntity<List<Todo>> findAll(
