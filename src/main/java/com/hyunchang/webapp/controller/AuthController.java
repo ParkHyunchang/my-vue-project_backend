@@ -14,6 +14,8 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
@@ -102,5 +104,33 @@ public class AuthController {
         return ResponseEntity.badRequest().body(
             AuthResponse.builder().message("인증되지 않은 사용자입니다.").build()
         );
+    }
+    
+    @GetMapping("/check-username/{username}")
+    public ResponseEntity<?> checkUsername(@PathVariable String username) {
+        try {
+            boolean exists = userService.existsByUsername(username);
+            if (exists) {
+                return ResponseEntity.ok(Map.of("available", false, "message", "이미 사용 중인 아이디입니다."));
+            } else {
+                return ResponseEntity.ok(Map.of("available", true, "message", "사용 가능한 아이디입니다."));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("available", false, "message", "아이디 확인 중 오류가 발생했습니다."));
+        }
+    }
+    
+    @GetMapping("/check-email/{email}")
+    public ResponseEntity<?> checkEmail(@PathVariable String email) {
+        try {
+            boolean exists = userService.existsByEmail(email);
+            if (exists) {
+                return ResponseEntity.ok(Map.of("available", false, "message", "이미 사용 중인 이메일입니다."));
+            } else {
+                return ResponseEntity.ok(Map.of("available", true, "message", "사용 가능한 이메일입니다."));
+            }
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body(Map.of("available", false, "message", "이메일 확인 중 오류가 발생했습니다."));
+        }
     }
 }
