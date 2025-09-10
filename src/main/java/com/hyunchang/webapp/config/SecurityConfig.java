@@ -48,6 +48,7 @@ public class SecurityConfig {
             .authorizeHttpRequests(authz -> authz
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/public/**").permitAll()
+                .requestMatchers("/uploads/images/**").permitAll()  // 이미지 파일 접근 허용
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/premium/**").hasAnyRole("ADMIN", "PREMIUM")
                 .anyRequest().authenticated()

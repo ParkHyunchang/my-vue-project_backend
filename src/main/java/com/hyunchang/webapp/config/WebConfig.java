@@ -13,7 +13,6 @@ import java.util.Arrays;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
         String uploadPath = getUploadDirectory();
