@@ -73,6 +73,7 @@ public class HistoryService {
         existingHistory.setDescription(history.getDescription());
         existingHistory.setLocation(history.getLocation());
         existingHistory.setImage(history.getImage());
+        existingHistory.setImages(history.getImages());
         return historyRepository.save(existingHistory);
     }
 
