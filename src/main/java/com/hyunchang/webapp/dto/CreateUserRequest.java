@@ -5,8 +5,10 @@ import lombok.Data;
 
 @Data
 public class CreateUserRequest {
-    private String username;
+    private String userId;
+    private String name;
     private String email;
+    private String phone;
     private String password;
     private Role role;
 }

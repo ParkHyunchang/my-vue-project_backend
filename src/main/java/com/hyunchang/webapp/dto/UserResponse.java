@@ -15,8 +15,10 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class UserResponse {
     private Long id;
-    private String username;
+    private String userId;
+    private String name;
     private String email;
+    private String phone;
     private Role role;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -24,8 +26,10 @@ public class UserResponse {
     public static UserResponse from(User user) {
         return UserResponse.builder()
                 .id(user.getId())
-                .username(user.getUsername())
+                .userId(user.getUserId())
+                .name(user.getName())
                 .email(user.getEmail())
+                .phone(user.getPhone())
                 .role(user.getRole())
                 .createdAt(user.getCreatedAt())
                 .updatedAt(user.getUpdatedAt())

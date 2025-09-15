@@ -30,8 +30,10 @@ public class AuthController {
     public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
         try {
             User user = userService.registerUser(
-                request.getUsername(),
+                request.getUserId(),
+                request.getName(),
                 request.getEmail(),
+                request.getPhone(),
                 request.getPassword(),
                 request.getRole()
             );
@@ -41,7 +43,7 @@ public class AuthController {
             
             AuthResponse response = AuthResponse.builder()
                 .token(token)
-                .username(user.getUsername())
+                .username(user.getUserId())
                 .email(user.getEmail())
                 .role(user.getRole())
                 .message("회원가입이 완료되었습니다.")
@@ -60,7 +62,7 @@ public class AuthController {
     public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
         try {
             // 먼저 사용자 존재 여부 확인
-            if (!userService.existsByUsername(request.getUsername())) {
+            if (!userService.existsByUserId(request.getUsername())) {
                 AuthResponse response = AuthResponse.builder()
                     .message("로그인 실패: 존재하지 않는 아이디입니다.")
                     .build();
@@ -74,11 +76,11 @@ public class AuthController {
             UserDetails userDetails = (UserDetails) authentication.getPrincipal();
             String token = jwtUtil.generateToken(userDetails);
             
-            User user = userService.findByUsername(userDetails.getUsername()).orElseThrow();
+            User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
             
             AuthResponse response = AuthResponse.builder()
                 .token(token)
-                .username(user.getUsername())
+                .username(user.getUserId())
                 .email(user.getEmail())
                 .role(user.getRole())
                 .message("로그인이 완료되었습니다.")
@@ -103,10 +105,10 @@ public class AuthController {
     public ResponseEntity<AuthResponse> getCurrentUser(Authentication authentication) {
         if (authentication != null && authentication.isAuthenticated()) {
             UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-            User user = userService.findByUsername(userDetails.getUsername()).orElseThrow();
+            User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
             
             AuthResponse response = AuthResponse.builder()
-                .username(user.getUsername())
+                .username(user.getUserId())
                 .email(user.getEmail())
                 .role(user.getRole())
                 .message("현재 사용자 정보")
@@ -123,7 +125,7 @@ public class AuthController {
     @GetMapping("/check-username/{username}")
     public ResponseEntity<?> checkUsername(@PathVariable String username) {
         try {
-            boolean exists = userService.existsByUsername(username);
+            boolean exists = userService.existsByUserId(username);
             if (exists) {
                 return ResponseEntity.ok(Map.of("available", false, "message", "이미 사용 중인 아이디입니다."));
             } else {

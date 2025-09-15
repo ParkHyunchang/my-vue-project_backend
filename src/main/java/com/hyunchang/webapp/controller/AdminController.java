@@ -136,14 +136,16 @@ public class AdminController {
         }
         
         try {
-            if (request.getUsername() == null || request.getEmail() == null || 
+            if (request.getUserId() == null || request.getName() == null || request.getEmail() == null || 
                 request.getPassword() == null || request.getRole() == null) {
                 return ResponseEntity.badRequest().body("모든 필드를 입력해주세요.");
             }
             
             User user = userService.registerUser(
-                request.getUsername(), 
+                request.getUserId(),
+                request.getName(),
                 request.getEmail(), 
+                request.getPhone(),
                 request.getPassword(), 
                 request.getRole()
             );

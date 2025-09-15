@@ -27,13 +27,13 @@ public class UserService implements UserDetailsService {
     
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        return userRepository.findByUsername(username)
+        return userRepository.findByUserId(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
     
-    public User registerUser(String username, String email, String password, Role role) {
-        if (userRepository.existsByUsername(username)) {
-            throw new RuntimeException("Username already exists");
+    public User registerUser(String userId, String name, String email, String phone, String password, Role role) {
+        if (userRepository.existsByUserId(userId)) {
+            throw new RuntimeException("User ID already exists");
         }
         
         if (userRepository.existsByEmail(email)) {
@@ -41,13 +41,15 @@ public class UserService implements UserDetailsService {
         }
         
         // 관리자 권한 제한: 특정 사용자만 관리자로 설정 가능
-        if (role == Role.ADMIN && !isAllowedAdmin(username)) {
+        if (role == Role.ADMIN && !isAllowedAdmin(userId)) {
             throw new RuntimeException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
         }
         
         User user = User.builder()
-                .username(username)
+                .userId(userId)
+                .name(name)
                 .email(email)
+                .phone(phone)
                 .password(passwordEncoder.encode(password))
                 .role(role)
                 .build();
@@ -67,16 +69,16 @@ public class UserService implements UserDetailsService {
                 .anyMatch(allowedUser -> allowedUser.equals(username));
     }
     
-    public Optional<User> findByUsername(String username) {
-        return userRepository.findByUsername(username);
+    public Optional<User> findByUserId(String userId) {
+        return userRepository.findByUserId(userId);
     }
     
     public Optional<User> findByEmail(String email) {
         return userRepository.findByEmail(email);
     }
     
-    public boolean existsByUsername(String username) {
-        return userRepository.existsByUsername(username);
+    public boolean existsByUserId(String userId) {
+        return userRepository.existsByUserId(userId);
     }
     
     public boolean existsByEmail(String email) {
@@ -97,7 +99,7 @@ public class UserService implements UserDetailsService {
                 .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
         
         // 관리자 권한 제한: 특정 사용자만 관리자로 설정 가능
-        if (newRole == Role.ADMIN && !isAllowedAdmin(user.getUsername())) {
+        if (newRole == Role.ADMIN && !isAllowedAdmin(user.getUserId())) {
             throw new RuntimeException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
         }
         
@@ -112,9 +114,9 @@ public class UserService implements UserDetailsService {
         userRepository.deleteById(userId);
     }
     
-    public boolean isAdmin(String username) {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new RuntimeException("User not found: " + username));
+    public boolean isAdmin(String userId) {
+        User user = userRepository.findByUserId(userId)
+                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
         return user.getRole() == Role.ADMIN;
     }
     
