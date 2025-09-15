@@ -49,4 +49,4 @@ docker ps | grep vue_personal_project-backend
 echo ""
 echo "🌐 API 주소 예시: http://your-nas-ip:3200/my-vue-project/todos"
 echo ""
-echo "📋 로그 확인: docker logs vue_personal_project-backend" 
+echo "📋 로그 확인: docker logs -f vue_personal_project-backend" 
