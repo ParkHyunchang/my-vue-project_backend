@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.UserRepository;
@@ -33,11 +34,15 @@ public class UserService implements UserDetailsService {
     
     public User registerUser(String userId, String name, String email, String phone, String password, Role role) {
         if (userRepository.existsByUserId(userId)) {
-            throw new RuntimeException("User ID already exists");
+            throw new RuntimeException("이미 사용 중인 사용자ID입니다.");
         }
         
         if (userRepository.existsByEmail(email)) {
-            throw new RuntimeException("Email already exists");
+            throw new RuntimeException("가입된 메일주소가 있습니다.");
+        }
+        
+        if (phone != null && !phone.trim().isEmpty() && userRepository.existsByPhone(phone.trim())) {
+            throw new RuntimeException("가입된 전화번호가 있습니다.");
         }
         
         // 관리자 권한 제한: 특정 사용자만 관리자로 설정 가능
@@ -104,6 +109,44 @@ public class UserService implements UserDetailsService {
         }
         
         user.setRole(newRole);
+        return userRepository.save(user);
+    }
+    
+    public User updateUser(Long userId, UpdateUserRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
+        
+        // 이름 업데이트 (중복 허용)
+        if (request.getName() != null && !request.getName().trim().isEmpty()) {
+            user.setName(request.getName().trim());
+        }
+        
+        // 이메일 업데이트 (중복 체크)
+        if (request.getEmail() != null && !request.getEmail().trim().isEmpty()) {
+            String newEmail = request.getEmail().trim();
+            if (!newEmail.equals(user.getEmail()) && userRepository.existsByEmail(newEmail)) {
+                throw new RuntimeException("가입된 메일주소가 있습니다.");
+            }
+            user.setEmail(newEmail);
+        }
+        
+        // 전화번호 업데이트 (중복 체크)
+        if (request.getPhone() != null) {
+            String newPhone = request.getPhone().trim().isEmpty() ? null : request.getPhone().trim();
+            if (newPhone != null && !newPhone.equals(user.getPhone()) && userRepository.existsByPhone(newPhone)) {
+                throw new RuntimeException("가입된 전화번호가 있습니다.");
+            }
+            user.setPhone(newPhone);
+        }
+        
+        // 권한 업데이트 (관리자 권한 제한)
+        if (request.getRole() != null) {
+            if (request.getRole() == Role.ADMIN && !isAllowedAdmin(user.getUserId())) {
+                throw new RuntimeException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
+            }
+            user.setRole(request.getRole());
+        }
+        
         return userRepository.save(user);
     }
     

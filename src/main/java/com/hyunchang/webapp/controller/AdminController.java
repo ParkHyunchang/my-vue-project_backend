@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.dto.CreateUserRequest;
+import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.dto.UpdateUserRoleRequest;
 import com.hyunchang.webapp.dto.UserResponse;
 import com.hyunchang.webapp.entity.Role;
@@ -84,6 +85,25 @@ public class AdminController {
             return ResponseEntity.ok(UserResponse.from(updatedUser));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 수정 실패: " + e.getMessage());
+        }
+    }
+    
+    // 사용자 정보 전체 수정
+    @PutMapping("/users/{id}")
+    public ResponseEntity<?> updateUser(
+            @PathVariable Long id,
+            @RequestBody UpdateUserRequest request,
+            Authentication authentication) {
+        
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            User updatedUser = userService.updateUser(id, request);
+            return ResponseEntity.ok(UserResponse.from(updatedUser));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("사용자 정보 수정 실패: " + e.getMessage());
         }
     }
     

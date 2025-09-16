@@ -2,6 +2,13 @@
 
 set -e
 
+# Windows 줄바꿈(CRLF)을 Unix 줄바꿈(LF)으로 자동 변환
+if command -v dos2unix >/dev/null 2>&1; then
+    dos2unix "$0" 2>/dev/null || true
+elif command -v sed >/dev/null 2>&1; then
+    sed -i 's/\r$//' "$0" 2>/dev/null || true
+fi
+
 echo "🚀 백엔드 배포를 시작합니다..."
 
 # 1단계: tar 파일 확인
@@ -49,4 +56,4 @@ docker ps | grep vue_personal_project-backend
 echo ""
 echo "🌐 API 주소 예시: http://your-nas-ip:3200/my-vue-project/todos"
 echo ""
-echo "📋 로그 확인: docker logs -f vue_personal_project-backend" 
+echo "📋 로그 확인: docker logs -f vue_personal_project-backend"
