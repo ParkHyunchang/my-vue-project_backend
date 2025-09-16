@@ -91,9 +91,10 @@ public class HistoryController {
                 return ResponseEntity.badRequest().body("이미지 파일만 업로드 가능합니다.");
             }
 
-            // 고유한 파일명 생성
+            // 고유한 파일명 생성 (원본 파일명 + 타임스탬프)
             String fileExtension = getFileExtension(originalFilename);
-            String uniqueFilename = UUID.randomUUID().toString() + fileExtension;
+            String baseName = originalFilename.substring(0, originalFilename.lastIndexOf('.'));
+            String uniqueFilename = baseName + "_" + System.currentTimeMillis() + fileExtension;
             
             // 파일 저장
             Path targetPath = Paths.get(UPLOAD_DIR + uniqueFilename);

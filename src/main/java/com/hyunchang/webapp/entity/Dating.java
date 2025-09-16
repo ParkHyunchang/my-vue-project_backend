@@ -21,6 +21,7 @@ public class Dating {
     private String description;
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
+    @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지를 JSON 문자열로 저장
     
     @ManyToOne(fetch = FetchType.LAZY)

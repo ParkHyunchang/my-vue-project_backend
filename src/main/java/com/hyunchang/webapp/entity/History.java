@@ -20,6 +20,7 @@ public class History {
     private String description;
     private String location;
     private String image;
+    @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지 지원을 위한 JSON 문자열 필드
     
     @ManyToOne(fetch = FetchType.LAZY)
