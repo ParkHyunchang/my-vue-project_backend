@@ -1,11 +1,13 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.dto.CreateUserRequest;
+import com.hyunchang.webapp.dto.MenuPermissionRequest;
 import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.dto.UpdateUserRoleRequest;
 import com.hyunchang.webapp.dto.UserResponse;
 import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -23,6 +25,7 @@ import java.util.stream.Collectors;
 public class AdminController {
     
     private final UserService userService;
+    private final MenuPermissionService menuPermissionService;
     
     // 관리자 권한 확인
     private boolean isAdmin(Authentication authentication) {
@@ -173,6 +176,65 @@ public class AdminController {
             return ResponseEntity.ok(UserResponse.from(user));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("사용자 생성 실패: " + e.getMessage());
+        }
+    }
+    
+    // 메뉴 권한 조회
+    @GetMapping("/menu-permissions")
+    public ResponseEntity<?> getMenuPermissions(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            return ResponseEntity.ok(menuPermissionService.getAllMenuPermissions());
+        } catch (Exception e) {
+            System.out.println("메뉴 권한 조회 실패: " + e.getMessage());
+            return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
+        }
+    }
+    
+    // 메뉴 권한 저장
+    @PostMapping("/menu-permissions")
+    public ResponseEntity<?> saveMenuPermissions(
+            @RequestBody MenuPermissionRequest request,
+            Authentication authentication) {
+        
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            if (request.getPermissions() == null) {
+                return ResponseEntity.badRequest().body("권한 정보가 필요합니다.");
+            }
+            
+            menuPermissionService.saveMenuPermissions(request.getPermissions());
+            return ResponseEntity.ok("메뉴 권한이 성공적으로 저장되었습니다.");
+        } catch (Exception e) {
+            System.out.println("메뉴 권한 저장 실패: " + e.getMessage());
+            return ResponseEntity.badRequest().body("메뉴 권한 저장에 실패했습니다.");
+        }
+    }
+    
+    // 특정 권한의 메뉴 권한 조회 (관리자 전용)
+    @GetMapping("/menu-permissions/{role}")
+    public ResponseEntity<?> getMenuPermissionsByRole(
+            @PathVariable String role,
+            Authentication authentication) {
+        
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            Role roleEnum = Role.valueOf(role.toUpperCase());
+            return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRole(roleEnum));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("잘못된 권한입니다: " + role);
+        } catch (Exception e) {
+            System.out.println("메뉴 권한 조회 실패: " + e.getMessage());
+            return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }
     }
 }

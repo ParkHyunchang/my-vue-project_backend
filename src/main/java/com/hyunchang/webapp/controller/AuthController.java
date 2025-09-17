@@ -5,6 +5,7 @@ import com.hyunchang.webapp.dto.AuthResponse;
 import com.hyunchang.webapp.dto.LoginRequest;
 import com.hyunchang.webapp.dto.RegisterRequest;
 import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +16,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -24,6 +26,7 @@ public class AuthController {
     
     private final AuthenticationManager authenticationManager;
     private final UserService userService;
+    private final MenuPermissionService menuPermissionService;
     private final JwtUtil jwtUtil;
     
     @PostMapping("/register")
@@ -147,6 +150,29 @@ public class AuthController {
             }
         } catch (Exception e) {
             return ResponseEntity.badRequest().body(Map.of("available", false, "message", "이메일 확인 중 오류가 발생했습니다."));
+        }
+    }
+    
+    // 현재 사용자의 메뉴 권한 조회 (인증된 사용자 누구나 가능)
+    @GetMapping("/my-menu-permissions")
+    public ResponseEntity<?> getMyMenuPermissions(Authentication authentication) {
+        try {
+            if (authentication == null || !authentication.isAuthenticated()) {
+                return ResponseEntity.status(401).body("인증이 필요합니다.");
+            }
+            
+            String username = authentication.getName();
+            Optional<User> userOptional = userService.findByUserId(username);
+            
+            if (userOptional.isEmpty()) {
+                return ResponseEntity.status(404).body("사용자를 찾을 수 없습니다.");
+            }
+            
+            User user = userOptional.get();
+            return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRole(user.getRole()));
+        } catch (Exception e) {
+            System.out.println("사용자 메뉴 권한 조회 실패: " + e.getMessage());
+            return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }
     }
 }
