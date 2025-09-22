@@ -137,10 +137,9 @@ docker ps
 # 생성된 파일: backend_deployment_YYYYMMDD_HHMMSS.tar.gz
 
 # 2. NAS로 tar 파일만 전송
-# FileZilla 등으로 backend_deployment_*.tar.gz 파일만 NAS의 /docker/my-vue-project-backend/ 에 업로드
+# FileZilla 등으로 backend_deployment_*.tar.gz 파일만 NAS의 /docker/my-vue-project_backend/ 에 업로드
 
-# 3. NAS 접속해서 실행
-cd /volume1/docker/my-vue-project-backend
+# 3. NAS 접속해서 실행 (서버경로 : cd /volume1/docker/my-vue-project_backend)
 # 권한 변경
 chmod 777 vue_personal_project_backend_deploy.sh
 # 줄바꿈 문자 에러나오면 이거 실행!
