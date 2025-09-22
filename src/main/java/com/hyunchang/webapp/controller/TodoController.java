@@ -1,29 +1,37 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.Todo;
+import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.service.TodoService;
+import com.hyunchang.webapp.service.MenuCrudPermissionService;
+import com.hyunchang.webapp.util.SecurityUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 @RestController
 @RequestMapping("/todos")
 public class TodoController {
     private final TodoService todoService;
+    private final MenuCrudPermissionService menuCrudPermissionService;
 
-    public TodoController(TodoService todoService) {
+    public TodoController(TodoService todoService, MenuCrudPermissionService menuCrudPermissionService) {
         this.todoService = todoService;
+        this.menuCrudPermissionService = menuCrudPermissionService;
     }
 
-
     @GetMapping
-    public ResponseEntity<List<Todo>> findAll(
+    public ResponseEntity<?> findAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "5") int size) {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canRead(userRole, "/todos")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
+        }
+        
         Pageable pageable = PageRequest.of(page, size);
         Page<Todo> todoPage = todoService.findAll(pageable);
         
@@ -34,22 +42,40 @@ public class TodoController {
     }
 
     @GetMapping("/{id}")
-    public Todo findById(@PathVariable Long id) {
-        return todoService.findById(id);
+    public ResponseEntity<?> findById(@PathVariable Long id) {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canRead(userRole, "/todos")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
+        }
+        return ResponseEntity.ok(todoService.findById(id));
     }
 
     @PostMapping
-    public Todo create(@RequestBody Todo todo) {
-        return todoService.create(todo);
+    public ResponseEntity<?> create(@RequestBody Todo todo) {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canCreate(userRole, "/todos")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
+        }
+        return ResponseEntity.ok(todoService.create(todo));
     }
 
     @PutMapping("/{id}")
-    public Todo update(@PathVariable Long id, @RequestBody Todo todo) {
-        return todoService.update(id, todo);
+    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Todo todo) {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canUpdate(userRole, "/todos")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
+        }
+        return ResponseEntity.ok(todoService.update(id, todo));
     }
 
     @DeleteMapping("/{id}")
-    public void delete(@PathVariable Long id) {
+    public ResponseEntity<?> delete(@PathVariable Long id) {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canDelete(userRole, "/todos")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
+        }
         todoService.delete(id);
+        return ResponseEntity.ok().body("삭제되었습니다.");
     }
+    
 } 

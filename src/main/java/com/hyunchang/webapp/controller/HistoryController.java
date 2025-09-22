@@ -38,7 +38,7 @@ public class HistoryController {
         try {
             Files.createDirectories(Paths.get(UPLOAD_DIR));
         } catch (IOException e) {
-            e.printStackTrace();
+            System.out.println("히스토리 업로드 디렉토리 생성 실패: " + e.getMessage());
         }
     }
 

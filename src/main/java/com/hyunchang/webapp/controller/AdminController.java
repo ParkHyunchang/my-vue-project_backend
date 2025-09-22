@@ -8,6 +8,7 @@ import com.hyunchang.webapp.dto.UserResponse;
 import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuPermissionService;
+import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,7 +16,9 @@ import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @RestController
@@ -26,6 +29,7 @@ public class AdminController {
     
     private final UserService userService;
     private final MenuPermissionService menuPermissionService;
+    private final MenuCrudPermissionService menuCrudPermissionService;
     
     // 관리자 권한 확인
     private boolean isAdmin(Authentication authentication) {
@@ -189,7 +193,6 @@ public class AdminController {
         try {
             return ResponseEntity.ok(menuPermissionService.getAllMenuPermissions());
         } catch (Exception e) {
-            System.out.println("메뉴 권한 조회 실패: " + e.getMessage());
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }
     }
@@ -212,7 +215,6 @@ public class AdminController {
             menuPermissionService.saveMenuPermissions(request.getPermissions());
             return ResponseEntity.ok("메뉴 권한이 성공적으로 저장되었습니다.");
         } catch (Exception e) {
-            System.out.println("메뉴 권한 저장 실패: " + e.getMessage());
             return ResponseEntity.badRequest().body("메뉴 권한 저장에 실패했습니다.");
         }
     }
@@ -233,8 +235,149 @@ public class AdminController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body("잘못된 권한입니다: " + role);
         } catch (Exception e) {
-            System.out.println("메뉴 권한 조회 실패: " + e.getMessage());
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
+        }
+    }
+    
+    // CRUD 권한 조회
+    @GetMapping("/crud-permissions")
+    public ResponseEntity<?> getCrudPermissions(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            return ResponseEntity.ok(menuCrudPermissionService.getAllCrudPermissions());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("CRUD 권한 조회에 실패했습니다.");
+        }
+    }
+    
+    // CRUD 권한 저장
+    @PostMapping("/crud-permissions")
+    public ResponseEntity<?> saveCrudPermissions(
+            @RequestBody Map<String, List<Map<String, Object>>> permissions,
+            Authentication authentication) {
+        
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            if (permissions == null) {
+                return ResponseEntity.badRequest().body("권한 정보가 필요합니다.");
+            }
+            
+            menuCrudPermissionService.saveCrudPermissions(permissions);
+            return ResponseEntity.ok("CRUD 권한이 성공적으로 저장되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("CRUD 권한 저장에 실패했습니다.");
+        }
+    }
+    
+    // CRUD 권한 초기화
+    @PostMapping("/crud-permissions/initialize")
+    public ResponseEntity<?> initializeCrudPermissions(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            menuCrudPermissionService.initializeDefaultCrudPermissions();
+            return ResponseEntity.ok("기본 CRUD 권한이 초기화되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("CRUD 권한 초기화에 실패했습니다.");
+        }
+    }
+    
+    // 사용자별 CRUD 권한 조회 (사용자 본인도 조회 가능)
+    @GetMapping("/user-crud-permissions")
+    public ResponseEntity<?> getUserCrudPermissions(Authentication authentication) {
+        if (authentication == null || !authentication.isAuthenticated()) {
+            return ResponseEntity.status(401).body("인증이 필요합니다.");
+        }
+        
+        try {
+            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+            User user = userService.findByUserId(userDetails.getUsername())
+                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+            
+            // 사용자의 권한에 따른 CRUD 권한 조회
+            List<com.hyunchang.webapp.entity.MenuCrudPermission> permissions = 
+                menuCrudPermissionService.getPermissionsByRole(user.getRole());
+            
+            return ResponseEntity.ok(permissions);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("CRUD 권한 조회에 실패했습니다.");
+        }
+    }
+    
+    // 특정 권한의 CRUD 권한 조회
+    @GetMapping("/crud-permissions/{role}")
+    public ResponseEntity<?> getCrudPermissionsByRole(
+            @PathVariable String role,
+            Authentication authentication) {
+        
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            Role roleEnum = Role.valueOf(role.toUpperCase());
+            List<com.hyunchang.webapp.entity.MenuCrudPermission> permissions = 
+                menuCrudPermissionService.getPermissionsByRole(roleEnum);
+            
+            return ResponseEntity.ok(permissions);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("잘못된 권한입니다: " + role);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("CRUD 권한 조회에 실패했습니다.");
+        }
+    }
+    
+    // 특정 권한의 CRUD 권한 저장
+    @PostMapping("/crud-permissions/{role}")
+    public ResponseEntity<?> saveCrudPermissionsByRole(
+            @PathVariable String role,
+            @RequestBody Map<String, Object> permissionsData,
+            Authentication authentication) {
+        
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        
+        try {
+            Role roleEnum = Role.valueOf(role.toUpperCase());
+            
+            // 권한 데이터를 MenuCrudPermission 객체로 변환
+            List<com.hyunchang.webapp.entity.MenuCrudPermission> permissions = new ArrayList<>();
+            
+            for (Map.Entry<String, Object> entry : permissionsData.entrySet()) {
+                String menuPath = entry.getKey();
+                @SuppressWarnings("unchecked")
+                Map<String, Boolean> menuPermissions = (Map<String, Boolean>) entry.getValue();
+                
+                com.hyunchang.webapp.entity.MenuCrudPermission permission = 
+                    new com.hyunchang.webapp.entity.MenuCrudPermission(
+                        roleEnum,
+                        menuPath,
+                        menuPermissions.getOrDefault("canCreate", false),
+                        menuPermissions.getOrDefault("canRead", false),
+                        menuPermissions.getOrDefault("canUpdate", false),
+                        menuPermissions.getOrDefault("canDelete", false)
+                    );
+                
+                permissions.add(permission);
+            }
+            
+            // 기존 권한 삭제 후 새 권한 저장
+            menuCrudPermissionService.updateRoleCrudPermissions(roleEnum, permissions);
+            
+            return ResponseEntity.ok("CRUD 권한이 성공적으로 저장되었습니다.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body("잘못된 권한입니다: " + role);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("CRUD 권한 저장에 실패했습니다.");
         }
     }
 }
