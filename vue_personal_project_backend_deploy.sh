@@ -40,6 +40,11 @@ rm -f app.jar docker-compose.yml Dockerfile init.sql
 echo "📂 5단계: 배포 패키지 압축 해제"
 tar -xzf "$TAR_FILE"
 
+# 5-1단계: 배포 스크립트 권한 설정
+echo "🔧 5-1단계: 배포 스크립트 권한 설정"
+chmod 777 vue_personal_project_backend_deploy.sh
+sed -i 's/\r$//' vue_personal_project_backend_deploy.sh
+
 # 6단계: Docker 이미지 빌드
 echo "🔨 6단계: Docker 이미지 빌드"
 docker-compose build --no-cache

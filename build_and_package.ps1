@@ -24,6 +24,14 @@ Copy-Item "Dockerfile" "$deployDir/"
 Copy-Item "init.sql" "$deployDir/"
 Copy-Item "vue_personal_project_backend_deploy.sh" "$deployDir/" -ErrorAction SilentlyContinue
 
+# 배포 스크립트 권한 설정 (Linux 환경에서 실행될 때를 위해)
+Write-Host "🔧 Setting deployment script permissions..."
+$deployScript = "$deployDir/vue_personal_project_backend_deploy.sh"
+if (Test-Path $deployScript) {
+    # PowerShell에서는 직접 chmod를 사용할 수 없으므로, 스크립트 내에서 처리하도록 함
+    Write-Host "✅ Deploy script copied - permissions will be set during deployment"
+}
+
 # Create tar file
 Write-Host "📦 Creating tar package..."
 $timestamp = Get-Date -Format "yyyyMMdd_HHmmss"
