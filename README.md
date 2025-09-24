@@ -153,4 +153,6 @@ sed -i 's/\r$//' vue_personal_project_backend_deploy.sh
 ```bash
 docker logs vue_personal_project-backend
 docker logs -f vue_personal_project-backend
+
+docker-compose logs
 ```
