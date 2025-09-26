@@ -46,12 +46,41 @@ public class DatingService {
         if (dating.getTitle() == null || dating.getTitle().trim().isEmpty()) {
             throw new IllegalArgumentException("제목은 필수 입력값입니다.");
         }
-        if (dating.getDate() == null) {
-            throw new IllegalArgumentException("날짜는 필수 입력값입니다.");
+        
+        // 날짜 타입에 따른 검증
+        if (dating.getDateType() == null || dating.getDateType().trim().isEmpty()) {
+            throw new IllegalArgumentException("날짜 타입은 필수 입력값입니다.");
         }
-        if (dating.getDate().isAfter(LocalDate.now())) {
-            throw new IllegalArgumentException("미래의 날짜는 입력할 수 없습니다.");
+        
+        if ("single".equals(dating.getDateType())) {
+            // 단일 날짜 검증
+            if (dating.getDate() == null) {
+                throw new IllegalArgumentException("날짜는 필수 입력값입니다.");
+            }
+            if (dating.getDate().isAfter(LocalDate.now())) {
+                throw new IllegalArgumentException("미래의 날짜는 입력할 수 없습니다.");
+            }
+        } else if ("range".equals(dating.getDateType())) {
+            // 기간 날짜 검증
+            if (dating.getStartDate() == null) {
+                throw new IllegalArgumentException("시작일은 필수 입력값입니다.");
+            }
+            if (dating.getEndDate() == null) {
+                throw new IllegalArgumentException("종료일은 필수 입력값입니다.");
+            }
+            if (dating.getStartDate().isAfter(LocalDate.now())) {
+                throw new IllegalArgumentException("미래의 날짜는 입력할 수 없습니다.");
+            }
+            if (dating.getEndDate().isAfter(LocalDate.now())) {
+                throw new IllegalArgumentException("미래의 날짜는 입력할 수 없습니다.");
+            }
+            if (dating.getStartDate().isAfter(dating.getEndDate())) {
+                throw new IllegalArgumentException("시작일은 종료일보다 이전이어야 합니다.");
+            }
+        } else {
+            throw new IllegalArgumentException("올바른 날짜 타입을 선택해주세요.");
         }
+        
         if (dating.getCategory() == null || dating.getCategory().trim().isEmpty()) {
             throw new IllegalArgumentException("카테고리는 필수 입력값입니다.");
         }
@@ -69,6 +98,9 @@ public class DatingService {
         Dating existingDating = findById(id);
         existingDating.setTitle(dating.getTitle());
         existingDating.setDate(dating.getDate());
+        existingDating.setDateType(dating.getDateType());
+        existingDating.setStartDate(dating.getStartDate());
+        existingDating.setEndDate(dating.getEndDate());
         existingDating.setCategory(dating.getCategory());
         existingDating.setPartner(dating.getPartner());
         existingDating.setDescription(dating.getDescription());

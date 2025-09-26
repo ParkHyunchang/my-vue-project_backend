@@ -15,7 +15,15 @@ public class Dating {
     private String title;
     
     @JsonFormat(pattern = "yyyy-MM-dd")
-    private LocalDate date;
+    private LocalDate date; // 기존 단일 날짜 필드 (호환성 유지)
+    
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate startDate; // 기간 시작일
+    
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate endDate; // 기간 종료일
+    
+    private String dateType; // "single" 또는 "range"
     private String category;
     private String partner;
     private String description;
@@ -53,6 +61,30 @@ public class Dating {
 
     public void setDate(LocalDate date) {
         this.date = date;
+    }
+
+    public LocalDate getStartDate() {
+        return startDate;
+    }
+
+    public void setStartDate(LocalDate startDate) {
+        this.startDate = startDate;
+    }
+
+    public LocalDate getEndDate() {
+        return endDate;
+    }
+
+    public void setEndDate(LocalDate endDate) {
+        this.endDate = endDate;
+    }
+
+    public String getDateType() {
+        return dateType;
+    }
+
+    public void setDateType(String dateType) {
+        this.dateType = dateType;
     }
 
     public String getCategory() {
