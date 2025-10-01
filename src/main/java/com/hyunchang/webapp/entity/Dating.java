@@ -25,7 +25,6 @@ public class Dating {
     
     private String dateType; // "single" 또는 "range"
     private String category;
-    private String partner;
     private String description;
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
@@ -93,14 +92,6 @@ public class Dating {
 
     public void setCategory(String category) {
         this.category = category;
-    }
-
-    public String getPartner() {
-        return partner;
-    }
-
-    public void setPartner(String partner) {
-        this.partner = partner;
     }
 
     public String getDescription() {

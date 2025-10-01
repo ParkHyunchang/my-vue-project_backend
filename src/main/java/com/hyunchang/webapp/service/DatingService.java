@@ -102,7 +102,6 @@ public class DatingService {
         existingDating.setStartDate(dating.getStartDate());
         existingDating.setEndDate(dating.getEndDate());
         existingDating.setCategory(dating.getCategory());
-        existingDating.setPartner(dating.getPartner());
         existingDating.setDescription(dating.getDescription());
         existingDating.setLocation(dating.getLocation());
         
