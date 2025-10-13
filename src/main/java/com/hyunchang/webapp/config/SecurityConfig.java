@@ -64,7 +64,8 @@ public class SecurityConfig {
         configuration.setAllowedOrigins(Arrays.asList(
             "http://localhost:8080", "http://localhost:3100", "http://localhost:3200", 
             "http://127.0.0.1:8080", "http://127.0.0.1:3100", "http://127.0.0.1:3200",
-            "http://125.141.20.218:3100", "http://125.141.20.218:3200"
+            "http://125.141.20.218:3100", "http://125.141.20.218:3200",
+            "http://hyunchang.synology.me:3100", "http://hyunchang.synology.me:3200"
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"));
