@@ -15,11 +15,19 @@ public class History {
     private String title;
     
     @JsonFormat(pattern = "yyyy-MM-dd")
-    private LocalDate date;
+    private LocalDate date; // 기존 단일 날짜 필드 (호환성 유지)
+    
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate startDate; // 기간 시작일
+    
+    @JsonFormat(pattern = "yyyy-MM-dd")
+    private LocalDate endDate; // 기간 종료일
+    
+    private String dateType; // "single" 또는 "range"
     private String category;
     private String description;
     private String location;
-    private String image;
+    private String image; // 기존 단일 이미지 필드 (호환성 유지)
     @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지 지원을 위한 JSON 문자열 필드
     
@@ -100,5 +108,29 @@ public class History {
     
     public void setImages(String images) {
         this.images = images;
+    }
+
+    public LocalDate getStartDate() {
+        return startDate;
+    }
+
+    public void setStartDate(LocalDate startDate) {
+        this.startDate = startDate;
+    }
+
+    public LocalDate getEndDate() {
+        return endDate;
+    }
+
+    public void setEndDate(LocalDate endDate) {
+        this.endDate = endDate;
+    }
+
+    public String getDateType() {
+        return dateType;
+    }
+
+    public void setDateType(String dateType) {
+        this.dateType = dateType;
     }
 } 
