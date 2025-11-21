@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
+import java.util.Set;
 
 @RestController
 @RequestMapping("/dating")
@@ -22,6 +23,8 @@ public class DatingController {
     private final DatingService datingService;
     private final MenuCrudPermissionService menuCrudPermissionService;
     private static final String UPLOAD_DIR = getUploadDirectory();
+    private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
+    private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
     
     private static String getUploadDirectory() {
         // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
@@ -96,14 +99,14 @@ public class DatingController {
     public ResponseEntity<?> deleteImage(@RequestParam("imagePath") String imagePath) {
         Role userRole = SecurityUtils.getCurrentUserRole();
         if (!menuCrudPermissionService.canDelete(userRole, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("이미지 삭제 권한이 없습니다.");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 삭제 권한이 없습니다.");
         }
         
         try {
             datingService.deleteImageFile(imagePath);
-            return ResponseEntity.ok("이미지가 삭제되었습니다.");
+            return ResponseEntity.ok("미디어가 삭제되었습니다.");
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("이미지 삭제에 실패했습니다: " + e.getMessage());
+            return ResponseEntity.internalServerError().body("미디어 삭제에 실패했습니다: " + e.getMessage());
         }
     }
 
@@ -111,7 +114,7 @@ public class DatingController {
     public ResponseEntity<?> uploadImage(@RequestParam("file") MultipartFile file) {
         Role userRole = SecurityUtils.getCurrentUserRole();
         if (!menuCrudPermissionService.canUpdate(userRole, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("이미지 업로드 권한이 없습니다.");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 업로드 권한이 없습니다.");
         }
         
         try {
@@ -122,8 +125,8 @@ public class DatingController {
 
             // 파일 확장자 확인
             String originalFilename = file.getOriginalFilename();
-            if (originalFilename == null || !isValidImageFile(originalFilename)) {
-                return ResponseEntity.badRequest().body("이미지 파일만 업로드 가능합니다.");
+            if (originalFilename == null || !isValidMediaFile(originalFilename)) {
+                return ResponseEntity.badRequest().body("이미지 또는 동영상 파일만 업로드 가능합니다.");
             }
 
             // 고유한 파일명 생성 (원본 파일명 + 타임스탬프)
@@ -146,11 +149,9 @@ public class DatingController {
         }
     }
 
-    private boolean isValidImageFile(String filename) {
+    private boolean isValidMediaFile(String filename) {
         String extension = getFileExtension(filename).toLowerCase();
-        return extension.equals(".jpg") || extension.equals(".jpeg") || 
-               extension.equals(".png") || extension.equals(".gif") || 
-               extension.equals(".webp");
+        return IMAGE_EXTENSIONS.contains(extension) || VIDEO_EXTENSIONS.contains(extension);
     }
 
     private String getFileExtension(String filename) {

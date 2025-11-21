@@ -1,5 +1,8 @@
 package com.hyunchang.webapp.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.hyunchang.webapp.entity.Dating;
 import com.hyunchang.webapp.repository.DatingRepository;
 import org.springframework.stereotype.Service;
@@ -15,6 +18,7 @@ import java.util.List;
 @Service
 public class DatingService {
     private final DatingRepository datingRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String UPLOAD_DIR = getUploadDirectory();
     
     private static String getUploadDirectory() {
@@ -142,18 +146,60 @@ public class DatingService {
             
             // 다중 이미지 파일들 삭제
             if (dating.getImages() != null && !dating.getImages().trim().isEmpty()) {
-                // JSON 문자열을 파싱하여 각 이미지 파일 삭제
-                String[] imagePaths = dating.getImages().replace("[", "").replace("]", "").replace("\"", "").split(",");
-                for (String imagePath : imagePaths) {
-                    if (imagePath != null && !imagePath.trim().isEmpty()) {
-                        deleteImageFile(imagePath.trim());
+                boolean parsed = false;
+                try {
+                    JsonNode node = objectMapper.readTree(dating.getImages());
+                    if (node.isArray()) {
+                        parsed = true;
+                        ArrayNode arrayNode = (ArrayNode) node;
+                        for (JsonNode item : arrayNode) {
+                            String mediaPath = extractMediaPath(item);
+                            if (mediaPath != null && !mediaPath.trim().isEmpty()) {
+                                deleteImageFile(mediaPath.trim());
+                            }
+                        }
+                    }
+                } catch (Exception parseException) {
+                    parsed = false;
+                }
+
+                if (!parsed) {
+                    String[] imagePaths = dating.getImages()
+                            .replace("[", "")
+                            .replace("]", "")
+                            .replace("\"", "")
+                            .split(",");
+                    for (String imagePath : imagePaths) {
+                        if (imagePath != null && !imagePath.trim().isEmpty()) {
+                            deleteImageFile(imagePath.trim());
+                        }
                     }
                 }
             }
         } catch (Exception e) {
-            System.err.println("이미지 파일 삭제 중 오류 발생: " + e.getMessage());
+            System.err.println("미디어 파일 삭제 중 오류 발생: " + e.getMessage());
             // 파일 삭제 실패해도 데이터베이스 삭제는 계속 진행
         }
+    }
+    
+    private String extractMediaPath(JsonNode node) {
+        if (node == null) {
+            return "";
+        }
+        if (node.isTextual()) {
+            return node.asText();
+        }
+        if (node.isObject()) {
+            JsonNode pathNode = node.get("path");
+            if (pathNode != null && pathNode.isTextual()) {
+                return pathNode.asText();
+            }
+            JsonNode urlNode = node.get("url");
+            if (urlNode != null && urlNode.isTextual()) {
+                return urlNode.asText();
+            }
+        }
+        return "";
     }
     
     public void deleteImageFile(String imagePath) {
@@ -168,7 +214,7 @@ public class DatingService {
                 }
             }
         } catch (IOException e) {
-            System.err.println("이미지 파일 삭제 실패: " + imagePath + " - " + e.getMessage());
+            System.err.println("미디어 파일 삭제 실패: " + imagePath + " - " + e.getMessage());
         }
     }
 }
