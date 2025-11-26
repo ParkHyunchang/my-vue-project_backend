@@ -5,6 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.hyunchang.webapp.entity.Dating;
 import com.hyunchang.webapp.repository.DatingRepository;
+import jakarta.persistence.EntityNotFoundException;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -128,13 +131,19 @@ public class DatingService {
 
     @Transactional
     public void delete(Long id) {
-        Dating existingDating = findById(id);
+        Dating existingDating = datingRepository.findById(id)
+                .orElseThrow(() -> new EntityNotFoundException("이미 삭제된 추억입니다."));
         
         // 이미지 파일들 삭제
         deleteImageFiles(existingDating);
         
         // 데이터베이스에서 레코드 삭제
-        datingRepository.deleteById(id);
+        try {
+            datingRepository.delete(existingDating);
+        } catch (ObjectOptimisticLockingFailureException | EmptyResultDataAccessException e) {
+            System.out.println("이미 삭제된 추억 삭제 시도 - id: " + id + ", message: " + e.getMessage());
+            throw new EntityNotFoundException("이미 삭제된 추억입니다.");
+        }
     }
     
     private void deleteImageFiles(Dating dating) {
