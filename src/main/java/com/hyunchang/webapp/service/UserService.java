@@ -81,6 +81,19 @@ public class UserService implements UserDetailsService {
     public Optional<User> findByEmail(String email) {
         return userRepository.findByEmail(email);
     }
+
+    public Optional<User> findByNameAndEmail(String name, String email) {
+        if (name == null || email == null) {
+            return Optional.empty();
+        }
+        String trimmedName = name.trim();
+        String trimmedEmail = email.trim();
+        if (trimmedName.isEmpty() || trimmedEmail.isEmpty()) {
+            return Optional.empty();
+        }
+        return userRepository.findByEmail(trimmedEmail)
+                .filter(user -> user.getName() != null && user.getName().trim().equalsIgnoreCase(trimmedName));
+    }
     
     public boolean existsByUserId(String userId) {
         return userRepository.existsByUserId(userId);
@@ -155,6 +168,11 @@ public class UserService implements UserDetailsService {
             throw new RuntimeException("User not found with id: " + userId);
         }
         userRepository.deleteById(userId);
+    }
+
+    public void updatePassword(User user, String rawPassword) {
+        user.setPassword(passwordEncoder.encode(rawPassword));
+        userRepository.save(user);
     }
     
     public boolean isAdmin(String userId) {

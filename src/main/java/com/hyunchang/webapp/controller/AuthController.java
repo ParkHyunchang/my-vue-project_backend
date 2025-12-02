@@ -2,8 +2,11 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.config.JwtUtil;
 import com.hyunchang.webapp.dto.AuthResponse;
+import com.hyunchang.webapp.dto.FindIdRequest;
+import com.hyunchang.webapp.dto.FindIdResponse;
 import com.hyunchang.webapp.dto.LoginRequest;
 import com.hyunchang.webapp.dto.RegisterRequest;
+import com.hyunchang.webapp.dto.ResetPasswordRequest;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.UserService;
@@ -17,6 +20,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -174,5 +178,88 @@ public class AuthController {
             System.out.println("사용자 메뉴 권한 조회 실패: " + e.getMessage());
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }
+    }
+
+    @PostMapping("/find-id")
+    public ResponseEntity<?> findUserId(@RequestBody FindIdRequest request) {
+        try {
+            if (request == null || request.getName() == null || request.getEmail() == null) {
+                return ResponseEntity.badRequest().body(Map.of("message", "이름과 이메일을 모두 입력해주세요."));
+            }
+
+            Optional<User> userOptional = userService.findByNameAndEmail(request.getName(), request.getEmail());
+            if (userOptional.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("message", "일치하는 사용자 정보를 찾을 수 없습니다."));
+            }
+
+            User user = userOptional.get();
+            String maskedUserId = maskUserId(user.getUserId());
+
+            return ResponseEntity.ok(
+                    FindIdResponse.builder()
+                            .maskedUserId(maskedUserId)
+                            .message("입력하신 정보와 일치하는 아이디를 찾았습니다.")
+                            .build()
+            );
+        } catch (Exception e) {
+            System.out.println("아이디 찾기 실패: " + e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("message", "아이디 찾기에 실패했습니다."));
+        }
+    }
+
+    @PostMapping("/reset-password")
+    public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
+        try {
+            if (request == null
+                    || request.getUserId() == null
+                    || request.getEmail() == null
+                    || request.getPhone() == null
+                    || request.getNewPassword() == null) {
+                return ResponseEntity.badRequest().body(Map.of("message", "모든 정보를 입력해주세요."));
+            }
+
+            String trimmedPassword = request.getNewPassword().trim();
+            if (trimmedPassword.length() < 8) {
+                return ResponseEntity.badRequest().body(Map.of("message", "비밀번호는 8자 이상이어야 합니다."));
+            }
+
+            Optional<User> userOptional = userService.findByUserId(request.getUserId().trim());
+            if (userOptional.isEmpty()) {
+                return ResponseEntity.badRequest().body(Map.of("message", "일치하는 사용자 정보를 찾을 수 없습니다."));
+            }
+
+            User user = userOptional.get();
+            if (!user.getEmail().equalsIgnoreCase(request.getEmail().trim())) {
+                return ResponseEntity.badRequest().body(Map.of("message", "이메일 정보가 일치하지 않습니다."));
+            }
+
+            String storedPhone = user.getPhone();
+            String providedPhone = request.getPhone().trim();
+            if (storedPhone == null || !normalizeDigits(storedPhone).equals(normalizeDigits(providedPhone))) {
+                return ResponseEntity.badRequest().body(Map.of("message", "전화번호 정보가 일치하지 않습니다."));
+            }
+
+            userService.updatePassword(user, trimmedPassword);
+            return ResponseEntity.ok(Map.of("message", "비밀번호가 성공적으로 변경되었습니다."));
+        } catch (Exception e) {
+            System.out.println("비밀번호 초기화 실패: " + e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("message", "비밀번호 초기화에 실패했습니다."));
+        }
+    }
+
+    private String maskUserId(String userId) {
+        if (userId == null || userId.length() <= 2) {
+            return "****";
+        }
+        int visibleLength = Math.min(4, userId.length() - 2);
+        String visiblePart = userId.substring(0, visibleLength);
+        return visiblePart + "*".repeat(userId.length() - visibleLength);
+    }
+
+    private String normalizeDigits(String value) {
+        if (value == null) {
+            return "";
+        }
+        return Pattern.compile("[^0-9]").matcher(value).replaceAll("");
     }
 }
