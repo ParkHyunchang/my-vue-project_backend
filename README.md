@@ -14,19 +14,21 @@ Spring Boot와 MySQL을 사용하여 구축되었습니다.
 ## 권한별 접근 가능한 기능
 
 ### 🔵 일반 사용자 (USER)
+
 - ✅ **HOME** - 메인 페이지
 - ✅ **TODOS** - 할일 관리
 - ✅ **TODOS 생성/수정** - 할일 CRUD 기능
 
 ### 🟡 프리미엄 사용자 (PREMIUM)
+
 - ✅ **일반 사용자 모든 기능**
 - ✅ **HISTORY** - 히스토리 페이지
 - ✅ **DATING** - 데이팅 페이지
 
 ### 🔴 관리자 (ADMIN)
+
 - ✅ **프리미엄 사용자 모든 기능**
 - ✅ **가계부** - 가계부 관리
-
 
 ### 개발시 실행 명령어
 
@@ -49,29 +51,40 @@ netstat -ano | findstr :3100
 taskkill /PID 확인한pid숫자작성  /F
 ```
 
-
 ### 도커 컨테이너 만들기 위해서 실행
 
 1. docker-compose로 백엔드+DB 실행
+
 ```bash
 cd my-vue-project-backend
 docker-compose up -d --build
+
+# app.jar 파일 관련 에러나오면
+# 1. jar 파일 생성
+cd C:\Users\USER\workspace\my-vue-project_backend
+mvn clean package -DskipTests
+# 2. 만들어진 jar 파일 루트에 app.jar 로 이동
+cd C:\Users\USER\workspace\my-vue-project_backend
+copy /y ".\target\todo-api-0.0.1-SNAPSHOT.jar" ".\app.jar"
 
 # -d : 백그라운드 실행
 # --build : 이미지 새로 빌드
 ```
 
 2. 컨테이너 생성확인
+
 ```bash
 docker ps -a
 ```
 
 3. 백엔드 컨테이너 로그 확인
+
 ```bash
  docker logs vue_personal_project-backend
 ```
 
 4. 로그 확인 후 컨테이너 완전 초기화 및 재빌드 명령어
+
 ```bash
 # 컨테이너, 볼륨, 네트워크 모두 정리
 docker-compose down --rmi all --volumes --remove-orphans
@@ -101,6 +114,7 @@ docker logs vue_personal_project-backend
 ### NAS 최초 배포
 
 1. 로컬에서 백엔드 JAR 빌드 & Docker 이미지 생성
+
 ```bash
 cd ../my-vue-project-backend
 mvn clean package -DskipTests
@@ -109,14 +123,16 @@ docker-compose build --no-cache
 ```
 
 2. NAS로 파일/이미지 전송
+
 ```bash
 A. 소스/빌드 결과물 직접 복사
-scp, rsync, 또는 Synology File Station 등으로 
+scp, rsync, 또는 Synology File Station 등으로
 로컬의 my-vue-project-backend 폴더 전체를
 NAS의 /docker/my-vue-project-backend 등 원하는 경로에 업로드하세요.
 ```
 
 3. NAS 접속해서 실행
+
 ```bash
 ssh [user]@[NAS_IP]
 cd /docker/my-vue-project-backend
@@ -131,6 +147,7 @@ docker ps
 ### NAS 업데이트 판 배포
 
 #### JAR 파일만 압축
+
 ```bash
 # 1. 로컬에서 빌드 및 tar 파일 생성
 ./build_and_package.ps1
