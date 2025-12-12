@@ -1,0 +1,42 @@
+﻿# NAS 배포용 설정
+# Common Configuration (공통 설정)
+
+spring:
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+  h2:
+    console:
+      enabled: false
+      path: /h2-console
+  main:
+    allow-bean-definition-overriding: true
+  profiles:
+    active: nas
+  servlet:
+    multipart:
+      max-file-size: '3GB'
+      max-request-size: '15GB'
+
+server:
+  port: 3200
+  # prefix
+  # servlet:
+  #   context-path: /my-vue-project
+
+logging:
+  level:
+    org.springframework.web: INFO
+    org.hibernate.SQL: INFO
+
+jwt:
+  secret: mySecretKeyForJWTTokenGeneration123456789
+  expiration: 86400000
+
+# Admin Users Configuration (NAS 배포 시 수정)
+# 허용된 관리자 사용자명을 쉼표로 구분하여 입력
+# 예: admin.users=hyunchang88,admin,superuser
+admin:
+  users: hyunchang88,admin

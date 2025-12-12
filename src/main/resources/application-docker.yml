@@ -1,0 +1,23 @@
+﻿# Docker Profile (Docker 컨테이너용)
+
+spring:
+  datasource:
+    url: jdbc:mysql://db:3306/vue_personal_project_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
+    username: hyunchang88
+    password: gusckd88!
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    show-sql: true
+  servlet:
+    multipart:
+      max-file-size: '3GB'
+      max-request-size: '15GB'
+
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+
+server:
+  tomcat:
+    max-http-form-post-size: -1
+    max-swallow-size: -1

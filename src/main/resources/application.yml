@@ -1,0 +1,54 @@
+﻿# Common Configuration (공통 설정)
+
+# JPA Configuration
+spring:
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
+    hibernate:
+      ddl-auto: update
+    show-sql: true
+
+  # Bean Override
+  main:
+    allow-bean-definition-overriding: true
+
+  # H2 Database Configuration
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+
+  # Default profile (로컬 개발용)
+  profiles:
+    active: local
+
+  # File Upload Configuration
+  servlet:
+    multipart:
+      max-file-size: 3GB
+      max-request-size: 15GB
+
+# Server Configuration
+server:
+  port: 3200
+  # prefix
+  # servlet:
+  #   context-path: /my-vue-project
+
+# Logging
+logging:
+  level:
+    org.springframework.web: INFO
+    org.springframework.web.servlet.DispatcherServlet: WARN
+    org.springframework.web.servlet.handler.SimpleUrlHandlerMapping: INFO
+    org.springframework.web.servlet.resource.ResourceHttpRequestHandler: INFO
+    org.hibernate.SQL: INFO
+
+# JWT Configuration
+jwt:
+  secret: mySecretKeyForJWTTokenGeneration123456789
+  expiration: 86400000
+
+# Admin Users Configuration
+admin:
+  users: hyunchang88,admin
