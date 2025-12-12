@@ -12,7 +12,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeParseException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -83,6 +86,31 @@ public class ExpenseController {
         return ResponseEntity.ok().body("삭제되었습니다.");
     }
 
+    @GetMapping("/fixed")
+    public ResponseEntity<?> findFixedExpenses() {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canRead(userRole, "/expense")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
+        }
+        return ResponseEntity.ok(expenseService.findFixedExpenses());
+    }
+
+    @GetMapping("/date-range")
+    public ResponseEntity<?> findByDateRange(
+            @RequestParam String startDate,
+            @RequestParam String endDate,
+            @RequestParam(required = false) Boolean fixed) {
+        Role userRole = SecurityUtils.getCurrentUserRole();
+        if (!menuCrudPermissionService.canRead(userRole, "/expense")) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
+        }
+
+        LocalDateTime start = parseStartDate(startDate);
+        LocalDateTime end = parseEndDate(endDate);
+
+        return ResponseEntity.ok(expenseService.findByDateRange(start, end, fixed));
+    }
+
     @GetMapping("/type/{type}")
     public List<Expense> findByType(@PathVariable String type) {
         return expenseService.findByType(type);
@@ -99,6 +127,7 @@ public class ExpenseController {
         summary.put("totalIncome", expenseService.getTotalIncome());
         summary.put("totalExpense", expenseService.getTotalExpense());
         summary.put("balance", expenseService.getBalance());
+        summary.put("totalFixedExpense", expenseService.getTotalFixedExpense());
         return summary;
     }
 
@@ -113,7 +142,26 @@ public class ExpenseController {
         summary.put("totalIncome", expenseService.getTotalIncomeByDateRange(start, end));
         summary.put("totalExpense", expenseService.getTotalExpenseByDateRange(start, end));
         summary.put("balance", expenseService.getTotalIncomeByDateRange(start, end) - expenseService.getTotalExpenseByDateRange(start, end));
+        summary.put("totalFixedExpense", expenseService.getTotalFixedExpenseByDateRange(start, end));
         return summary;
     }
-    
+
+    private LocalDateTime parseStartDate(String date) {
+        try {
+            return LocalDateTime.parse(date);
+        } catch (DateTimeParseException ex) {
+            LocalDate localDate = LocalDate.parse(date);
+            return localDate.atStartOfDay();
+        }
+    }
+
+    private LocalDateTime parseEndDate(String date) {
+        try {
+            return LocalDateTime.parse(date);
+        } catch (DateTimeParseException ex) {
+            LocalDate localDate = LocalDate.parse(date);
+            return localDate.atTime(LocalTime.MAX);
+        }
+    }
+
 } 

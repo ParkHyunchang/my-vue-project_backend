@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Service
 public class ExpenseService {
@@ -32,6 +32,9 @@ public class ExpenseService {
     }
 
     public Expense create(Expense expense) {
+        if (expense.getCreatedAt() == null) {
+            expense.setCreatedAt(LocalDateTime.now());
+        }
         return expenseRepository.save(expense);
     }
 
@@ -42,6 +45,7 @@ public class ExpenseService {
         existingExpense.setAmount(expense.getAmount());
         existingExpense.setCategory(expense.getCategory());
         existingExpense.setType(expense.getType());
+        existingExpense.setFixed(expense.isFixed());
         return expenseRepository.save(existingExpense);
     }
 
@@ -59,6 +63,20 @@ public class ExpenseService {
 
     public List<Expense> findByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
         return expenseRepository.findByDateRange(startDate, endDate);
+    }
+
+    public List<Expense> findByDateRange(LocalDateTime startDate, LocalDateTime endDate, Boolean fixed) {
+        List<Expense> expenses = expenseRepository.findByDateRange(startDate, endDate);
+        if (fixed == null) {
+            return expenses;
+        }
+        return expenses.stream()
+                .filter(expense -> expense.isFixed() == fixed)
+                .collect(Collectors.toList());
+    }
+
+    public List<Expense> findFixedExpenses() {
+        return expenseRepository.findByFixedTrueOrderByCreatedAtDesc();
     }
 
     public Long getTotalIncome() {
@@ -81,5 +99,14 @@ public class ExpenseService {
     public Long getTotalExpenseByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
         return expenseRepository.sumByTypeAndDateRange("EXPENSE", startDate, endDate) != null ? 
                expenseRepository.sumByTypeAndDateRange("EXPENSE", startDate, endDate) : 0L;
+    }
+
+    public Long getTotalFixedExpense() {
+        return expenseRepository.sumByFixed() != null ? expenseRepository.sumByFixed() : 0L;
+    }
+
+    public Long getTotalFixedExpenseByDateRange(LocalDateTime startDate, LocalDateTime endDate) {
+        return expenseRepository.sumByFixedAndDateRange(startDate, endDate) != null ?
+                expenseRepository.sumByFixedAndDateRange(startDate, endDate) : 0L;
     }
 } 

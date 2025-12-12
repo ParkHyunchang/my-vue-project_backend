@@ -16,6 +16,7 @@ public class Expense {
     private String category;
     private LocalDateTime createdAt;
     private String type; // "INCOME" or "EXPENSE"
+    private boolean fixed;
     
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
@@ -23,6 +24,7 @@ public class Expense {
 
     public Expense() {
         this.createdAt = LocalDateTime.now();
+        this.fixed = false;
     }
 
     public Expense(Long id, String title, String description, Long amount, String category, String type) {
@@ -33,6 +35,7 @@ public class Expense {
         this.category = category;
         this.type = type;
         this.createdAt = LocalDateTime.now();
+        this.fixed = false;
     }
 
     public Long getId() {
@@ -89,6 +92,14 @@ public class Expense {
 
     public void setType(String type) {
         this.type = type;
+    }
+    
+    public boolean isFixed() {
+        return fixed;
+    }
+    
+    public void setFixed(boolean fixed) {
+        this.fixed = fixed;
     }
     
     public User getUser() {

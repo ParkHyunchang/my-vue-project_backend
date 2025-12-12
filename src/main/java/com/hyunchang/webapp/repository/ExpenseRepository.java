@@ -19,9 +19,17 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     @Query("SELECT e FROM Expense e WHERE e.createdAt BETWEEN :startDate AND :endDate ORDER BY e.createdAt DESC")
     List<Expense> findByDateRange(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
     
+    List<Expense> findByFixedTrueOrderByCreatedAtDesc();
+    
     @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.type = :type")
     Long sumByType(@Param("type") String type);
     
     @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.type = :type AND e.createdAt BETWEEN :startDate AND :endDate")
     Long sumByTypeAndDateRange(@Param("type") String type, @Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
+    
+    @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.fixed = true")
+    Long sumByFixed();
+    
+    @Query("SELECT SUM(e.amount) FROM Expense e WHERE e.fixed = true AND e.createdAt BETWEEN :startDate AND :endDate")
+    Long sumByFixedAndDateRange(@Param("startDate") LocalDateTime startDate, @Param("endDate") LocalDateTime endDate);
 } 
