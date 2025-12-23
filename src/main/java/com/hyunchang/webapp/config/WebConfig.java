@@ -2,6 +2,7 @@ package com.hyunchang.webapp.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.lang.NonNull;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -14,7 +15,7 @@ import java.util.Arrays;
 public class WebConfig implements WebMvcConfigurer {
 
     @Override
-    public void addResourceHandlers(ResourceHandlerRegistry registry) {
+    public void addResourceHandlers(@NonNull ResourceHandlerRegistry registry) {
         String uploadPath = getUploadDirectory();
         // 이미지 파일들을 위한 정적 리소스 핸들러
         // /uploads/images/** 패턴으로 dating/과 history/ 하위 디렉토리 모두 포함
@@ -41,7 +42,10 @@ public class WebConfig implements WebMvcConfigurer {
             "http://localhost:8080", "http://localhost:3100", "http://localhost:3200", 
             "http://127.0.0.1:8080", "http://127.0.0.1:3100", "http://127.0.0.1:3200",
             "http://125.141.20.218:3100", "http://125.141.20.218:3200",
-            "http://hyunchang.synology.me:3100", "http://hyunchang.synology.me:3200"
+            "http://hyunchang.synology.me:3100", "http://hyunchang.synology.me:3200",
+            "http://m.hyunchang.synology.me:3100", "http://m.hyunchang.synology.me:3200",
+            "https://hyunchang.synology.me:3100", "https://hyunchang.synology.me:3200",
+            "https://m.hyunchang.synology.me:3100", "https://m.hyunchang.synology.me:3200"
         ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With", "Accept", "Origin", "Access-Control-Request-Method", "Access-Control-Request-Headers"));
