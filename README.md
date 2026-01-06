@@ -30,6 +30,26 @@ Spring Boot와 MySQL을 사용하여 구축되었습니다.
 - ✅ **프리미엄 사용자 모든 기능**
 - ✅ **가계부** - 가계부 관리
 
+## Swagger (API 문서)
+
+- **Swagger UI**
+  - 로컬: `http://localhost:3200/swagger-ui/index.html`
+  - 서버(예시): `http://hyunchang.synology.me:3200/swagger-ui/index.html` / `https://hyunchang.synology.me:3200/swagger-ui/index.html`
+  - 서버(IP 예시): `http://125.141.20.218:3200/swagger-ui/index.html`
+- **OpenAPI JSON**
+  - 로컬: `http://localhost:3200/v3/api-docs`
+  - 서버(예시): `http://hyunchang.synology.me:3200/v3/api-docs` / `https://hyunchang.synology.me:3200/v3/api-docs`
+  - 서버(IP 예시): `http://125.141.20.218:3200/v3/api-docs`
+
+### Swagger에서 인증(JWT) 넣고 API 호출하기
+
+1. `POST /api/auth/login` 호출해서 **응답의 `token` 값 확보**
+2. Swagger 우측 상단 **Authorize** 클릭 → **토큰 입력**
+   - **토큰 문자열만 입력**하면 됩니다. (Swagger가 자동으로 `Authorization: Bearer <token>` 헤더로 전송)
+3. 이제 보호된 API(예: `/dating`, `/todos`)를 **Execute**로 호출 가능
+
+> 참고: 토큰을 넣었는데도 `403`이면, 인증 문제가 아니라 **해당 Role의 메뉴/CRUD 권한이 없어서** 컨트롤러에서 403을 반환하는 경우일 수 있습니다.
+
 ### 개발시 실행 명령어
 
 1. 백엔드 서버 실행 (Spring Boot)
