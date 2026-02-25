@@ -163,17 +163,12 @@ public class MenuCrudPermissionService {
     
     /**
      * 기본 CRUD 권한 초기화 (시스템 초기 설정용)
+     * 기존 데이터가 있어도 누락된 경로만 추가하는 방식으로 동작
      */
     @Transactional
     public void initializeDefaultCrudPermissions() {
-        // 기존 권한이 있는지 확인
-        if (menuCrudPermissionRepository.count() > 0) {
-            return; // 이미 권한이 설정되어 있으면 초기화하지 않음
-        }
-        
         Map<String, List<Map<String, Object>>> defaultPermissions = new HashMap<>();
-        
-        // 일반 사용자 권한 (모든 메뉴에서 조회만 가능)
+
         List<Map<String, Object>> userPermissions = Arrays.asList(
             createPermissionMap("/", false, true, false, false),
             createPermissionMap("/portfolio", false, true, false, false),
@@ -182,23 +177,23 @@ public class MenuCrudPermissionService {
             createPermissionMap("/todos/create", false, true, false, false)
         );
         defaultPermissions.put("USER", userPermissions);
-        
-        // 프리미엄 사용자 권한 (일반 사용자 권한 + dating에서 CRU만 가능)
+
         List<Map<String, Object>> premiumPermissions = new ArrayList<>(userPermissions);
         premiumPermissions.addAll(Arrays.asList(
             createPermissionMap("/history", false, true, false, false),
-            createPermissionMap("/dating", true, true, true, false), // CRU만 가능, D는 불가
+            createPermissionMap("/dating", true, true, true, false),
+            createPermissionMap("/dating_sys", true, true, true, false),
             createPermissionMap("/expense", false, true, false, false)
         ));
         defaultPermissions.put("PREMIUM", premiumPermissions);
-        
-        // 관리자 권한 (모든 메뉴에서 모든 CRUD 가능)
+
         List<Map<String, Object>> adminPermissions = Arrays.asList(
             createPermissionMap("/", true, true, true, true),
             createPermissionMap("/portfolio", true, true, true, true),
             createPermissionMap("/projects", true, true, true, true),
             createPermissionMap("/history", true, true, true, true),
             createPermissionMap("/dating", true, true, true, true),
+            createPermissionMap("/dating_sys", true, true, true, true),
             createPermissionMap("/todos", true, true, true, true),
             createPermissionMap("/todos/create", true, true, true, true),
             createPermissionMap("/expense", true, true, true, true),
@@ -207,8 +202,38 @@ public class MenuCrudPermissionService {
             createPermissionMap("/admin/menu-management", true, true, true, true)
         );
         defaultPermissions.put("ADMIN", adminPermissions);
-        
-        saveCrudPermissions(defaultPermissions);
+
+        if (menuCrudPermissionRepository.count() == 0) {
+            saveCrudPermissions(defaultPermissions);
+        } else {
+            defaultPermissions.forEach((roleName, menuPermissions) -> {
+                try {
+                    Role role = Role.valueOf(roleName);
+                    List<String> existingPaths = menuCrudPermissionRepository.findByRole(role)
+                        .stream()
+                        .map(MenuCrudPermission::getMenuPath)
+                        .collect(java.util.stream.Collectors.toList());
+
+                    List<MenuCrudPermission> missing = menuPermissions.stream()
+                        .filter(perm -> !existingPaths.contains((String) perm.get("menuPath")))
+                        .map(perm -> new MenuCrudPermission(
+                            role,
+                            (String) perm.get("menuPath"),
+                            (Boolean) perm.get("canCreate"),
+                            (Boolean) perm.get("canRead"),
+                            (Boolean) perm.get("canUpdate"),
+                            (Boolean) perm.get("canDelete")
+                        ))
+                        .collect(java.util.stream.Collectors.toList());
+
+                    if (!missing.isEmpty()) {
+                        menuCrudPermissionRepository.saveAll(missing);
+                    }
+                } catch (IllegalArgumentException e) {
+                    System.out.println("Invalid role: " + roleName);
+                }
+            });
+        }
     }
     
     /**

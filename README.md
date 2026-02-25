@@ -157,3 +157,10 @@ docker logs vue_personal_project-backend
 docker logs -f vue_personal_project-backend
 docker-compose logs backend
 ```
+
+
+## 서버에서 디비 접속하는 명령어 치고 비번 입력하면 접속됌됌
+
+```bash
+docker exec -it vue_personal_project-backend-db mysql -u hyunchang88 -p vue_personal_project_db
+```

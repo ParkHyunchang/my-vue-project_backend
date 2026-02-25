@@ -155,31 +155,49 @@ public class MenuPermissionService {
     
     /**
      * 기본 메뉴 권한 초기화 (시스템 초기 설정용)
+     * 기존 데이터가 있어도 누락된 경로만 추가하는 방식으로 동작
      */
     @Transactional
     public void initializeDefaultPermissions() {
-        // 기존 권한이 있는지 확인
-        if (menuPermissionRepository.count() > 0) {
-            return; // 이미 권한이 설정되어 있으면 초기화하지 않음
-        }
         Map<String, List<String>> defaultPermissions = new HashMap<>();
         
-        // 기본 사용자 권한
         defaultPermissions.put("USER", Arrays.asList(
             "/", "/portfolio", "/projects", "/todos", "/todos/create"
         ));
         
-        // 프리미엄 사용자 권한 (USER 권한 + 추가)
         defaultPermissions.put("PREMIUM", Arrays.asList(
-            "/", "/portfolio", "/projects", "/history", "/dating", "/todos", "/todos/create"
+            "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys", "/todos", "/todos/create"
         ));
         
-        // 관리자 권한 (모든 권한)
         defaultPermissions.put("ADMIN", Arrays.asList(
-            "/", "/portfolio", "/projects", "/history", "/dating", "/todos", "/todos/create",
+            "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys", "/todos", "/todos/create",
             "/expense", "/admin", "/admin/users", "/admin/menu-management"
         ));
-        
-        saveMenuPermissions(defaultPermissions);
+
+        // DB가 비어있으면 전체 저장, 데이터가 있으면 누락된 경로만 추가
+        if (menuPermissionRepository.count() == 0) {
+            saveMenuPermissions(defaultPermissions);
+        } else {
+            defaultPermissions.forEach((roleName, menuPaths) -> {
+                try {
+                    Role role = Role.valueOf(roleName);
+                    List<String> existingPaths = menuPermissionRepository.findByRole(role)
+                        .stream()
+                        .map(MenuPermission::getMenuPath)
+                        .collect(Collectors.toList());
+
+                    List<MenuPermission> missing = menuPaths.stream()
+                        .filter(path -> !existingPaths.contains(path))
+                        .map(path -> new MenuPermission(role, path))
+                        .collect(Collectors.toList());
+
+                    if (!missing.isEmpty()) {
+                        menuPermissionRepository.saveAll(missing);
+                    }
+                } catch (IllegalArgumentException e) {
+                    System.out.println("Invalid role: " + roleName);
+                }
+            });
+        }
     }
 }
