@@ -55,6 +55,8 @@ jobs:
             if grep -q "^BACKEND_IMAGE=" .env 2>/dev/null; then
               sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=$IMAGE_NAME|" .env
             else
+              # 마지막 줄에 줄바꿈이 없을 경우를 대비해 줄바꿈 먼저 추가
+              sed -i -e '$a\' .env
               echo "BACKEND_IMAGE=$IMAGE_NAME" >> .env
             fi
 
