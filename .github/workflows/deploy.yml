@@ -45,8 +45,11 @@ jobs:
           password: ${{ secrets.NAS_SSH_PASSWORD }}
           envs: GHCR_PAT,GITHUB_ACTOR,IMAGE_NAME
           script: |
+            DOCKER=/usr/local/bin/docker
+            COMPOSE=/usr/local/bin/docker-compose
+            export PATH="/usr/local/bin:$PATH"
             cd /volume1/docker/my-vue-project_backend
-            echo "$GHCR_PAT" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            echo "$GHCR_PAT" | $DOCKER login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
 
             # .env 파일에서 BACKEND_IMAGE 업데이트
             if grep -q "^BACKEND_IMAGE=" .env 2>/dev/null; then
@@ -55,8 +58,8 @@ jobs:
               echo "BACKEND_IMAGE=$IMAGE_NAME" >> .env
             fi
 
-            docker-compose pull backend
-            docker-compose up -d --no-deps backend
-            docker image prune -f
+            $COMPOSE pull backend
+            $COMPOSE up -d --no-deps backend
+            $DOCKER image prune -f
             echo "✅ 백엔드 배포 완료!"
-            docker-compose ps
+            $COMPOSE ps
