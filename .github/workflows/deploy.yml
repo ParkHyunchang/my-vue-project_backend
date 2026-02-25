@@ -1,0 +1,59 @@
+name: Backend CI/CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository }}:latest
+
+      - name: Deploy to NAS via SSH
+        uses: appleboy/ssh-action@v1
+        env:
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          IMAGE_NAME: ghcr.io/${{ github.repository }}:latest
+        with:
+          host: ${{ secrets.NAS_HOST }}
+          username: ${{ secrets.NAS_USER }}
+          password: ${{ secrets.NAS_SSH_PASSWORD }}
+          envs: GHCR_PAT,GITHUB_ACTOR,IMAGE_NAME
+          script: |
+            cd /volume1/docker/my-vue-project_backend
+            echo "$GHCR_PAT" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+
+            # .env 파일에서 BACKEND_IMAGE 업데이트
+            if grep -q "^BACKEND_IMAGE=" .env 2>/dev/null; then
+              sed -i "s|^BACKEND_IMAGE=.*|BACKEND_IMAGE=$IMAGE_NAME|" .env
+            else
+              echo "BACKEND_IMAGE=$IMAGE_NAME" >> .env
+            fi
+
+            docker-compose pull backend
+            docker-compose up -d --no-deps backend
+            docker image prune -f
+            echo "✅ 백엔드 배포 완료!"
+            docker-compose ps

@@ -25,7 +25,7 @@ services:
       retries: 10
 
   backend:
-    build: .
+    image: ${BACKEND_IMAGE:-ghcr.io/parkhyunchang/my-vue-project_backend:latest}
     container_name: vue_personal_project-backend
     ports:
       - "3200:3200"
