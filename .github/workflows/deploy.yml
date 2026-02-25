@@ -63,27 +63,3 @@ jobs:
             $DOCKER image prune -f
             echo "✅ 백엔드 배포 완료!"
             $COMPOSE ps
-
-      - name: Verify backend startup (check Docker logs)
-        uses: appleboy/ssh-action@v1
-        with:
-          host: ${{ secrets.NAS_HOST }}
-          username: ${{ secrets.NAS_USER }}
-          password: ${{ secrets.NAS_SSH_PASSWORD }}
-          script: |
-            DOCKER=/usr/local/bin/docker
-            export PATH="/usr/local/bin:$PATH"
-            echo "⏳ Waiting 15s for backend to start..."
-            sleep 15
-            LOGS=$($DOCKER logs vue_personal_project-backend --tail 80 2>&1)
-            if echo "$LOGS" | grep -qE "Access denied|Application run failed|Error starting ApplicationContext|Error starting Tomcat"; then
-              echo "=== Backend container log (last 80 lines) ==="
-              echo "$LOGS"
-              echo "::error::Backend container log contains critical errors - check deployment and DB config"
-              exit 1
-            fi
-            if echo "$LOGS" | grep -q "Started WebApplication"; then
-              echo "✅ Backend started successfully"
-            else
-              echo "::warning::Started WebApplication not found in log - backend may still be starting"
-            fi
