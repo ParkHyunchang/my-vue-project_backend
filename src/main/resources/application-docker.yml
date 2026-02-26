@@ -16,6 +16,15 @@ spring:
 logging:
   level:
     org.hibernate.SQL: DEBUG
+  file:
+    name: /app/logs/application.log
+  logback:
+    rollingpolicy:
+      max-file-size: 100MB
+      max-history: 30
+      file-name-pattern: /app/logs/application-%d{yyyy-MM-dd}.%i.log
+      total-size-cap: 3GB
+      clean-history-on-start: false
 
 server:
   tomcat:

@@ -37,6 +37,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - /volume1/docker/my-vue-project_backend/uploads:/volume1/docker/my-vue-project_backend/uploads:Z
+      - /volume1/docker/my-vue-project_backend/logs:/app/logs:Z
     depends_on:
       db:
         condition: service_healthy
