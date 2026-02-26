@@ -17,5 +17,6 @@ RUN mvn clean package -DskipTests
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 COPY --from=build /app/target/todo-api-0.0.1-SNAPSHOT.jar app.jar
+RUN mkdir -p /app/logs
 EXPOSE 3200
 ENTRYPOINT ["java", "-jar", "app.jar"]
