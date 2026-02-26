@@ -33,6 +33,16 @@ jobs:
           push: true
           tags: ${{ env.IMAGE_NAME }}
 
+      - name: Deploy files to NAS via SCP
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.NAS_HOST }}
+          username: ${{ secrets.NAS_USER }}
+          password: ${{ secrets.NAS_SSH_PASSWORD }}
+          source: "docker-compose.yml,init.sql"
+          target: "/volume1/docker/my-vue-project_backend/"
+          strip_components: 0
+
       - name: Deploy to NAS via SSH
         uses: appleboy/ssh-action@v1
         env:

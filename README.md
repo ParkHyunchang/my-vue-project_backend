@@ -90,7 +90,8 @@ docker-compose up -d --build
 
 1. **Docker 이미지 빌드** — Maven 빌드 포함 멀티스테이지 Dockerfile로 이미지 생성
 2. **GHCR 푸시** — `ghcr.io/parkhyunchang/my-vue-project_backend:latest`
-3. **NAS 배포** — SSH 접속 후 `docker-compose pull backend` → `docker-compose up -d --no-deps backend`
+3. **설정 파일 배포** — `docker-compose.yml`, `init.sql` 자동 배포
+4. **NAS 배포** — SSH 접속 후 `docker-compose pull backend` → `docker-compose up -d --no-deps backend`
 
 ### GitHub Secrets (레포 Settings → Secrets and variables → Actions)
 
@@ -113,9 +114,9 @@ docker-compose up -d --build
    MYSQL_PASSWORD=DB비밀번호
    ```
 
-3. **`docker-compose.yml`**, **`init.sql`** 을 이 경로에 복사 (로컬 레포의 최신 버전 사용)
+3. **`docker-compose.yml`**, **`init.sql`** 최초 1회만 복사 (이후 자동 배포됨)
 
-이후에는 push만 하면 자동 배포됩니다.
+이후에는 push만 하면 자동 배포됩니다. `docker-compose.yml`과 `init.sql` 변경사항도 자동으로 서버에 반영됩니다.
 
 ### 수동 배포 (NAS에서만 재시작)
 
