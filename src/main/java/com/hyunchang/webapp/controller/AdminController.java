@@ -2,6 +2,8 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.dto.CreateUserRequest;
 import com.hyunchang.webapp.dto.MenuPermissionRequest;
+import com.hyunchang.webapp.dto.RoleInfoRequest;
+import com.hyunchang.webapp.dto.RoleInfoResponse;
 import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.dto.UpdateUserRoleRequest;
 import com.hyunchang.webapp.dto.UserResponse;
@@ -9,6 +11,7 @@ import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
+import com.hyunchang.webapp.service.RoleInfoService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -30,6 +33,7 @@ public class AdminController {
     private final UserService userService;
     private final MenuPermissionService menuPermissionService;
     private final MenuCrudPermissionService menuCrudPermissionService;
+    private final RoleInfoService roleInfoService;
     
     // 관리자 권한 확인
     private boolean isAdmin(Authentication authentication) {
@@ -302,9 +306,14 @@ public class AdminController {
             User user = userService.findByUserId(userDetails.getUsername())
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
             
-            // 사용자의 권한에 따른 CRUD 권한 조회
-            List<com.hyunchang.webapp.entity.MenuCrudPermission> permissions = 
-                menuCrudPermissionService.getPermissionsByRole(user.getRole());
+            // 사용자의 권한에 따른 CRUD 권한 조회 (커스텀 권한이면 빈 목록 반환)
+            List<com.hyunchang.webapp.entity.MenuCrudPermission> permissions;
+            try {
+                Role roleEnum = Role.valueOf(user.getRole());
+                permissions = menuCrudPermissionService.getPermissionsByRole(roleEnum);
+            } catch (IllegalArgumentException e) {
+                permissions = new ArrayList<>();
+            }
             
             return ResponseEntity.ok(permissions);
         } catch (Exception e) {
@@ -335,6 +344,103 @@ public class AdminController {
         }
     }
     
+    // ===== 권한(Role) 관리 API =====
+
+    // 모든 권한 정보 조회
+    @GetMapping("/role-infos")
+    public ResponseEntity<?> getAllRoleInfos(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            return ResponseEntity.ok(roleInfoService.getAllRoleInfos());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("권한 정보 조회에 실패했습니다.");
+        }
+    }
+
+    // 권한 정보 생성
+    @PostMapping("/role-infos")
+    public ResponseEntity<?> createRoleInfo(
+            @RequestBody RoleInfoRequest request,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            RoleInfoResponse created = roleInfoService.createRoleInfo(request);
+            return ResponseEntity.ok(created);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("권한 생성에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    // 특정 권한 정보 수정 (표시명, 설명)
+    @PutMapping("/role-infos/{id}")
+    public ResponseEntity<?> updateRoleInfo(
+            @PathVariable Long id,
+            @RequestBody RoleInfoRequest request,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            RoleInfoResponse updated = roleInfoService.updateRoleInfo(id, request);
+            return ResponseEntity.ok(updated);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("권한 정보 수정에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    // 권한 삭제 (기본 권한 보호)
+    @DeleteMapping("/role-infos/{id}")
+    public ResponseEntity<?> deleteRoleInfo(
+            @PathVariable Long id,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            roleInfoService.deleteRoleInfo(id);
+            return ResponseEntity.ok("권한이 삭제되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("권한 삭제에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    // 특정 권한을 가진 사용자 목록 조회
+    @GetMapping("/role-infos/{roleName}/users")
+    public ResponseEntity<?> getUsersByRole(
+            @PathVariable String roleName,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            RoleInfoResponse roleInfo = roleInfoService.getRoleInfoByRoleName(roleName.toUpperCase());
+            List<UserResponse> users = userService.getUsersByRole(roleName.toUpperCase()).stream()
+                    .map(UserResponse::from)
+                    .collect(Collectors.toList());
+            return ResponseEntity.ok(Map.of("roleInfo", roleInfo, "users", users));
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("사용자 목록 조회에 실패했습니다.");
+        }
+    }
+
+    // 권한 초기화 (기본 데이터 없을 때 수동 초기화)
+    @PostMapping("/role-infos/initialize")
+    public ResponseEntity<?> initializeRoleInfos(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            roleInfoService.initializeDefaultRoles();
+            return ResponseEntity.ok("권한 정보가 초기화되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("권한 초기화에 실패했습니다.");
+        }
+    }
+
     // 특정 권한의 CRUD 권한 저장
     @PostMapping("/crud-permissions/{role}")
     public ResponseEntity<?> saveCrudPermissionsByRole(

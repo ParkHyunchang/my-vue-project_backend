@@ -171,7 +171,7 @@ public class MenuPermissionService {
         
         defaultPermissions.put("ADMIN", Arrays.asList(
             "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys", "/todos", "/todos/create",
-            "/expense", "/admin", "/admin/users", "/admin/menu-management"
+            "/expense", "/admin", "/admin/users", "/admin/menu-management", "/admin/role-management"
         ));
 
         // DB가 비어있으면 전체 저장, 데이터가 있으면 누락된 경로만 추가

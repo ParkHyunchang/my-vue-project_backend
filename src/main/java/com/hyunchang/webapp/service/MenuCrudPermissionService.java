@@ -199,7 +199,8 @@ public class MenuCrudPermissionService {
             createPermissionMap("/expense", true, true, true, true),
             createPermissionMap("/admin", true, true, true, true),
             createPermissionMap("/admin/users", true, true, true, true),
-            createPermissionMap("/admin/menu-management", true, true, true, true)
+            createPermissionMap("/admin/menu-management", true, true, true, true),
+            createPermissionMap("/admin/role-management", true, true, true, true)
         );
         defaultPermissions.put("ADMIN", adminPermissions);
 

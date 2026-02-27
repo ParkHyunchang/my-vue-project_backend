@@ -1,6 +1,5 @@
 package com.hyunchang.webapp.dto;
 
-import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.entity.User;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -19,10 +18,10 @@ public class UserResponse {
     private String name;
     private String email;
     private String phone;
-    private Role role;
+    private String role;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
-    
+
     public static UserResponse from(User user) {
         return UserResponse.builder()
                 .id(user.getId())
