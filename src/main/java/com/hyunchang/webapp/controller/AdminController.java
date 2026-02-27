@@ -7,7 +7,6 @@ import com.hyunchang.webapp.dto.RoleInfoResponse;
 import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.dto.UpdateUserRoleRequest;
 import com.hyunchang.webapp.dto.UserResponse;
-import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
@@ -227,16 +226,11 @@ public class AdminController {
     public ResponseEntity<?> getMenuPermissionsByRole(
             @PathVariable String role,
             Authentication authentication) {
-        
         if (!isAdmin(authentication)) {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
         }
-        
         try {
-            Role roleEnum = Role.valueOf(role.toUpperCase());
-            return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRole(roleEnum));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body("잘못된 권한입니다: " + role);
+            return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRoleName(role.toUpperCase()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }

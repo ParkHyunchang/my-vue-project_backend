@@ -173,12 +173,7 @@ public class AuthController {
             }
             
             User user = userOptional.get();
-            try {
-                com.hyunchang.webapp.entity.Role roleEnum = com.hyunchang.webapp.entity.Role.valueOf(user.getRole());
-                return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRole(roleEnum));
-            } catch (IllegalArgumentException e) {
-                return ResponseEntity.ok(java.util.List.of());
-            }
+            return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRoleName(user.getRole()));
         } catch (Exception e) {
             System.out.println("사용자 메뉴 권한 조회 실패: " + e.getMessage());
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");

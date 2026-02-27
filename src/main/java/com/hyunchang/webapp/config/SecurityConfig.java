@@ -66,6 +66,7 @@ public class SecurityConfig {
                     "/webjars/**"
                 ).permitAll()
 
+                .requestMatchers("/api/admin/user-crud-permissions").authenticated()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
                 .requestMatchers("/api/premium/**").hasAnyRole("ADMIN", "PREMIUM")
                 .anyRequest().authenticated()
