@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.Expense;
-import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.service.ExpenseService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
@@ -35,8 +34,8 @@ public class ExpenseController {
     public ResponseEntity<?> findAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         
@@ -51,8 +50,8 @@ public class ExpenseController {
 
     @GetMapping("/{id}")
     public ResponseEntity<?> findById(@PathVariable Long id) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         return ResponseEntity.ok(expenseService.findById(id));
@@ -60,8 +59,8 @@ public class ExpenseController {
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Expense expense) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canCreate(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canCreate(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
         }
         return ResponseEntity.ok(expenseService.create(expense));
@@ -69,8 +68,8 @@ public class ExpenseController {
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Expense expense) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canUpdate(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canUpdate(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
         }
         return ResponseEntity.ok(expenseService.update(id, expense));
@@ -78,8 +77,8 @@ public class ExpenseController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canDelete(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canDelete(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
         }
         expenseService.delete(id);
@@ -88,8 +87,8 @@ public class ExpenseController {
 
     @GetMapping("/fixed")
     public ResponseEntity<?> findFixedExpenses() {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         return ResponseEntity.ok(expenseService.findFixedExpenses());
@@ -100,8 +99,8 @@ public class ExpenseController {
             @RequestParam String startDate,
             @RequestParam String endDate,
             @RequestParam(required = false) Boolean fixed) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/expense")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
 

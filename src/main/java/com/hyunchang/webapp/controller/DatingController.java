@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.Dating;
-import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.service.DatingService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
@@ -51,8 +50,8 @@ public class DatingController {
 
     @GetMapping
     public ResponseEntity<?> findAll() {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingService.findAll());
@@ -60,8 +59,8 @@ public class DatingController {
 
     @GetMapping("/{id}")
     public ResponseEntity<?> findById(@PathVariable Long id) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingService.findById(id));
@@ -69,8 +68,8 @@ public class DatingController {
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Dating dating) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canCreate(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canCreate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingService.create(dating));
@@ -78,8 +77,8 @@ public class DatingController {
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Dating dating) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canUpdate(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingService.update(id, dating));
@@ -87,8 +86,8 @@ public class DatingController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canDelete(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canDelete(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
         }
         datingService.delete(id);
@@ -97,8 +96,8 @@ public class DatingController {
 
     @DeleteMapping("/image")
     public ResponseEntity<?> deleteImage(@RequestParam("imagePath") String imagePath) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canDelete(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canDelete(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 삭제 권한이 없습니다.");
         }
         
@@ -112,8 +111,8 @@ public class DatingController {
 
     @PostMapping("/upload")
     public ResponseEntity<?> uploadImage(@RequestParam("file") MultipartFile file) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canUpdate(userRole, "/dating")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 업로드 권한이 없습니다.");
         }
         

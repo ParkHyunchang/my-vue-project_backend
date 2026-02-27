@@ -20,6 +20,32 @@ public class MenuCrudPermissionService {
     @PersistenceContext
     private EntityManager entityManager;
 
+    // ===== 권한별 CRUD 확인 =====
+
+    public boolean canRead(String roleName, String menuPath) {
+        if ("ADMIN".equals(roleName)) return true;
+        return menuCrudPermissionRepository.findByRoleNameAndMenuPath(roleName, menuPath)
+            .map(MenuCrudPermission::getCanRead).orElse(false);
+    }
+
+    public boolean canCreate(String roleName, String menuPath) {
+        if ("ADMIN".equals(roleName)) return true;
+        return menuCrudPermissionRepository.findByRoleNameAndMenuPath(roleName, menuPath)
+            .map(MenuCrudPermission::getCanCreate).orElse(false);
+    }
+
+    public boolean canUpdate(String roleName, String menuPath) {
+        if ("ADMIN".equals(roleName)) return true;
+        return menuCrudPermissionRepository.findByRoleNameAndMenuPath(roleName, menuPath)
+            .map(MenuCrudPermission::getCanUpdate).orElse(false);
+    }
+
+    public boolean canDelete(String roleName, String menuPath) {
+        if ("ADMIN".equals(roleName)) return true;
+        return menuCrudPermissionRepository.findByRoleNameAndMenuPath(roleName, menuPath)
+            .map(MenuCrudPermission::getCanDelete).orElse(false);
+    }
+
     // ===== 조회 =====
 
     public List<MenuCrudPermission> getPermissionsByRoleName(String roleName) {

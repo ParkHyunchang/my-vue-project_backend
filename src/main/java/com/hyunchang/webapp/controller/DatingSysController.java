@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.DatingSys;
-import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.service.DatingSysService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
@@ -47,8 +46,8 @@ public class DatingSysController {
 
     @GetMapping
     public ResponseEntity<?> findAll() {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingSysService.findAll());
@@ -56,8 +55,8 @@ public class DatingSysController {
 
     @GetMapping("/{id}")
     public ResponseEntity<?> findById(@PathVariable Long id) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canRead(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canRead(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingSysService.findById(id));
@@ -65,8 +64,8 @@ public class DatingSysController {
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody DatingSys datingSys) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canCreate(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canCreate(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingSysService.create(datingSys));
@@ -74,8 +73,8 @@ public class DatingSysController {
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody DatingSys datingSys) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canUpdate(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canUpdate(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
         }
         return ResponseEntity.ok(datingSysService.update(id, datingSys));
@@ -83,8 +82,8 @@ public class DatingSysController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canDelete(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canDelete(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
         }
         datingSysService.delete(id);
@@ -93,8 +92,8 @@ public class DatingSysController {
 
     @DeleteMapping("/image")
     public ResponseEntity<?> deleteImage(@RequestParam("imagePath") String imagePath) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canDelete(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canDelete(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 삭제 권한이 없습니다.");
         }
         try {
@@ -107,8 +106,8 @@ public class DatingSysController {
 
     @PostMapping("/upload")
     public ResponseEntity<?> uploadImage(@RequestParam("file") MultipartFile file) {
-        Role userRole = SecurityUtils.getCurrentUserRole();
-        if (!menuCrudPermissionService.canUpdate(userRole, "/dating_sys")) {
+        String roleName = SecurityUtils.getCurrentUserRoleName();
+        if (!menuCrudPermissionService.canUpdate(roleName, "/dating_sys")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 업로드 권한이 없습니다.");
         }
         try {
