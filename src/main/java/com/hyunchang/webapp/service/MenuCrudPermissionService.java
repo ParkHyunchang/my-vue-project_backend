@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.MenuCrudPermission;
-import com.hyunchang.webapp.entity.Role;
 import com.hyunchang.webapp.repository.MenuCrudPermissionRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -10,262 +9,115 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class MenuCrudPermissionService {
-    
+
     @Autowired
     private MenuCrudPermissionRepository menuCrudPermissionRepository;
-    
+
     @PersistenceContext
     private EntityManager entityManager;
-    
-    /**
-     * 사용자가 특정 메뉴에서 특정 CRUD 작업을 수행할 수 있는지 확인
-     */
-    public boolean hasPermission(Role userRole, String menuPath, String operation) {
-        // 관리자는 모든 권한을 가짐
-        if (userRole == Role.ADMIN) {
-            return true;
-        }
-        
-        // 특정 권한 확인
-        Optional<MenuCrudPermission> permission = menuCrudPermissionRepository
-            .findByRoleAndMenuPath(userRole, menuPath);
-        
-        if (permission.isEmpty()) {
-            return false;
-        }
-        
-        MenuCrudPermission perm = permission.get();
-        switch (operation.toUpperCase()) {
-            case "CREATE":
-                return perm.getCanCreate();
-            case "READ":
-                return perm.getCanRead();
-            case "UPDATE":
-                return perm.getCanUpdate();
-            case "DELETE":
-                return perm.getCanDelete();
-            default:
-                return false;
-        }
+
+    // ===== 조회 =====
+
+    public List<MenuCrudPermission> getPermissionsByRoleName(String roleName) {
+        return menuCrudPermissionRepository.findByRoleName(roleName);
     }
-    
-    /**
-     * 사용자가 특정 메뉴에서 삭제 권한이 있는지 확인
-     */
-    public boolean canDelete(Role userRole, String menuPath) {
-        return hasPermission(userRole, menuPath, "DELETE");
-    }
-    
-    /**
-     * 사용자가 특정 메뉴에서 생성 권한이 있는지 확인
-     */
-    public boolean canCreate(Role userRole, String menuPath) {
-        return hasPermission(userRole, menuPath, "CREATE");
-    }
-    
-    /**
-     * 사용자가 특정 메뉴에서 수정 권한이 있는지 확인
-     */
-    public boolean canUpdate(Role userRole, String menuPath) {
-        return hasPermission(userRole, menuPath, "UPDATE");
-    }
-    
-    /**
-     * 사용자가 특정 메뉴에서 조회 권한이 있는지 확인
-     */
-    public boolean canRead(Role userRole, String menuPath) {
-        return hasPermission(userRole, menuPath, "READ");
-    }
-    
-    /**
-     * 특정 권한의 모든 메뉴 CRUD 권한 조회
-     */
-    public List<MenuCrudPermission> getPermissionsByRole(Role role) {
-        return menuCrudPermissionRepository.findByRole(role);
-    }
-    
-    /**
-     * 특정 메뉴의 모든 권한별 CRUD 권한 조회
-     */
-    public List<MenuCrudPermission> getPermissionsByMenu(String menuPath) {
-        return menuCrudPermissionRepository.findByMenuPath(menuPath);
-    }
-    
-    /**
-     * 모든 CRUD 권한 조회 (권한별로 그룹화)
-     */
+
     public Map<String, List<MenuCrudPermission>> getAllCrudPermissions() {
-        List<MenuCrudPermission> permissions = menuCrudPermissionRepository.findAll();
-        Map<String, List<MenuCrudPermission>> result = new HashMap<>();
-        
-        // 각 역할별로 그룹화
-        Map<Role, List<MenuCrudPermission>> groupedByRole = permissions.stream()
-            .collect(java.util.stream.Collectors.groupingBy(MenuCrudPermission::getRole));
-        
-        // 기본값 설정 (빈 리스트)
-        result.put("USER", new ArrayList<>());
-        result.put("PREMIUM", new ArrayList<>());
-        result.put("ADMIN", new ArrayList<>());
-        
-        // 실제 권한 데이터 설정
-        groupedByRole.forEach((role, perms) -> {
-            result.put(role.name(), perms);
-        });
-        
-        return result;
+        List<MenuCrudPermission> all = menuCrudPermissionRepository.findAll();
+        return all.stream().collect(Collectors.groupingBy(MenuCrudPermission::getRoleName));
     }
-    
-    /**
-     * CRUD 권한 저장 (전체 권한 업데이트)
-     */
+
+    // ===== 저장 (권한별 전체 교체) =====
+
     @Transactional
-    public void saveCrudPermissions(Map<String, List<Map<String, Object>>> permissions) {
-        try {
-            // 기존 권한 모두 삭제
-            menuCrudPermissionRepository.deleteAll();
-            entityManager.flush(); // 즉시 DB에 반영
-            entityManager.clear(); // 영속성 컨텍스트 초기화
-            
-            // 새로운 권한 저장
-            List<MenuCrudPermission> newPermissions = new ArrayList<>();
-            
-            permissions.forEach((roleName, menuPermissions) -> {
-                try {
-                    Role role = Role.valueOf(roleName);
-                    menuPermissions.forEach(menuPerm -> {
-                        String menuPath = (String) menuPerm.get("menuPath");
-                        Boolean canCreate = (Boolean) menuPerm.get("canCreate");
-                        Boolean canRead = (Boolean) menuPerm.get("canRead");
-                        Boolean canUpdate = (Boolean) menuPerm.get("canUpdate");
-                        Boolean canDelete = (Boolean) menuPerm.get("canDelete");
-                        
-                        newPermissions.add(new MenuCrudPermission(
-                            role, menuPath, canCreate, canRead, canUpdate, canDelete
-                        ));
-                    });
-                } catch (IllegalArgumentException e) {
-                    System.out.println("Invalid role: " + roleName);
-                }
-            });
-            
-            if (!newPermissions.isEmpty()) {
-                menuCrudPermissionRepository.saveAll(newPermissions);
-            }
-        } catch (Exception e) {
-            System.out.println("Error saving CRUD permissions: " + e.getMessage());
-            e.printStackTrace();
-            throw e;
-        }
+    public void saveRoleCrudPermissions(String roleName, Map<String, Map<String, Boolean>> menuMap) {
+        menuCrudPermissionRepository.deleteByRoleName(roleName);
+        entityManager.flush();
+        entityManager.clear();
+
+        List<MenuCrudPermission> toSave = new ArrayList<>();
+        menuMap.forEach((menuPath, perms) -> toSave.add(new MenuCrudPermission(
+            roleName, menuPath,
+            perms.getOrDefault("canCreate", false),
+            perms.getOrDefault("canRead", false),
+            perms.getOrDefault("canUpdate", false),
+            perms.getOrDefault("canDelete", false)
+        )));
+        menuCrudPermissionRepository.saveAll(toSave);
     }
-    
-    /**
-     * 기본 CRUD 권한 초기화 (시스템 초기 설정용)
-     * 기존 데이터가 있어도 누락된 경로만 추가하는 방식으로 동작
-     */
+
+    // ===== 초기화 =====
+
     @Transactional
     public void initializeDefaultCrudPermissions() {
-        Map<String, List<Map<String, Object>>> defaultPermissions = new HashMap<>();
+        Map<String, List<Map<String, Object>>> defaults = new HashMap<>();
 
-        List<Map<String, Object>> userPermissions = Arrays.asList(
-            createPermissionMap("/", false, true, false, false),
-            createPermissionMap("/portfolio", false, true, false, false),
-            createPermissionMap("/projects", false, true, false, false),
-            createPermissionMap("/todos", false, true, false, false),
-            createPermissionMap("/todos/create", false, true, false, false)
-        );
-        defaultPermissions.put("USER", userPermissions);
-
-        List<Map<String, Object>> premiumPermissions = new ArrayList<>(userPermissions);
-        premiumPermissions.addAll(Arrays.asList(
-            createPermissionMap("/history", false, true, false, false),
-            createPermissionMap("/dating", true, true, true, false),
-            createPermissionMap("/dating_sys", true, true, true, false),
-            createPermissionMap("/expense", false, true, false, false)
+        defaults.put("USER", Arrays.asList(
+            perm("/", false, true, false, false),
+            perm("/portfolio", false, true, false, false),
+            perm("/projects", false, true, false, false),
+            perm("/todos", false, true, false, false),
+            perm("/todos/create", false, true, false, false)
         ));
-        defaultPermissions.put("PREMIUM", premiumPermissions);
 
-        List<Map<String, Object>> adminPermissions = Arrays.asList(
-            createPermissionMap("/", true, true, true, true),
-            createPermissionMap("/portfolio", true, true, true, true),
-            createPermissionMap("/projects", true, true, true, true),
-            createPermissionMap("/history", true, true, true, true),
-            createPermissionMap("/dating", true, true, true, true),
-            createPermissionMap("/dating_sys", true, true, true, true),
-            createPermissionMap("/todos", true, true, true, true),
-            createPermissionMap("/todos/create", true, true, true, true),
-            createPermissionMap("/expense", true, true, true, true),
-            createPermissionMap("/admin", true, true, true, true),
-            createPermissionMap("/admin/users", true, true, true, true),
-            createPermissionMap("/admin/menu-management", true, true, true, true),
-            createPermissionMap("/admin/role-management", true, true, true, true)
-        );
-        defaultPermissions.put("ADMIN", adminPermissions);
+        List<Map<String, Object>> premium = new ArrayList<>(defaults.get("USER"));
+        premium.addAll(Arrays.asList(
+            perm("/history", false, true, false, false),
+            perm("/dating", true, true, true, false),
+            perm("/dating_sys", true, true, true, false),
+            perm("/expense", false, true, false, false)
+        ));
+        defaults.put("PREMIUM", premium);
 
-        if (menuCrudPermissionRepository.count() == 0) {
-            saveCrudPermissions(defaultPermissions);
-        } else {
-            defaultPermissions.forEach((roleName, menuPermissions) -> {
-                try {
-                    Role role = Role.valueOf(roleName);
-                    List<String> existingPaths = menuCrudPermissionRepository.findByRole(role)
-                        .stream()
-                        .map(MenuCrudPermission::getMenuPath)
-                        .collect(java.util.stream.Collectors.toList());
+        defaults.put("ADMIN", Arrays.asList(
+            perm("/", true, true, true, true),
+            perm("/portfolio", true, true, true, true),
+            perm("/projects", true, true, true, true),
+            perm("/history", true, true, true, true),
+            perm("/dating", true, true, true, true),
+            perm("/dating_sys", true, true, true, true),
+            perm("/todos", true, true, true, true),
+            perm("/todos/create", true, true, true, true),
+            perm("/expense", true, true, true, true),
+            perm("/admin", true, true, true, true),
+            perm("/admin/users", true, true, true, true),
+            perm("/admin/menu-management", true, true, true, true),
+            perm("/admin/role-management", true, true, true, true)
+        ));
 
-                    List<MenuCrudPermission> missing = menuPermissions.stream()
-                        .filter(perm -> !existingPaths.contains((String) perm.get("menuPath")))
-                        .map(perm -> new MenuCrudPermission(
-                            role,
-                            (String) perm.get("menuPath"),
-                            (Boolean) perm.get("canCreate"),
-                            (Boolean) perm.get("canRead"),
-                            (Boolean) perm.get("canUpdate"),
-                            (Boolean) perm.get("canDelete")
-                        ))
-                        .collect(java.util.stream.Collectors.toList());
+        defaults.forEach((roleName, menuPerms) -> {
+            List<String> existing = menuCrudPermissionRepository.findByRoleName(roleName)
+                .stream().map(MenuCrudPermission::getMenuPath).collect(Collectors.toList());
 
-                    if (!missing.isEmpty()) {
-                        menuCrudPermissionRepository.saveAll(missing);
-                    }
-                } catch (IllegalArgumentException e) {
-                    System.out.println("Invalid role: " + roleName);
-                }
-            });
-        }
-    }
-    
-    /**
-     * 특정 권한의 CRUD 권한 업데이트
-     */
-    @Transactional
-    public void updateRoleCrudPermissions(Role role, List<MenuCrudPermission> permissions) {
-        try {
-            // 해당 권한의 기존 권한 삭제
-            menuCrudPermissionRepository.deleteByRole(role);
-            
-            // 새로운 권한 저장
-            if (!permissions.isEmpty()) {
-                menuCrudPermissionRepository.saveAll(permissions);
+            List<MenuCrudPermission> missing = menuPerms.stream()
+                .filter(p -> !existing.contains((String) p.get("menuPath")))
+                .map(p -> new MenuCrudPermission(
+                    roleName,
+                    (String) p.get("menuPath"),
+                    (Boolean) p.get("canCreate"),
+                    (Boolean) p.get("canRead"),
+                    (Boolean) p.get("canUpdate"),
+                    (Boolean) p.get("canDelete")
+                ))
+                .collect(Collectors.toList());
+
+            if (!missing.isEmpty()) {
+                menuCrudPermissionRepository.saveAll(missing);
             }
-        } catch (Exception e) {
-            System.out.println("Error updating role CRUD permissions: " + e.getMessage());
-            throw e;
-        }
+        });
     }
-    
-    /**
-     * 권한 맵 생성 헬퍼 메서드
-     */
-    private Map<String, Object> createPermissionMap(String menuPath, Boolean canCreate, Boolean canRead, Boolean canUpdate, Boolean canDelete) {
-        Map<String, Object> permission = new HashMap<>();
-        permission.put("menuPath", menuPath);
-        permission.put("canCreate", canCreate);
-        permission.put("canRead", canRead);
-        permission.put("canUpdate", canUpdate);
-        permission.put("canDelete", canDelete);
-        return permission;
+
+    private Map<String, Object> perm(String path, boolean c, boolean r, boolean u, boolean d) {
+        Map<String, Object> m = new HashMap<>();
+        m.put("menuPath", path);
+        m.put("canCreate", c);
+        m.put("canRead", r);
+        m.put("canUpdate", u);
+        m.put("canDelete", d);
+        return m;
     }
 }
