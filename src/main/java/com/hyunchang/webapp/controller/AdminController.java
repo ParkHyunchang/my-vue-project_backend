@@ -402,7 +402,7 @@ public class AdminController {
     // ===== 메뉴 정의 관리 API =====
 
     // 전체 메뉴 정의 조회 (관리자 전용)
-    @GetMapping("/menu-definitions")
+    @GetMapping("/menus")
     public ResponseEntity<?> getAllMenuDefinitions(Authentication authentication) {
         if (!isAdmin(authentication)) {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
@@ -415,7 +415,7 @@ public class AdminController {
     }
 
     // 메뉴 정의 생성
-    @PostMapping("/menu-definitions")
+    @PostMapping("/menus")
     public ResponseEntity<?> createMenuDefinition(
             @RequestBody MenuDefinitionRequest request,
             Authentication authentication) {
@@ -431,7 +431,7 @@ public class AdminController {
     }
 
     // 메뉴 정의 수정
-    @PutMapping("/menu-definitions/{id}")
+    @PutMapping("/menus/{id}")
     public ResponseEntity<?> updateMenuDefinition(
             @PathVariable Long id,
             @RequestBody MenuDefinitionRequest request,
@@ -448,7 +448,7 @@ public class AdminController {
     }
 
     // 메뉴 정의 삭제
-    @DeleteMapping("/menu-definitions/{id}")
+    @DeleteMapping("/menus/{id}")
     public ResponseEntity<?> deleteMenuDefinition(
             @PathVariable Long id,
             Authentication authentication) {

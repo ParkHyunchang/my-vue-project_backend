@@ -160,7 +160,7 @@ public class AuthController {
     }
     
     // 전체 메뉴 정의 조회 (인증된 사용자 누구나 가능 - 프론트엔드 store 초기화용)
-    @GetMapping("/menu-definitions")
+    @GetMapping("/menus")
     public ResponseEntity<?> getMenuDefinitions(Authentication authentication) {
         try {
             if (authentication == null || !authentication.isAuthenticated()) {
