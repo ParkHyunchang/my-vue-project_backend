@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.config;
 
+import com.hyunchang.webapp.service.MenuDefinitionService;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.service.RoleInfoService;
@@ -19,10 +20,14 @@ public class MenuPermissionInitializer implements ApplicationRunner {
 
     @Autowired
     private RoleInfoService roleInfoService;
+
+    @Autowired
+    private MenuDefinitionService menuDefinitionService;
     
     @Override
     public void run(ApplicationArguments args) throws Exception {
         try {
+            menuDefinitionService.initializeDefaultMenuDefinitions();
             menuPermissionService.initializeDefaultPermissions();
             menuCrudPermissionService.initializeDefaultCrudPermissions();
             roleInfoService.initializeDefaultRoles();

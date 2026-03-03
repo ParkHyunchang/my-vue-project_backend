@@ -8,6 +8,7 @@ import com.hyunchang.webapp.dto.LoginRequest;
 import com.hyunchang.webapp.dto.RegisterRequest;
 import com.hyunchang.webapp.dto.ResetPasswordRequest;
 import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.service.MenuDefinitionService;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -31,6 +32,7 @@ public class AuthController {
     private final AuthenticationManager authenticationManager;
     private final UserService userService;
     private final MenuPermissionService menuPermissionService;
+    private final MenuDefinitionService menuDefinitionService;
     private final JwtUtil jwtUtil;
     
     @PostMapping("/register")
@@ -157,6 +159,19 @@ public class AuthController {
         }
     }
     
+    // 전체 메뉴 정의 조회 (인증된 사용자 누구나 가능 - 프론트엔드 store 초기화용)
+    @GetMapping("/menu-definitions")
+    public ResponseEntity<?> getMenuDefinitions(Authentication authentication) {
+        try {
+            if (authentication == null || !authentication.isAuthenticated()) {
+                return ResponseEntity.status(401).body("인증이 필요합니다.");
+            }
+            return ResponseEntity.ok(menuDefinitionService.getAllMenuDefinitions());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("메뉴 정의 조회에 실패했습니다.");
+        }
+    }
+
     // 현재 사용자의 메뉴 권한 조회 (인증된 사용자 누구나 가능)
     @GetMapping("/my-menu-permissions")
     public ResponseEntity<?> getMyMenuPermissions(Authentication authentication) {

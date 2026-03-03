@@ -1,6 +1,8 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.dto.CreateUserRequest;
+import com.hyunchang.webapp.dto.MenuDefinitionRequest;
+import com.hyunchang.webapp.dto.MenuDefinitionResponse;
 import com.hyunchang.webapp.dto.MenuPermissionRequest;
 import com.hyunchang.webapp.dto.RoleInfoRequest;
 import com.hyunchang.webapp.dto.RoleInfoResponse;
@@ -8,6 +10,7 @@ import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.dto.UpdateUserRoleRequest;
 import com.hyunchang.webapp.dto.UserResponse;
 import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.service.MenuDefinitionService;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.service.RoleInfoService;
@@ -32,6 +35,7 @@ public class AdminController {
     private final MenuPermissionService menuPermissionService;
     private final MenuCrudPermissionService menuCrudPermissionService;
     private final RoleInfoService roleInfoService;
+    private final MenuDefinitionService menuDefinitionService;
     
     // 관리자 권한 확인
     private boolean isAdmin(Authentication authentication) {
@@ -392,6 +396,70 @@ public class AdminController {
             return ResponseEntity.ok("권한 정보가 초기화되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 초기화에 실패했습니다.");
+        }
+    }
+
+    // ===== 메뉴 정의 관리 API =====
+
+    // 전체 메뉴 정의 조회 (관리자 전용)
+    @GetMapping("/menu-definitions")
+    public ResponseEntity<?> getAllMenuDefinitions(Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            return ResponseEntity.ok(menuDefinitionService.getAllMenuDefinitions());
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("메뉴 정의 조회에 실패했습니다.");
+        }
+    }
+
+    // 메뉴 정의 생성
+    @PostMapping("/menu-definitions")
+    public ResponseEntity<?> createMenuDefinition(
+            @RequestBody MenuDefinitionRequest request,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            MenuDefinitionResponse created = menuDefinitionService.createMenuDefinition(request);
+            return ResponseEntity.ok(created);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("메뉴 생성에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    // 메뉴 정의 수정
+    @PutMapping("/menu-definitions/{id}")
+    public ResponseEntity<?> updateMenuDefinition(
+            @PathVariable Long id,
+            @RequestBody MenuDefinitionRequest request,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            MenuDefinitionResponse updated = menuDefinitionService.updateMenuDefinition(id, request);
+            return ResponseEntity.ok(updated);
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("메뉴 수정에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    // 메뉴 정의 삭제
+    @DeleteMapping("/menu-definitions/{id}")
+    public ResponseEntity<?> deleteMenuDefinition(
+            @PathVariable Long id,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            menuDefinitionService.deleteMenuDefinition(id);
+            return ResponseEntity.ok("메뉴가 삭제되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("메뉴 삭제에 실패했습니다: " + e.getMessage());
         }
     }
 
