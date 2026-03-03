@@ -45,6 +45,9 @@ public class MenuDefinition {
     @Column(name = "sort_order")
     private int sortOrder = 0;
 
+    @Column(name = "parent_path", length = 255)
+    private String parentPath;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
@@ -67,6 +70,13 @@ public class MenuDefinition {
     public MenuDefinition(String path, String name, String icon, String description,
                           String category, boolean isRequired, boolean showInNav,
                           String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder) {
+        this(path, name, icon, description, category, isRequired, showInNav,
+             navLabel, isAdminSubMenu, defaultRoles, sortOrder, null);
+    }
+
+    public MenuDefinition(String path, String name, String icon, String description,
+                          String category, boolean isRequired, boolean showInNav,
+                          String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder, String parentPath) {
         this.path = path;
         this.name = name;
         this.icon = icon;
@@ -78,6 +88,7 @@ public class MenuDefinition {
         this.isAdminSubMenu = isAdminSubMenu;
         this.defaultRoles = defaultRoles;
         this.sortOrder = sortOrder;
+        this.parentPath = parentPath;
     }
 
     public Long getId() { return id; }
@@ -104,6 +115,8 @@ public class MenuDefinition {
     public void setDefaultRoles(String defaultRoles) { this.defaultRoles = defaultRoles; }
     public int getSortOrder() { return sortOrder; }
     public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
+    public String getParentPath() { return parentPath; }
+    public void setParentPath(String parentPath) { this.parentPath = parentPath; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

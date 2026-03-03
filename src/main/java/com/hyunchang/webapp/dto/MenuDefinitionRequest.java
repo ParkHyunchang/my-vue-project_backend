@@ -12,6 +12,7 @@ public class MenuDefinitionRequest {
     private Boolean isAdminSubMenu;
     private String defaultRoles;
     private Integer sortOrder;
+    private String parentPath;
 
     public String getPath() { return path; }
     public void setPath(String path) { this.path = path; }
@@ -35,4 +36,6 @@ public class MenuDefinitionRequest {
     public void setDefaultRoles(String defaultRoles) { this.defaultRoles = defaultRoles; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
+    public String getParentPath() { return parentPath; }
+    public void setParentPath(String parentPath) { this.parentPath = parentPath; }
 }

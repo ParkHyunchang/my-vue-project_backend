@@ -48,7 +48,8 @@ public class MenuDefinitionService {
             request.getNavLabel() != null ? request.getNavLabel().trim() : request.getName().trim(),
             request.getIsAdminSubMenu() != null && request.getIsAdminSubMenu(),
             request.getDefaultRoles() != null ? request.getDefaultRoles().trim() : "",
-            request.getSortOrder() != null ? request.getSortOrder() : 0
+            request.getSortOrder() != null ? request.getSortOrder() : 0,
+            request.getParentPath() != null && !request.getParentPath().isBlank() ? request.getParentPath().trim() : null
         );
 
         return MenuDefinitionResponse.from(menuDefinitionRepository.save(menu));
@@ -89,6 +90,9 @@ public class MenuDefinitionService {
         if (request.getSortOrder() != null) {
             menu.setSortOrder(request.getSortOrder());
         }
+        if (request.getParentPath() != null) {
+            menu.setParentPath(request.getParentPath().isBlank() ? null : request.getParentPath().trim());
+        }
 
         return MenuDefinitionResponse.from(menuDefinitionRepository.save(menu));
     }
@@ -101,27 +105,28 @@ public class MenuDefinitionService {
         menuDefinitionRepository.deleteById(id);
     }
 
-    // 앱 시작 시 기본 메뉴 정의 초기화 (이미 존재하면 스킵)
+    // 앱 시작 시 기본 메뉴 정의 초기화 (이미 존재하면 스킵) + 기존 레코드 마이그레이션
     @Transactional
     public void initializeDefaultMenuDefinitions() {
         record DefaultMenu(String path, String name, String icon, String description,
                            String category, boolean isRequired, boolean showInNav,
-                           String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder) {}
+                           String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder, String parentPath) {}
 
         List<DefaultMenu> defaults = List.of(
-            new DefaultMenu("/", "홈", "🏠", "메인 홈페이지", "main", true, true, "HOME", false, "USER,PREMIUM,ADMIN", 1),
-            new DefaultMenu("/portfolio", "포트폴리오", "💼", "개인 포트폴리오 페이지", "main", false, true, "PORTFOLIO", false, "USER,PREMIUM,ADMIN", 2),
-            new DefaultMenu("/projects", "프로젝트", "🚀", "프로젝트 관리 및 조회", "work", false, true, "PROJECTS", false, "USER,PREMIUM,ADMIN", 3),
-            new DefaultMenu("/history", "히스토리", "📚", "작업 이력 및 기록", "work", false, true, "HISTORY", false, "PREMIUM,ADMIN", 4),
-            new DefaultMenu("/dating", "데이팅", "💕", "데이팅 관련 기능", "personal", false, true, "DATING", false, "PREMIUM,ADMIN", 5),
-            new DefaultMenu("/dating_sys", "데이팅 추억", "📸", "데이팅 추억 기록", "personal", false, true, "DATING SYS", false, "PREMIUM,ADMIN", 6),
-            new DefaultMenu("/todos", "할일 목록", "📝", "할일 관리", "productivity", false, true, "TODOS", false, "USER,PREMIUM,ADMIN", 7),
-            new DefaultMenu("/todos/create", "할일 생성", "➕", "새로운 할일 추가", "productivity", false, false, "할일 생성", false, "USER,PREMIUM,ADMIN", 8),
-            new DefaultMenu("/expense", "지출 관리", "💰", "지출 내역 관리", "finance", false, true, "가계부", false, "ADMIN", 9),
-            new DefaultMenu("/admin", "관리자 대시보드", "🎛️", "관리자 메인 대시보드", "admin", false, false, "관리자 대시보드", false, "ADMIN", 10),
-            new DefaultMenu("/admin/users", "사용자 관리", "👥", "사용자 계정 관리", "admin", false, false, "사용자 관리", true, "ADMIN", 11),
-            new DefaultMenu("/admin/menu-management", "권한별 접근메뉴관리", "🔐", "메뉴 접근 권한 설정", "admin", false, false, "권한별 접근메뉴관리", true, "ADMIN", 12),
-            new DefaultMenu("/admin/role-management", "권한 관리", "🛡️", "사용자 권한(Role) 관리", "admin", false, false, "권한 관리", true, "ADMIN", 13)
+            new DefaultMenu("/", "홈", "🏠", "메인 홈페이지", "main", true, true, "HOME", false, "USER,PREMIUM,ADMIN", 1, null),
+            new DefaultMenu("/portfolio", "포트폴리오", "💼", "개인 포트폴리오 페이지", "main", false, true, "PORTFOLIO", false, "USER,PREMIUM,ADMIN", 2, null),
+            new DefaultMenu("/projects", "프로젝트", "🚀", "프로젝트 관리 및 조회", "work", false, true, "PROJECTS", false, "USER,PREMIUM,ADMIN", 3, null),
+            new DefaultMenu("/history", "히스토리", "📚", "작업 이력 및 기록", "work", false, true, "HISTORY", false, "PREMIUM,ADMIN", 4, null),
+            new DefaultMenu("/dating", "데이팅", "💕", "데이팅 관련 기능", "personal", false, true, "DATING", false, "PREMIUM,ADMIN", 5, null),
+            new DefaultMenu("/dating_sys", "데이팅 추억", "📸", "데이팅 추억 기록", "personal", false, false, "DATING SYS", false, "PREMIUM,ADMIN", 6, "/dating"),
+            new DefaultMenu("/todos", "할일 목록", "📝", "할일 관리", "productivity", false, true, "TODOS", false, "USER,PREMIUM,ADMIN", 7, null),
+            new DefaultMenu("/todos/create", "할일 생성", "➕", "새로운 할일 추가", "productivity", false, false, "할일 생성", false, "USER,PREMIUM,ADMIN", 8, null),
+            new DefaultMenu("/expense", "지출 관리", "💰", "지출 내역 관리", "finance", false, true, "가계부", false, "ADMIN", 9, null),
+            new DefaultMenu("/admin", "관리자 대시보드", "🎛️", "관리자 메인 대시보드", "admin", false, false, "관리자 대시보드", false, "ADMIN", 10, null),
+            new DefaultMenu("/admin/users", "사용자 관리", "👥", "사용자 계정 관리", "admin", false, false, "사용자 관리", true, "ADMIN", 11, null),
+            new DefaultMenu("/admin/menu-management", "권한별 접근메뉴관리", "🔐", "메뉴 접근 권한 설정", "admin", false, false, "권한별 접근메뉴관리", true, "ADMIN", 12, null),
+            new DefaultMenu("/admin/role-management", "권한 관리", "🛡️", "사용자 권한(Role) 관리", "admin", false, false, "권한 관리", true, "ADMIN", 13, null),
+            new DefaultMenu("/admin/menu-definition", "메뉴 정의 관리", "📋", "메뉴 목록 조회 및 정의 관리", "admin", false, false, "메뉴 정의 관리", true, "ADMIN", 14, null)
         );
 
         for (DefaultMenu d : defaults) {
@@ -129,9 +134,25 @@ public class MenuDefinitionService {
                 menuDefinitionRepository.save(new MenuDefinition(
                     d.path(), d.name(), d.icon(), d.description(),
                     d.category(), d.isRequired(), d.showInNav(),
-                    d.navLabel(), d.isAdminSubMenu(), d.defaultRoles(), d.sortOrder()
+                    d.navLabel(), d.isAdminSubMenu(), d.defaultRoles(), d.sortOrder(), d.parentPath()
                 ));
             }
         }
+
+        // 기존 레코드 마이그레이션: parentPath가 없는 /dating_sys를 업데이트
+        menuDefinitionRepository.findByPath("/dating_sys").ifPresent(menu -> {
+            boolean needsUpdate = false;
+            if (menu.getParentPath() == null || menu.getParentPath().isBlank()) {
+                menu.setParentPath("/dating");
+                needsUpdate = true;
+            }
+            if (menu.isShowInNav()) {
+                menu.setShowInNav(false);
+                needsUpdate = true;
+            }
+            if (needsUpdate) {
+                menuDefinitionRepository.save(menu);
+            }
+        });
     }
 }

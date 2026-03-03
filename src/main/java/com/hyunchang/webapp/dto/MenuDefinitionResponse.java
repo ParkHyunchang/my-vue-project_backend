@@ -18,6 +18,7 @@ public class MenuDefinitionResponse {
     private boolean isAdminSubMenu;
     private List<String> defaultRoles;
     private int sortOrder;
+    private String parentPath;
 
     public static MenuDefinitionResponse from(MenuDefinition m) {
         MenuDefinitionResponse r = new MenuDefinitionResponse();
@@ -32,6 +33,8 @@ public class MenuDefinitionResponse {
         r.navLabel = m.getNavLabel();
         r.isAdminSubMenu = m.isAdminSubMenu();
         r.sortOrder = m.getSortOrder();
+
+        r.parentPath = m.getParentPath();
 
         if (m.getDefaultRoles() != null && !m.getDefaultRoles().isBlank()) {
             r.defaultRoles = Arrays.asList(m.getDefaultRoles().split(","));
@@ -53,4 +56,5 @@ public class MenuDefinitionResponse {
     public boolean isAdminSubMenu() { return isAdminSubMenu; }
     public List<String> getDefaultRoles() { return defaultRoles; }
     public int getSortOrder() { return sortOrder; }
+    public String getParentPath() { return parentPath; }
 }
