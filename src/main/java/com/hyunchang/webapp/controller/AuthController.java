@@ -11,7 +11,10 @@ import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuDefinitionService;
 import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.UserService;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -28,7 +31,9 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class AuthController {
-    
+
+    private static final Logger log = LoggerFactory.getLogger(AuthController.class);
+
     private final AuthenticationManager authenticationManager;
     private final UserService userService;
     private final MenuPermissionService menuPermissionService;
@@ -68,10 +73,12 @@ public class AuthController {
     }
     
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+        String ip = httpRequest.getRemoteAddr();
         try {
             // 먼저 사용자 존재 여부 확인
             if (!userService.existsByUserId(request.getUsername())) {
+                log.warn("[LOGIN FAIL] reason=USER_NOT_FOUND, user_id={}, ip={}", request.getUsername(), ip);
                 AuthResponse response = AuthResponse.builder()
                     .message("로그인 실패: 존재하지 않는 아이디입니다.")
                     .build();
@@ -86,7 +93,9 @@ public class AuthController {
             String token = jwtUtil.generateToken(userDetails);
             
             User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
-            
+
+            log.info("[LOGIN SUCCESS] user_id={}, role={}, ip={}", user.getUserId(), user.getRole(), ip);
+
             AuthResponse response = AuthResponse.builder()
                 .token(token)
                 .username(user.getUserId())
@@ -97,12 +106,13 @@ public class AuthController {
             
             return ResponseEntity.ok(response);
         } catch (org.springframework.security.authentication.BadCredentialsException e) {
-            // 사용자는 존재하지만 비밀번호가 틀린 경우
+            log.warn("[LOGIN FAIL] reason=WRONG_PASSWORD, user_id={}, ip={}", request.getUsername(), ip);
             AuthResponse response = AuthResponse.builder()
                 .message("로그인 실패: 비밀번호가 올바르지 않습니다.")
                 .build();
             return ResponseEntity.badRequest().body(response);
         } catch (Exception e) {
+            log.warn("[LOGIN FAIL] reason=ERROR, user_id={}, ip={}, error={}", request.getUsername(), ip, e.getMessage());
             AuthResponse response = AuthResponse.builder()
                 .message("로그인 실패: " + e.getMessage())
                 .build();

@@ -4,6 +4,8 @@ import com.hyunchang.webapp.entity.Dating;
 import com.hyunchang.webapp.service.DatingService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,6 +21,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/dating")
 public class DatingController {
+    private static final Logger log = LoggerFactory.getLogger(DatingController.class);
     private final DatingService datingService;
     private final MenuCrudPermissionService menuCrudPermissionService;
     private static final String UPLOAD_DIR = getUploadDirectory();
@@ -72,7 +75,12 @@ public class DatingController {
         if (!menuCrudPermissionService.canCreate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
         }
-        return ResponseEntity.ok(datingService.create(dating));
+        Dating created = datingService.create(dating);
+        log.info("[DATING] user={}, action=CREATE, id={}, title={}, date={}, category={}",
+                SecurityUtils.getCurrentUserId(), created.getId(),
+                created.getTitle(), created.getDate() != null ? created.getDate() : created.getStartDate(),
+                created.getCategory());
+        return ResponseEntity.ok(created);
     }
 
     @PutMapping("/{id}")
@@ -81,7 +89,10 @@ public class DatingController {
         if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
         }
-        return ResponseEntity.ok(datingService.update(id, dating));
+        Dating updated = datingService.update(id, dating);
+        log.info("[DATING] user={}, action=UPDATE, id={}, title={}",
+                SecurityUtils.getCurrentUserId(), id, updated.getTitle());
+        return ResponseEntity.ok(updated);
     }
 
     @DeleteMapping("/{id}")
@@ -90,7 +101,11 @@ public class DatingController {
         if (!menuCrudPermissionService.canDelete(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
         }
+        Dating target = datingService.findById(id);
+        String title = target != null ? target.getTitle() : "id=" + id;
         datingService.delete(id);
+        log.info("[DATING] user={}, action=DELETE, id={}, title={}",
+                SecurityUtils.getCurrentUserId(), id, title);
         return ResponseEntity.ok().body("삭제되었습니다.");
     }
 
@@ -103,6 +118,8 @@ public class DatingController {
         
         try {
             datingService.deleteImageFile(imagePath);
+            log.info("[DATING] user={}, action=DELETE_IMAGE, path={}",
+                    SecurityUtils.getCurrentUserId(), imagePath);
             return ResponseEntity.ok("미디어가 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("미디어 삭제에 실패했습니다: " + e.getMessage());
@@ -139,6 +156,8 @@ public class DatingController {
 
             // 저장된 파일의 URL 반환
             String fileUrl = "/uploads/images/dating/" + uniqueFilename;
+            log.info("[DATING] user={}, action=UPLOAD_IMAGE, filename={}",
+                    SecurityUtils.getCurrentUserId(), uniqueFilename);
             return ResponseEntity.ok(fileUrl);
 
         } catch (IOException e) {

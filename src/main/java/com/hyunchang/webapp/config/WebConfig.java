@@ -1,11 +1,13 @@
 package com.hyunchang.webapp.config;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.lang.NonNull;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
+import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -13,6 +15,19 @@ import java.util.Arrays;
 
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
+
+    @Autowired
+    private ActivityLogInterceptor activityLogInterceptor;
+
+    @Override
+    public void addInterceptors(@NonNull InterceptorRegistry registry) {
+        registry.addInterceptor(activityLogInterceptor)
+                .addPathPatterns("/**")
+                .excludePathPatterns(
+                        "/api/auth/check-username/**",
+                        "/api/auth/check-email/**"
+                );
+    }
 
     @Override
     public void addResourceHandlers(@NonNull ResourceHandlerRegistry registry) {

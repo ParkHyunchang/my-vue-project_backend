@@ -5,6 +5,14 @@ import org.springframework.security.core.context.SecurityContextHolder;
 
 public class SecurityUtils {
 
+    public static String getCurrentUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated()) {
+            return authentication.getName();
+        }
+        return "unknown";
+    }
+
     public static String getCurrentUserRoleName() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication != null && authentication.getAuthorities() != null

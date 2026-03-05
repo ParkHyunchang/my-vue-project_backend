@@ -16,6 +16,8 @@ import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.service.RoleInfoService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -30,7 +32,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
 public class AdminController {
-    
+
+    private static final Logger log = LoggerFactory.getLogger(AdminController.class);
+
     private final UserService userService;
     private final MenuPermissionService menuPermissionService;
     private final MenuCrudPermissionService menuCrudPermissionService;
@@ -95,6 +99,8 @@ public class AdminController {
         
         try {
             User updatedUser = userService.updateUserRole(id, request.getRole());
+            log.info("[ADMIN] admin={}, action=UPDATE_USER_ROLE, target_id={}, new_role={}",
+                    authentication.getName(), id, request.getRole());
             return ResponseEntity.ok(UserResponse.from(updatedUser));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 수정 실패: " + e.getMessage());
@@ -114,6 +120,8 @@ public class AdminController {
         
         try {
             User updatedUser = userService.updateUser(id, request);
+            log.info("[ADMIN] admin={}, action=UPDATE_USER, target_id={}",
+                    authentication.getName(), id);
             return ResponseEntity.ok(UserResponse.from(updatedUser));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("사용자 정보 수정 실패: " + e.getMessage());
@@ -128,7 +136,11 @@ public class AdminController {
         }
         
         try {
+            User targetUser = userService.findById(id).orElse(null);
+            String targetUserId = targetUser != null ? targetUser.getUserId() : "id=" + id;
             userService.deleteUser(id);
+            log.info("[ADMIN] admin={}, action=DELETE_USER, target_id={}, target_user_id={}",
+                    authentication.getName(), id, targetUserId);
             return ResponseEntity.ok("사용자가 성공적으로 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("사용자 삭제 실패: " + e.getMessage());
@@ -182,7 +194,8 @@ public class AdminController {
                 request.getPassword(), 
                 request.getRole()
             );
-            
+            log.info("[ADMIN] admin={}, action=CREATE_USER, new_user_id={}, role={}",
+                    authentication.getName(), request.getUserId(), request.getRole());
             return ResponseEntity.ok(UserResponse.from(user));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("사용자 생성 실패: " + e.getMessage());
@@ -219,6 +232,7 @@ public class AdminController {
             }
             
             menuPermissionService.saveMenuPermissions(request.getPermissions());
+            log.info("[ADMIN] admin={}, action=SAVE_MENU_PERMISSIONS", authentication.getName());
             return ResponseEntity.ok("메뉴 권한이 성공적으로 저장되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 권한 저장에 실패했습니다.");
@@ -248,6 +262,7 @@ public class AdminController {
         }
         try {
             menuCrudPermissionService.initializeDefaultCrudPermissions();
+            log.info("[ADMIN] admin={}, action=INIT_CRUD_PERMISSIONS", authentication.getName());
             return ResponseEntity.ok("기본 CRUD 권한이 초기화되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("CRUD 권한 초기화에 실패했습니다.");
@@ -296,6 +311,8 @@ public class AdminController {
         }
         try {
             menuCrudPermissionService.saveRoleCrudPermissions(role.toUpperCase(), permissionsData);
+            log.info("[ADMIN] admin={}, action=SAVE_CRUD_PERMISSIONS, role={}",
+                    authentication.getName(), role.toUpperCase());
             return ResponseEntity.ok("CRUD 권한이 저장되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("CRUD 권한 저장에 실패했습니다: " + e.getMessage());
@@ -327,6 +344,8 @@ public class AdminController {
         }
         try {
             RoleInfoResponse created = roleInfoService.createRoleInfo(request);
+            log.info("[ADMIN] admin={}, action=CREATE_ROLE, role_name={}",
+                    authentication.getName(), request.getRoleName());
             return ResponseEntity.ok(created);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 생성에 실패했습니다: " + e.getMessage());
@@ -344,6 +363,7 @@ public class AdminController {
         }
         try {
             RoleInfoResponse updated = roleInfoService.updateRoleInfo(id, request);
+            log.info("[ADMIN] admin={}, action=UPDATE_ROLE, id={}", authentication.getName(), id);
             return ResponseEntity.ok(updated);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 정보 수정에 실패했습니다: " + e.getMessage());
@@ -360,6 +380,7 @@ public class AdminController {
         }
         try {
             roleInfoService.deleteRoleInfo(id);
+            log.info("[ADMIN] admin={}, action=DELETE_ROLE, id={}", authentication.getName(), id);
             return ResponseEntity.ok("권한이 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 삭제에 실패했습니다: " + e.getMessage());
@@ -393,6 +414,7 @@ public class AdminController {
         }
         try {
             roleInfoService.initializeDefaultRoles();
+            log.info("[ADMIN] admin={}, action=INIT_ROLE_INFOS", authentication.getName());
             return ResponseEntity.ok("권한 정보가 초기화되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 초기화에 실패했습니다.");
@@ -424,6 +446,8 @@ public class AdminController {
         }
         try {
             MenuDefinitionResponse created = menuDefinitionService.createMenuDefinition(request);
+            log.info("[ADMIN] admin={}, action=CREATE_MENU, path={}, name={}",
+                    authentication.getName(), request.getPath(), request.getName());
             return ResponseEntity.ok(created);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 생성에 실패했습니다: " + e.getMessage());
@@ -441,6 +465,8 @@ public class AdminController {
         }
         try {
             MenuDefinitionResponse updated = menuDefinitionService.updateMenuDefinition(id, request);
+            log.info("[ADMIN] admin={}, action=UPDATE_MENU, id={}, name={}",
+                    authentication.getName(), id, request.getName());
             return ResponseEntity.ok(updated);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 수정에 실패했습니다: " + e.getMessage());
@@ -457,6 +483,7 @@ public class AdminController {
         }
         try {
             menuDefinitionService.deleteMenuDefinition(id);
+            log.info("[ADMIN] admin={}, action=DELETE_MENU, id={}", authentication.getName(), id);
             return ResponseEntity.ok("메뉴가 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 삭제에 실패했습니다: " + e.getMessage());
