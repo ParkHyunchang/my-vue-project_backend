@@ -114,8 +114,8 @@ public class MenuDefinitionService {
 
         List<DefaultMenu> defaults = List.of(
             new DefaultMenu("/", "홈", "🏠", "메인 홈페이지", "main", true, true, "HOME", false, "USER,PREMIUM,ADMIN", 1, null),
-            new DefaultMenu("/portfolio", "포트폴리오", "💼", "개인 포트폴리오 페이지", "main", false, true, "PORTFOLIO", false, "USER,PREMIUM,ADMIN", 2, null),
-            new DefaultMenu("/projects", "프로젝트", "🚀", "프로젝트 관리 및 조회", "work", false, true, "PROJECTS", false, "USER,PREMIUM,ADMIN", 3, null),
+            new DefaultMenu("/portfolio", "포트폴리오", "💼", "개인 포트폴리오 페이지", "main", false, false, "PORTFOLIO", false, "USER,PREMIUM,ADMIN", 2, null),
+            new DefaultMenu("/projects", "프로젝트", "🚀", "프로젝트 관리 및 조회", "work", false, false, "PROJECTS", false, "USER,PREMIUM,ADMIN", 3, null),
             new DefaultMenu("/history", "히스토리", "📚", "작업 이력 및 기록", "work", false, true, "HISTORY", false, "PREMIUM,ADMIN", 4, null),
             new DefaultMenu("/dating", "데이팅", "💕", "데이팅 관련 기능", "personal", false, true, "DATING", false, "PREMIUM,ADMIN", 5, null),
             new DefaultMenu("/dating_sys", "데이팅 추억", "📸", "데이팅 추억 기록", "personal", false, false, "DATING SYS", false, "PREMIUM,ADMIN", 6, "/dating"),
@@ -154,5 +154,15 @@ public class MenuDefinitionService {
                 menuDefinitionRepository.save(menu);
             }
         });
+
+        // 기존 레코드 마이그레이션: /portfolio, /projects는 홈 화면에 통합 - nav에서 숨김
+        for (String hiddenPath : new String[]{"/portfolio", "/projects"}) {
+            menuDefinitionRepository.findByPath(hiddenPath).ifPresent(menu -> {
+                if (menu.isShowInNav()) {
+                    menu.setShowInNav(false);
+                    menuDefinitionRepository.save(menu);
+                }
+            });
+        }
     }
 }
