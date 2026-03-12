@@ -17,4 +17,6 @@ public interface MenuCrudPermissionRepository extends JpaRepository<MenuCrudPerm
     List<MenuCrudPermission> findByMenuPath(String menuPath);
 
     void deleteByRoleName(String roleName);
+
+    void deleteByMenuPath(String menuPath);
 }

@@ -3,7 +3,9 @@ package com.hyunchang.webapp.service;
 import com.hyunchang.webapp.dto.MenuDefinitionRequest;
 import com.hyunchang.webapp.dto.MenuDefinitionResponse;
 import com.hyunchang.webapp.entity.MenuDefinition;
+import com.hyunchang.webapp.repository.MenuCrudPermissionRepository;
 import com.hyunchang.webapp.repository.MenuDefinitionRepository;
+import com.hyunchang.webapp.repository.MenuPermissionRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,6 +18,8 @@ import java.util.stream.Collectors;
 public class MenuDefinitionService {
 
     private final MenuDefinitionRepository menuDefinitionRepository;
+    private final MenuPermissionRepository menuPermissionRepository;
+    private final MenuCrudPermissionRepository menuCrudPermissionRepository;
 
     @Transactional(readOnly = true)
     public List<MenuDefinitionResponse> getAllMenuDefinitions() {
@@ -99,9 +103,17 @@ public class MenuDefinitionService {
 
     @Transactional
     public void deleteMenuDefinition(Long id) {
-        if (!menuDefinitionRepository.existsById(id)) {
-            throw new RuntimeException("메뉴를 찾을 수 없습니다.");
+        MenuDefinition menu = menuDefinitionRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("메뉴를 찾을 수 없습니다."));
+
+        if (menu.isRequired()) {
+            throw new RuntimeException("필수 메뉴(🔒 보호됨)는 삭제할 수 없습니다. '필수 메뉴' 설정을 해제한 후 삭제하세요.");
         }
+
+        // 연관된 권한 데이터를 먼저 삭제 (트랜잭션 보장)
+        menuPermissionRepository.deleteByMenuPath(menu.getPath());
+        menuCrudPermissionRepository.deleteByMenuPath(menu.getPath());
+
         menuDefinitionRepository.deleteById(id);
     }
 

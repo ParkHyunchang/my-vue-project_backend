@@ -15,5 +15,7 @@ public interface MenuPermissionRepository extends JpaRepository<MenuPermission, 
 
     void deleteByRoleName(String roleName);
 
+    void deleteByMenuPath(String menuPath);
+
     boolean existsByRoleNameAndMenuPath(String roleName, String menuPath);
 }
