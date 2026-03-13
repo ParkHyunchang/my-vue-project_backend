@@ -79,7 +79,7 @@ public class MenuPermissionService {
         ));
         defaults.put("ADMIN", Arrays.asList(
             "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys",
-            "/todos", "/todos/create", "/expense",
+            "/todos", "/todos/create", "/expense", "/stock",
             "/admin", "/admin/users", "/admin/menu-management", "/admin/role-management"
         ));
 
