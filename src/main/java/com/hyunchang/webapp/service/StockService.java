@@ -16,6 +16,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -50,22 +52,27 @@ public class StockService {
     private static final String AV_URL =
         "https://www.alphavantage.co/query?function=GLOBAL_QUOTE&symbol=%s&apikey=%s";
 
+    // KRX(한국거래소) Open API — KOSPI/KOSDAQ 시총 순위 (무료, 인증 불필요)
+    private static final String KRX_API_URL =
+        "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd";
+    private static final DateTimeFormatter KRX_DATE_FMT =
+        DateTimeFormatter.ofPattern("yyyyMMdd");
+
     // ─────────────────────────────────────────────────────────────
-    // 국내 Top 10 종목 정의
-    // symbol[0]=Alpha Vantage 심볼, symbol[1]=한국명, symbol[2]=발행주식수(2026 기준)
-    // 발행주식수는 연 1~2회 수준으로 거의 변하지 않음
+    // 국내 Top 10 종목 정의 (Yahoo Finance .KS 심볼)
+    // symbol[0]=Yahoo Finance 심볼, symbol[1]=한국명, symbol[2]=발행주식수(2026 기준)
     // ─────────────────────────────────────────────────────────────
     private static final List<String[]> KR_STOCKS = List.of(
-        new String[]{"005930.KRX", "삼성전자",           "5969782550"},
-        new String[]{"000660.KRX", "SK하이닉스",          "728002365"},
-        new String[]{"373220.KRX", "LG에너지솔루션",       "234000000"},
-        new String[]{"207940.KRX", "삼성바이오로직스",      "71174000"},
-        new String[]{"005380.KRX", "현대자동차",           "213668187"},
-        new String[]{"000270.KRX", "기아",                "404533515"},
-        new String[]{"005490.KRX", "POSCO홀딩스",          "87186835"},
-        new String[]{"006400.KRX", "삼성SDI",              "68764530"},
-        new String[]{"035420.KRX", "NAVER",              "164263395"},
-        new String[]{"105560.KRX", "KB금융",              "418593000"}
+        new String[]{"005930.KS", "삼성전자",           "5969782550"},
+        new String[]{"000660.KS", "SK하이닉스",          "728002365"},
+        new String[]{"373220.KS", "LG에너지솔루션",       "234000000"},
+        new String[]{"207940.KS", "삼성바이오로직스",      "71174000"},
+        new String[]{"005380.KS", "현대자동차",           "213668187"},
+        new String[]{"000270.KS", "기아",                "404533515"},
+        new String[]{"005490.KS", "POSCO홀딩스",          "87186835"},
+        new String[]{"006400.KS", "삼성SDI",              "68764530"},
+        new String[]{"035420.KS", "NAVER",              "164263395"},
+        new String[]{"105560.KS", "KB금융",              "418593000"}
     );
 
     // ─────────────────────────────────────────────────────────────
@@ -80,16 +87,18 @@ public class StockService {
         new String[]{"META",  "Meta",                 "2574000000"},
         new String[]{"TSLA",  "Tesla",                "3194000000"},
         new String[]{"AVGO",  "Broadcom",             "4667000000"},
-        new String[]{"BRK.B", "Berkshire Hathaway",  "2155000000"},
+        new String[]{"BRK-B", "Berkshire Hathaway",  "2155000000"},
         new String[]{"LLY",   "Eli Lilly",             "951000000"}
     );
 
     // ─────────────────────────────────────────────────────────────
-    // 6시간 인메모리 캐시 + 이전 순위 기억
+    // 6시간 인메모리 캐시 + 전일 기준 순위 (하루 1회만 갱신)
     // ─────────────────────────────────────────────────────────────
-    private final Map<String, List<StockQuoteDto>> quoteCache      = new ConcurrentHashMap<>();
-    private final Map<String, Long>                cacheTimes      = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Integer>> prevRanks      = new ConcurrentHashMap<>();
+    private final Map<String, List<StockQuoteDto>>  quoteCache  = new ConcurrentHashMap<>();
+    private final Map<String, Long>                 cacheTimes  = new ConcurrentHashMap<>();
+    // 순위 변동 기준점: 스케줄 갱신(KR 09:00 / US 23:30) 시에만 업데이트
+    // → 하루 종일 동일한 기준으로 화살표 표시 (네이버증권·Bloomberg 동일 방식)
+    private final Map<String, Map<String, Integer>> baseRanks   = new ConcurrentHashMap<>();
     // 포트폴리오 개별 종목 시세 캐시 (top10 외 종목용)
     private final Map<String, StockPriceDto>       singlePriceCache = new ConcurrentHashMap<>();
     private final Map<String, Long>                singlePriceTimes = new ConcurrentHashMap<>();
@@ -168,8 +177,29 @@ public class StockService {
     // 공개 메서드
     // ─────────────────────────────────────────────────────────────
 
+    /**
+     * 국내 시총 Top 10 — KRX API로 당일 실제 순위 동적 조회
+     * KRX 실패 시 하드코딩 목록으로 폴백
+     */
     public List<StockQuoteDto> getTop10KR() {
-        return getCachedOrFetch("KR", KR_STOCKS, "KRW");
+        Long cachedAt = cacheTimes.get("KR");
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+            log.info("Stock 캐시 히트 [KR]");
+            return quoteCache.getOrDefault("KR", Collections.emptyList());
+        }
+
+        List<String[]> stocks = fetchKRXTopStocks("STK", 10);
+        if (stocks.isEmpty()) {
+            log.warn("KRX 조회 실패, 하드코딩 백업 목록 사용");
+            stocks = KR_STOCKS;
+        }
+
+        List<StockQuoteDto> result = fetchAll("KR", stocks, "KRW");
+        if (!result.isEmpty()) {
+            quoteCache.put("KR", result);
+            cacheTimes.put("KR", System.currentTimeMillis());
+        }
+        return result;
     }
 
     public List<StockQuoteDto> getTop10US() {
@@ -178,26 +208,38 @@ public class StockService {
 
     // ─────────────────────────────────────────────────────────────
     // 스케줄 자동 갱신 (KST 기준)
-    //   - KR: 09:00 한국 장 개장 직전 (10 calls)
-    //   - US: 23:30 미국 장 개장 직전 (10 calls)
-    //   합계 20 calls/day → 25 한도 내 유지
     // ─────────────────────────────────────────────────────────────
     @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
     public void scheduledRefreshKR() {
         log.info("[스케줄] KR 시총 Top10 갱신 시작 (09:00 KST)");
+        // 갱신 전 현재 순위를 기준점으로 저장 → 오늘 하루 순위 변동 비교 기준
+        saveBaseRanks("KR");
         quoteCache.remove("KR");
         cacheTimes.remove("KR");
-        getCachedOrFetch("KR", KR_STOCKS, "KRW");
+        getTop10KR();
         log.info("[스케줄] KR 시총 Top10 갱신 완료");
     }
 
     @Scheduled(cron = "0 30 23 * * *", zone = "Asia/Seoul")
     public void scheduledRefreshUS() {
         log.info("[스케줄] US 시총 Top10 갱신 시작 (23:30 KST)");
+        // 갱신 전 현재 순위를 기준점으로 저장
+        saveBaseRanks("US");
         quoteCache.remove("US");
         cacheTimes.remove("US");
         getCachedOrFetch("US", US_STOCKS, "USD");
         log.info("[스케줄] US 시총 Top10 갱신 완료");
+    }
+
+    /** 스케줄 갱신 직전에 현재 캐시 순위를 하루 기준점(baseRanks)으로 저장 */
+    private void saveBaseRanks(String cacheKey) {
+        List<StockQuoteDto> cached = quoteCache.get(cacheKey);
+        if (cached != null && !cached.isEmpty()) {
+            Map<String, Integer> snapshot = new LinkedHashMap<>();
+            cached.forEach(s -> snapshot.put(s.getSymbol(), s.getRank()));
+            baseRanks.put(cacheKey, snapshot);
+            log.info("[순위 기준점 저장] {} — {}개 종목", cacheKey, snapshot.size());
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -508,60 +550,115 @@ public class StockService {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // Alpha Vantage 병렬 호출 → 실시간 시가총액 계산 → 순위 정렬 → 변동 계산
-    // 5 calls/min 한도 준수: 5개 배치 → 15초 대기 → 5개
+    // KRX(한국거래소) Open API — KOSPI 시총 순위 동적 조회
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * KRX에서 KOSPI 시총 상위 N개 종목을 조회합니다.
+     * mktId: "STK"(KOSPI), "KSQ"(KOSDAQ)
+     * 최근 7거래일을 순서대로 시도하며 데이터를 가져옵니다.
+     */
+    private List<String[]> fetchKRXTopStocks(String mktId, int limit) {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        for (int back = 0; back <= 7; back++) {
+            LocalDate tryDate = today.minusDays(back);
+            DayOfWeek dow = tryDate.getDayOfWeek();
+            if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) continue;
+
+            String trdDd = tryDate.format(KRX_DATE_FMT);
+            List<String[]> result = tryKRXFetch(mktId, trdDd, limit);
+            if (!result.isEmpty()) {
+                log.info("KRX {} 시총 순위 조회 성공 (기준일: {}), {}개 종목", mktId, trdDd, result.size());
+                return result;
+            }
+        }
+        log.warn("KRX {} 최근 7거래일 데이터 조회 실패", mktId);
+        return Collections.emptyList();
+    }
+
+    private List<String[]> tryKRXFetch(String mktId, String trdDd, int limit) {
+        try {
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            headers.set("Referer",
+                "http://data.krx.co.kr/contents/MDC/STAT/standard/MDCSTAT01501.cmd");
+            headers.set("Accept", "application/json, text/plain, */*");
+
+            String body = "bld=dbms%2FMDC%2FSTAT%2Fstandard%2FMDCSTAT01501"
+                + "&locale=ko_KR&mktId=" + mktId + "&trdDd=" + trdDd
+                + "&share=1&money=1&csvxls_isNo=false";
+
+            ResponseEntity<String> resp = restTemplate.exchange(
+                KRX_API_URL, HttpMethod.POST,
+                new HttpEntity<>(body, headers), String.class);
+
+            JsonNode block = objectMapper.readTree(resp.getBody()).path("OutBlock_1");
+            if (!block.isArray() || block.size() == 0) return Collections.emptyList();
+
+            // KRX 응답은 시총 내림차순 정렬
+            List<String[]> result = new ArrayList<>();
+            for (int i = 0; i < Math.min(limit, block.size()); i++) {
+                JsonNode item = block.get(i);
+                String code  = item.path("ISU_SRT_CD").asText("").trim();
+                String name  = item.path("ISU_ABBRV").asText("").trim();
+                // 발행주식수 (Yahoo Finance 시총이 없을 때 백업 계산용)
+                String shares = item.path("LIST_SHRS").asText("0").replace(",", "");
+                if (code.isEmpty() || name.isEmpty()) continue;
+                // Yahoo Finance 심볼: 6자리코드.KS (KOSPI), .KQ (KOSDAQ)
+                String yfSymbol = code + ("STK".equals(mktId) ? ".KS" : ".KQ");
+                result.add(new String[]{yfSymbol, name, shares});
+            }
+            return result;
+
+        } catch (Exception e) {
+            log.warn("KRX API 조회 실패 [mktId={}, trdDd={}]: {}", mktId, trdDd, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Yahoo Finance v8 chart 병렬 호출 → 시가총액 정렬 → 순위 변동 계산
+    // Alpha Vantage 쿼터 소모 없음, 10개 병렬 처리
     // ─────────────────────────────────────────────────────────────
 
     private List<StockQuoteDto> fetchAll(String cacheKey, List<String[]> stocks, String currency) {
-        // 1단계: Alpha Vantage에서 실시간 가격 병렬 조회
+        ExecutorService exec = Executors.newFixedThreadPool(10);
+        List<Future<RawQuote>> futures = stocks.stream()
+            .map(s -> exec.submit(() -> fetchSingleFromYahoo(
+                s[0], s[1], Long.parseLong(s[2]), currency)))
+            .toList();
+
         List<RawQuote> raws = new ArrayList<>();
-        int batchSize = 5;
-
-        for (int i = 0; i < stocks.size(); i += batchSize) {
-            List<String[]> batch = stocks.subList(i, Math.min(i + batchSize, stocks.size()));
-            ExecutorService exec = Executors.newFixedThreadPool(batch.size());
-            List<Future<RawQuote>> futures = new ArrayList<>();
-
-            for (String[] stock : batch) {
-                futures.add(exec.submit(() -> fetchSingleRaw(stock[0], stock[1],
-                    Long.parseLong(stock[2]), currency)));
-            }
-            int batchSuccessCount = 0;
-            for (Future<RawQuote> f : futures) {
-                try {
-                    RawQuote raw = f.get(12, TimeUnit.SECONDS);
-                    if (raw != null) { raws.add(raw); batchSuccessCount++; }
-                } catch (Exception e) {
-                    log.warn("종목 조회 실패: {}", e.getMessage());
-                }
-            }
-            exec.shutdown();
-            incrementDailyCalls(batchSuccessCount);
-
-            if (i + batchSize < stocks.size()) {
-                try { Thread.sleep(15_000); }
-                catch (InterruptedException ie) { Thread.currentThread().interrupt(); break; }
+        for (int i = 0; i < futures.size(); i++) {
+            try {
+                RawQuote raw = futures.get(i).get(12, TimeUnit.SECONDS);
+                if (raw != null) raws.add(raw);
+            } catch (Exception e) {
+                log.warn("Top10 종목 조회 실패 [{}]: {}", stocks.get(i)[0], e.getMessage());
             }
         }
+        exec.shutdown();
 
         if (raws.isEmpty()) return Collections.emptyList();
 
-        // 2단계: 실시간 시가총액 = 현재가 × 발행주식수 → 내림차순 정렬
+        // 시가총액 내림차순 정렬
         raws.sort(Comparator.comparingLong(RawQuote::marketCap).reversed());
 
-        // 3단계: 이전 순위와 비교하여 rankChange 계산
-        Map<String, Integer> oldRanks = prevRanks.getOrDefault(cacheKey, Collections.emptyMap());
-        Map<String, Integer> newRanks = new LinkedHashMap<>();
-        List<StockQuoteDto> result    = new ArrayList<>();
+        // 전일 기준 순위(baseRanks)와 비교 — 스케줄 갱신 시에만 갱신되므로
+        // 하루 종일 동일한 기준으로 순위 변동 화살표 표시 (전일 대비)
+        Map<String, Integer> base     = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
+        List<StockQuoteDto>  result   = new ArrayList<>();
 
         for (int idx = 0; idx < raws.size(); idx++) {
             RawQuote raw      = raws.get(idx);
             int      newRank  = idx + 1;
-            Integer  oldRank  = oldRanks.get(raw.symbol());
-            // 첫 호출이면 변동 없음(0), 이후부터 이전 순위 - 현재 순위 (양수 = 상승)
-            int rankChange    = (oldRank == null) ? 0 : (oldRank - newRank);
+            Integer  baseRank = base.get(raw.symbol());
+            // baseRank 없음 = 전일에 없던 종목(신규 진입) → 변동 없음으로 표시
+            int rankChange    = (baseRank == null) ? 0 : (baseRank - newRank);
 
-            newRanks.put(raw.symbol(), newRank);
             result.add(StockQuoteDto.builder()
                 .rank(newRank)
                 .rankChange(rankChange)
@@ -576,45 +673,46 @@ public class StockService {
                 .build());
         }
 
-        // 4단계: 이전 순위 갱신
-        prevRanks.put(cacheKey, newRanks);
         return result;
     }
 
-    // 단일 종목 조회 (raw 데이터)
-    private RawQuote fetchSingleRaw(String symbol, String name, long shares, String currency) {
+    // Yahoo Finance v8 chart 단일 종목 조회 (Top10용)
+    private RawQuote fetchSingleFromYahoo(String symbol, String name, long shares, String currency) {
         try {
-            String url  = String.format(AV_URL, symbol, apiKey);
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol
+                + "?interval=1d&range=1d";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json");
+
             ResponseEntity<String> resp = restTemplate.exchange(
-                url, HttpMethod.GET, new HttpEntity<>(new HttpHeaders()), String.class);
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
-            JsonNode root = objectMapper.readTree(resp.getBody());
+            JsonNode meta = objectMapper.readTree(resp.getBody())
+                .path("chart").path("result").get(0).path("meta");
 
-            if (root.has("Note") || root.has("Information")) {
-                log.warn("Alpha Vantage API 한도 초과 [{}]", symbol);
-                return null;
-            }
+            double price     = meta.path("regularMarketPrice").asDouble(0);
+            double prevClose = meta.path("chartPreviousClose").asDouble(0);
+            if (prevClose == 0) prevClose = meta.path("previousClose").asDouble(0);
+            double change    = price - prevClose;
+            double changePct = (prevClose > 0) ? change / prevClose * 100.0 : 0;
+            long   volume    = meta.path("regularMarketVolume").asLong(0);
+            // Yahoo Finance 시가총액 우선, 없으면 현재가 × 발행주식수로 계산
+            long   mktCap    = meta.path("marketCap").asLong(0);
+            if (mktCap == 0) mktCap = (long)(price * shares);
 
-            JsonNode q = root.path("Global Quote");
-            if (q.isMissingNode() || q.isEmpty()) {
-                log.warn("Alpha Vantage 빈 응답 [{}]", symbol);
-                return null;
-            }
+            if (price == 0) return null;
 
-            double price   = q.path("05. price").asDouble(0);
-            double change  = q.path("09. change").asDouble(0);
-            String pctStr  = q.path("10. change percent").asText("0%")
-                               .replace("%", "").trim();
-            double pct     = pctStr.isEmpty() ? 0 : Double.parseDouble(pctStr);
-            long   volume  = q.path("06. volume").asLong(0);
-
-            // 실시간 시가총액 = 현재가 × 발행주식수
-            long marketCap = (long)(price * shares);
-
-            return new RawQuote(symbol, name, price, change, pct, marketCap, volume);
+            return new RawQuote(symbol, name, price,
+                Math.round(change * 100.0) / 100.0,
+                Math.round(changePct * 100.0) / 100.0,
+                mktCap, volume);
 
         } catch (Exception e) {
-            log.warn("Alpha Vantage 호출 실패 [{}]: {}", symbol, e.getMessage());
+            log.warn("Top10 Yahoo chart 조회 실패 [{}]: {}", symbol, e.getMessage());
             return null;
         }
     }
