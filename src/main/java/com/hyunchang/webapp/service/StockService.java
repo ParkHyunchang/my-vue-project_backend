@@ -2,6 +2,9 @@ package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hyunchang.webapp.dto.StockHeatmapItemDto;
+import com.hyunchang.webapp.dto.StockHeatmapResponseDto;
+import com.hyunchang.webapp.dto.StockHeatmapSectorDto;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockQuotaDto;
@@ -30,6 +33,8 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -99,6 +104,50 @@ public class StockService {
 
     private final AtomicInteger dailyCallCount = new AtomicInteger(0);
     private volatile LocalDate  counterDate    = LocalDate.now();
+
+    // ─────────────────────────────────────────────────────────────
+    // 국내 히트맵용 섹터별 종목 (Yahoo Finance .KS 심볼, API 쿼터 소모 없음)
+    // ─────────────────────────────────────────────────────────────
+    private record HeatmapStock(String symbol, String name, String sector) {}
+
+    private static final List<HeatmapStock> KR_HEATMAP_STOCKS = List.of(
+        new HeatmapStock("005930.KS", "삼성전자",        "반도체/IT"),
+        new HeatmapStock("000660.KS", "SK하이닉스",      "반도체/IT"),
+        new HeatmapStock("006400.KS", "삼성SDI",         "반도체/IT"),
+        new HeatmapStock("066570.KS", "LG전자",          "반도체/IT"),
+        new HeatmapStock("009150.KS", "삼성전기",         "반도체/IT"),
+        new HeatmapStock("207940.KS", "삼성바이오로직스", "바이오"),
+        new HeatmapStock("068270.KS", "셀트리온",         "바이오"),
+        new HeatmapStock("128940.KS", "한미약품",         "바이오"),
+        new HeatmapStock("000100.KS", "유한양행",         "바이오"),
+        new HeatmapStock("005380.KS", "현대자동차",       "자동차"),
+        new HeatmapStock("000270.KS", "기아",             "자동차"),
+        new HeatmapStock("012330.KS", "현대모비스",       "자동차"),
+        new HeatmapStock("373220.KS", "LG에너지솔루션",   "에너지/소재"),
+        new HeatmapStock("005490.KS", "POSCO홀딩스",      "에너지/소재"),
+        new HeatmapStock("051910.KS", "LG화학",           "에너지/소재"),
+        new HeatmapStock("096770.KS", "SK이노베이션",     "에너지/소재"),
+        new HeatmapStock("105560.KS", "KB금융",           "금융"),
+        new HeatmapStock("055550.KS", "신한지주",         "금융"),
+        new HeatmapStock("086790.KS", "하나금융지주",     "금융"),
+        new HeatmapStock("000810.KS", "삼성화재",         "금융"),
+        new HeatmapStock("035420.KS", "NAVER",            "인터넷/플랫폼"),
+        new HeatmapStock("035720.KS", "카카오",           "인터넷/플랫폼"),
+        new HeatmapStock("259960.KS", "크래프톤",         "인터넷/플랫폼"),
+        new HeatmapStock("017670.KS", "SK텔레콤",         "통신"),
+        new HeatmapStock("030200.KS", "KT",               "통신"),
+        new HeatmapStock("028260.KS", "삼성물산",         "유통/소비"),
+        new HeatmapStock("004170.KS", "신세계",           "유통/소비"),
+        new HeatmapStock("139480.KS", "이마트",           "유통/소비"),
+        new HeatmapStock("015760.KS", "한국전력",         "유틸리티")
+    );
+
+    // 히트맵 캐시 (30분 스케줄 갱신 + Yahoo Finance 기반)
+    private volatile List<StockHeatmapSectorDto> heatmapCache     = null;
+    private volatile String                       heatmapUpdatedAt = null;
+    private static final DateTimeFormatter HEATMAP_FMT =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+
 
     // 뉴스 RSS 소스
     private static final List<String[]> RSS_SOURCES = List.of(
@@ -194,7 +243,7 @@ public class StockService {
      * 포트폴리오 개별 종목 시세 조회
      * 1) top10 캐시에 있으면 API 호출 없이 반환
      * 2) 개별 캐시에 있으면 반환
-     * 3) Alpha Vantage 호출 (1 call 소모, 6시간 캐시)
+     * 3) Yahoo Finance v8 chart API 호출 (쿼터 소모 없음, 6시간 캐시)
      */
     public StockPriceDto getQuote(String symbol, String market) {
         String cacheKey = market.toUpperCase();
@@ -223,23 +272,52 @@ public class StockService {
             if (cached != null) return cached;
         }
 
-        // Alpha Vantage 호출 (1 call)
-        RawQuote raw = fetchSingleRaw(symbol, symbol, 0L, currency);
-        if (raw == null) return null;
-
-        incrementDailyCalls(1);
-
-        StockPriceDto dto = StockPriceDto.builder()
-            .symbol(symbol)
-            .price(raw.price())
-            .change(raw.change())
-            .changePercent(raw.changePercent())
-            .currency(currency)
-            .build();
+        // Yahoo Finance v8 chart API 호출 (쿼터 소모 없음)
+        StockPriceDto dto = fetchQuoteFromYahooChart(symbol, currency);
+        if (dto == null) return null;
 
         singlePriceCache.put(symbol, dto);
         singlePriceTimes.put(symbol, System.currentTimeMillis());
         return dto;
+    }
+
+    private StockPriceDto fetchQuoteFromYahooChart(String symbol, String currency) {
+        try {
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol
+                + "?interval=1d&range=1d";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json");
+
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode meta = objectMapper.readTree(resp.getBody())
+                .path("chart").path("result").get(0).path("meta");
+
+            double price     = meta.path("regularMarketPrice").asDouble(0);
+            double prevClose = meta.path("chartPreviousClose").asDouble(0);
+            if (prevClose == 0) prevClose = meta.path("previousClose").asDouble(0);
+            double change    = price - prevClose;
+            double changePct = (prevClose > 0) ? change / prevClose * 100.0 : 0;
+
+            if (price == 0) return null;
+
+            return StockPriceDto.builder()
+                .symbol(symbol)
+                .price(price)
+                .change(Math.round(change * 100.0) / 100.0)
+                .changePercent(Math.round(changePct * 100.0) / 100.0)
+                .currency(currency)
+                .build();
+
+        } catch (Exception e) {
+            log.warn("Yahoo Finance v8 chart 시세 조회 실패 [{}]: {}", symbol, e.getMessage());
+            return null;
+        }
     }
 
     /**
@@ -293,6 +371,112 @@ public class StockService {
         } catch (Exception e) {
             log.warn("Yahoo Finance 종목 검색 실패 [{}]: {}", query, e.getMessage());
             return Collections.emptyList();
+        }
+    }
+
+    /**
+     * 국내 주식 히트맵 데이터 (Yahoo Finance 배치 조회 — Alpha Vantage 쿼터 소모 없음)
+     * 매 30분 자동 갱신 + 기준 시각 반환
+     */
+    public StockHeatmapResponseDto getHeatmapKR() {
+        if (heatmapCache == null) {
+            refreshHeatmapCache();
+        }
+        return StockHeatmapResponseDto.builder()
+            .updatedAt(heatmapUpdatedAt)
+            .sectors(heatmapCache != null ? heatmapCache : Collections.emptyList())
+            .build();
+    }
+
+    @Scheduled(cron = "0 0/30 * * * *", zone = "Asia/Seoul")
+    public void scheduledRefreshHeatmap() {
+        log.info("[스케줄] 국내 히트맵 자동 갱신 시작");
+        refreshHeatmapCache();
+        log.info("[스케줄] 국내 히트맵 자동 갱신 완료 ({})", heatmapUpdatedAt);
+    }
+
+    private synchronized void refreshHeatmapCache() {
+        List<StockHeatmapSectorDto> result = fetchHeatmapFromYahoo();
+        if (!result.isEmpty()) {
+            heatmapCache     = result;
+            heatmapUpdatedAt = LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(HEATMAP_FMT);
+        }
+    }
+
+    /**
+     * Yahoo Finance v8 chart API (개별 종목, 인증 불필요)
+     * v7 quote API가 401로 막혀 v8 chart로 대체
+     * 29개 종목을 10개씩 병렬 처리
+     */
+    private List<StockHeatmapSectorDto> fetchHeatmapFromYahoo() {
+        ExecutorService exec = Executors.newFixedThreadPool(10);
+        List<Future<StockHeatmapItemDto>> futures = KR_HEATMAP_STOCKS.stream()
+            .map(hs -> exec.submit(() -> fetchSingleChartStock(hs)))
+            .toList();
+
+        Map<String, StockHeatmapItemDto> resultMap = new HashMap<>();
+        for (int i = 0; i < futures.size(); i++) {
+            try {
+                StockHeatmapItemDto item = futures.get(i).get(10, TimeUnit.SECONDS);
+                if (item != null) resultMap.put(KR_HEATMAP_STOCKS.get(i).symbol(), item);
+            } catch (Exception e) {
+                log.warn("히트맵 종목 조회 실패 [{}]: {}", KR_HEATMAP_STOCKS.get(i).symbol(), e.getMessage());
+            }
+        }
+        exec.shutdown();
+
+        // 섹터별 그룹화 (정의 순서 유지)
+        Map<String, List<StockHeatmapItemDto>> bySector = new LinkedHashMap<>();
+        for (HeatmapStock hs : KR_HEATMAP_STOCKS) {
+            StockHeatmapItemDto item = resultMap.get(hs.symbol());
+            if (item != null) bySector.computeIfAbsent(hs.sector(), k -> new ArrayList<>()).add(item);
+        }
+
+        log.info("히트맵 수집 완료: {}개 섹터, {}개 종목",
+            bySector.size(), bySector.values().stream().mapToLong(List::size).sum());
+
+        return bySector.entrySet().stream()
+            .map(e -> StockHeatmapSectorDto.builder()
+                .sector(e.getKey()).stocks(e.getValue()).build())
+            .toList();
+    }
+
+    private StockHeatmapItemDto fetchSingleChartStock(HeatmapStock hs) {
+        try {
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + hs.symbol()
+                + "?interval=1d&range=1d&region=KR&lang=ko-KR";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json");
+
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode meta = objectMapper.readTree(resp.getBody())
+                .path("chart").path("result").get(0).path("meta");
+
+            double price     = meta.path("regularMarketPrice").asDouble(0);
+            double prevClose = meta.path("chartPreviousClose").asDouble(0);
+            if (prevClose == 0) prevClose = meta.path("previousClose").asDouble(0);
+            double changePct = (prevClose > 0) ? (price - prevClose) / prevClose * 100.0 : 0;
+            long   mktCap    = meta.path("marketCap").asLong(0);
+
+            if (price == 0) return null;
+
+            return StockHeatmapItemDto.builder()
+                .symbol(hs.symbol())
+                .name(hs.name())
+                .price(price)
+                .changePercent(Math.round(changePct * 100.0) / 100.0)
+                .marketCap(mktCap > 0 ? mktCap : 1)
+                .build();
+
+        } catch (Exception e) {
+            log.warn("v8 chart 조회 실패 [{}]: {}", hs.symbol(), e.getMessage());
+            return null;
         }
     }
 

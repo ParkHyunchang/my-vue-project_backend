@@ -1,5 +1,7 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.dto.StockHeatmapResponseDto;
+import com.hyunchang.webapp.dto.StockHeatmapSectorDto;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockQuotaDto;
@@ -38,6 +40,12 @@ public class StockController {
     @GetMapping("/top10/us")
     public ResponseEntity<List<StockQuoteDto>> getTop10US() {
         return ResponseEntity.ok(stockService.getTop10US());
+    }
+
+    @Operation(summary = "국내 주식 히트맵 (Yahoo Finance 배치, 쿼터 소모 없음, 매 30분 자동 갱신)")
+    @GetMapping("/heatmap/kr")
+    public ResponseEntity<StockHeatmapResponseDto> getHeatmapKR() {
+        return ResponseEntity.ok(stockService.getHeatmapKR());
     }
 
     @Operation(summary = "주식 뉴스 (RSS)")
