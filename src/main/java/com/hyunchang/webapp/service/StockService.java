@@ -59,36 +59,36 @@ public class StockService {
         DateTimeFormatter.ofPattern("yyyyMMdd");
 
     // ─────────────────────────────────────────────────────────────
-    // 국내 Top 10 종목 정의 (Yahoo Finance .KS 심볼)
-    // symbol[0]=Yahoo Finance 심볼, symbol[1]=한국명, symbol[2]=발행주식수(2026 기준)
+    // 국내 Top 10 — KRX 실패 시 비상 폴백 (실제 순위·시총은 Yahoo Finance 재정렬)
     // ─────────────────────────────────────────────────────────────
-    private static final List<String[]> KR_STOCKS = List.of(
-        new String[]{"005930.KS", "삼성전자",           "5969782550"},
-        new String[]{"000660.KS", "SK하이닉스",          "728002365"},
-        new String[]{"373220.KS", "LG에너지솔루션",       "234000000"},
-        new String[]{"207940.KS", "삼성바이오로직스",      "71174000"},
-        new String[]{"005380.KS", "현대자동차",           "213668187"},
-        new String[]{"000270.KS", "기아",                "404533515"},
-        new String[]{"005490.KS", "POSCO홀딩스",          "87186835"},
-        new String[]{"006400.KS", "삼성SDI",              "68764530"},
-        new String[]{"035420.KS", "NAVER",              "164263395"},
-        new String[]{"105560.KS", "KB금융",              "418593000"}
+    private static final List<String[]> KR_STOCKS_FALLBACK = List.of(
+        new String[]{"005930.KS", "삼성전자",        "0"},
+        new String[]{"000660.KS", "SK하이닉스",      "0"},
+        new String[]{"373220.KS", "LG에너지솔루션",  "0"},
+        new String[]{"207940.KS", "삼성바이오로직스","0"},
+        new String[]{"005380.KS", "현대자동차",      "0"},
+        new String[]{"000270.KS", "기아",            "0"},
+        new String[]{"005490.KS", "POSCO홀딩스",     "0"},
+        new String[]{"006400.KS", "삼성SDI",         "0"},
+        new String[]{"035420.KS", "NAVER",           "0"},
+        new String[]{"105560.KS", "KB금융",          "0"}
     );
 
     // ─────────────────────────────────────────────────────────────
-    // 미국 Top 10 종목 정의
+    // 미국 Top 10 — Yahoo Finance 스크리너 실패 시 비상 폴백
+    // 실제 순위·시총은 Yahoo Finance v8 chart 호출 후 재정렬
     // ─────────────────────────────────────────────────────────────
-    private static final List<String[]> US_STOCKS = List.of(
-        new String[]{"AAPL",  "Apple",               "15204137000"},
-        new String[]{"NVDA",  "NVIDIA",              "24440000000"},
-        new String[]{"MSFT",  "Microsoft",            "7437000000"},
-        new String[]{"AMZN",  "Amazon",              "10595000000"},
-        new String[]{"GOOGL", "Alphabet (Google)",   "12117000000"},
-        new String[]{"META",  "Meta",                 "2574000000"},
-        new String[]{"TSLA",  "Tesla",                "3194000000"},
-        new String[]{"AVGO",  "Broadcom",             "4667000000"},
-        new String[]{"BRK-B", "Berkshire Hathaway",  "2155000000"},
-        new String[]{"LLY",   "Eli Lilly",             "951000000"}
+    private static final List<String[]> US_STOCKS_FALLBACK = List.of(
+        new String[]{"AAPL",  "Apple",               "0"},
+        new String[]{"NVDA",  "NVIDIA",              "0"},
+        new String[]{"MSFT",  "Microsoft",           "0"},
+        new String[]{"AMZN",  "Amazon",              "0"},
+        new String[]{"GOOGL", "Alphabet (Google)",   "0"},
+        new String[]{"META",  "Meta",                "0"},
+        new String[]{"TSLA",  "Tesla",               "0"},
+        new String[]{"AVGO",  "Broadcom",            "0"},
+        new String[]{"BRK-B", "Berkshire Hathaway",  "0"},
+        new String[]{"LLY",   "Eli Lilly",           "0"}
     );
 
     // ─────────────────────────────────────────────────────────────
@@ -115,41 +115,79 @@ public class StockService {
     private volatile LocalDate  counterDate    = LocalDate.now();
 
     // ─────────────────────────────────────────────────────────────
-    // 국내 히트맵용 섹터별 종목 (Yahoo Finance .KS 심볼, API 쿼터 소모 없음)
+    // 국내 히트맵 섹터 매핑 — 심볼 → 섹터명
+    // 종목명·심볼 목록은 KRX API로 동적 조회, 알 수 없는 종목은 "기타" 처리
     // ─────────────────────────────────────────────────────────────
-    private record HeatmapStock(String symbol, String name, String sector) {}
-
-    private static final List<HeatmapStock> KR_HEATMAP_STOCKS = List.of(
-        new HeatmapStock("005930.KS", "삼성전자",        "반도체/IT"),
-        new HeatmapStock("000660.KS", "SK하이닉스",      "반도체/IT"),
-        new HeatmapStock("006400.KS", "삼성SDI",         "반도체/IT"),
-        new HeatmapStock("066570.KS", "LG전자",          "반도체/IT"),
-        new HeatmapStock("009150.KS", "삼성전기",         "반도체/IT"),
-        new HeatmapStock("207940.KS", "삼성바이오로직스", "바이오"),
-        new HeatmapStock("068270.KS", "셀트리온",         "바이오"),
-        new HeatmapStock("128940.KS", "한미약품",         "바이오"),
-        new HeatmapStock("000100.KS", "유한양행",         "바이오"),
-        new HeatmapStock("005380.KS", "현대자동차",       "자동차"),
-        new HeatmapStock("000270.KS", "기아",             "자동차"),
-        new HeatmapStock("012330.KS", "현대모비스",       "자동차"),
-        new HeatmapStock("373220.KS", "LG에너지솔루션",   "에너지/소재"),
-        new HeatmapStock("005490.KS", "POSCO홀딩스",      "에너지/소재"),
-        new HeatmapStock("051910.KS", "LG화학",           "에너지/소재"),
-        new HeatmapStock("096770.KS", "SK이노베이션",     "에너지/소재"),
-        new HeatmapStock("105560.KS", "KB금융",           "금융"),
-        new HeatmapStock("055550.KS", "신한지주",         "금융"),
-        new HeatmapStock("086790.KS", "하나금융지주",     "금융"),
-        new HeatmapStock("000810.KS", "삼성화재",         "금융"),
-        new HeatmapStock("035420.KS", "NAVER",            "인터넷/플랫폼"),
-        new HeatmapStock("035720.KS", "카카오",           "인터넷/플랫폼"),
-        new HeatmapStock("259960.KS", "크래프톤",         "인터넷/플랫폼"),
-        new HeatmapStock("017670.KS", "SK텔레콤",         "통신"),
-        new HeatmapStock("030200.KS", "KT",               "통신"),
-        new HeatmapStock("028260.KS", "삼성물산",         "유통/소비"),
-        new HeatmapStock("004170.KS", "신세계",           "유통/소비"),
-        new HeatmapStock("139480.KS", "이마트",           "유통/소비"),
-        new HeatmapStock("015760.KS", "한국전력",         "유틸리티")
+    private static final Map<String, String> KR_SECTOR_MAP = Map.ofEntries(
+        Map.entry("005930.KS", "반도체/IT"),
+        Map.entry("000660.KS", "반도체/IT"),
+        Map.entry("006400.KS", "반도체/IT"),
+        Map.entry("066570.KS", "반도체/IT"),
+        Map.entry("009150.KS", "반도체/IT"),
+        Map.entry("207940.KS", "바이오"),
+        Map.entry("068270.KS", "바이오"),
+        Map.entry("128940.KS", "바이오"),
+        Map.entry("000100.KS", "바이오"),
+        Map.entry("005380.KS", "자동차"),
+        Map.entry("000270.KS", "자동차"),
+        Map.entry("012330.KS", "자동차"),
+        Map.entry("373220.KS", "에너지/소재"),
+        Map.entry("005490.KS", "에너지/소재"),
+        Map.entry("051910.KS", "에너지/소재"),
+        Map.entry("096770.KS", "에너지/소재"),
+        Map.entry("105560.KS", "금융"),
+        Map.entry("055550.KS", "금융"),
+        Map.entry("086790.KS", "금융"),
+        Map.entry("000810.KS", "금융"),
+        Map.entry("035420.KS", "인터넷/플랫폼"),
+        Map.entry("035720.KS", "인터넷/플랫폼"),
+        Map.entry("259960.KS", "인터넷/플랫폼"),
+        Map.entry("017670.KS", "통신"),
+        Map.entry("030200.KS", "통신"),
+        Map.entry("028260.KS", "유통/소비"),
+        Map.entry("004170.KS", "유통/소비"),
+        Map.entry("139480.KS", "유통/소비"),
+        Map.entry("015760.KS", "유틸리티")
     );
+
+    // ─────────────────────────────────────────────────────────────
+    // KRX 실패 시 히트맵 폴백 — 심볼 → 한국명 (가격은 Yahoo Finance에서 실시간 조회)
+    // ─────────────────────────────────────────────────────────────
+    private static final Map<String, String> KR_HEATMAP_NAME_FALLBACK = Map.ofEntries(
+        Map.entry("005930.KS", "삼성전자"),
+        Map.entry("000660.KS", "SK하이닉스"),
+        Map.entry("006400.KS", "삼성SDI"),
+        Map.entry("066570.KS", "LG전자"),
+        Map.entry("009150.KS", "삼성전기"),
+        Map.entry("207940.KS", "삼성바이오로직스"),
+        Map.entry("068270.KS", "셀트리온"),
+        Map.entry("128940.KS", "한미약품"),
+        Map.entry("000100.KS", "유한양행"),
+        Map.entry("005380.KS", "현대자동차"),
+        Map.entry("000270.KS", "기아"),
+        Map.entry("012330.KS", "현대모비스"),
+        Map.entry("373220.KS", "LG에너지솔루션"),
+        Map.entry("005490.KS", "POSCO홀딩스"),
+        Map.entry("051910.KS", "LG화학"),
+        Map.entry("096770.KS", "SK이노베이션"),
+        Map.entry("105560.KS", "KB금융"),
+        Map.entry("055550.KS", "신한지주"),
+        Map.entry("086790.KS", "하나금융지주"),
+        Map.entry("000810.KS", "삼성화재"),
+        Map.entry("035420.KS", "NAVER"),
+        Map.entry("035720.KS", "카카오"),
+        Map.entry("259960.KS", "크래프톤"),
+        Map.entry("017670.KS", "SK텔레콤"),
+        Map.entry("030200.KS", "KT"),
+        Map.entry("028260.KS", "삼성물산"),
+        Map.entry("004170.KS", "신세계"),
+        Map.entry("139480.KS", "이마트"),
+        Map.entry("015760.KS", "한국전력")
+    );
+
+    // KRX 종목 목록 캐시 (검색·히트맵 공용, 6시간 갱신)
+    private volatile List<String[]> krxStocksCache    = null;
+    private volatile long           krxStocksCacheTime = 0;
 
     // 히트맵 캐시 (30분 스케줄 갱신 + Yahoo Finance 기반)
     private volatile List<StockHeatmapSectorDto> heatmapCache     = null;
@@ -190,8 +228,8 @@ public class StockService {
 
         List<String[]> stocks = fetchKRXTopStocks("STK", 10);
         if (stocks.isEmpty()) {
-            log.warn("KRX 조회 실패, 하드코딩 백업 목록 사용");
-            stocks = KR_STOCKS;
+            log.warn("KRX 조회 실패, 비상 폴백 사용");
+            stocks = KR_STOCKS_FALLBACK;
         }
 
         List<StockQuoteDto> result = fetchAll("KR", stocks, "KRW");
@@ -203,7 +241,22 @@ public class StockService {
     }
 
     public List<StockQuoteDto> getTop10US() {
-        return getCachedOrFetch("US", US_STOCKS, "USD");
+        Long cachedAt = cacheTimes.get("US");
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+            log.info("Stock 캐시 히트 [US]");
+            return quoteCache.getOrDefault("US", Collections.emptyList());
+        }
+        List<String[]> stocks = fetchUSTopFromYahoo(15);
+        if (stocks.isEmpty()) {
+            log.warn("Yahoo Finance US 스크리너 실패, 비상 폴백 사용");
+            stocks = US_STOCKS_FALLBACK;
+        }
+        List<StockQuoteDto> result = fetchAll("US", stocks, "USD");
+        if (!result.isEmpty()) {
+            quoteCache.put("US", result);
+            cacheTimes.put("US", System.currentTimeMillis());
+        }
+        return result;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -223,11 +276,10 @@ public class StockService {
     @Scheduled(cron = "0 30 23 * * *", zone = "Asia/Seoul")
     public void scheduledRefreshUS() {
         log.info("[스케줄] US 시총 Top10 갱신 시작 (23:30 KST)");
-        // 갱신 전 현재 순위를 기준점으로 저장
         saveBaseRanks("US");
         quoteCache.remove("US");
         cacheTimes.remove("US");
-        getCachedOrFetch("US", US_STOCKS, "USD");
+        getTop10US();
         log.info("[스케줄] US 시총 Top10 갱신 완료");
     }
 
@@ -367,15 +419,61 @@ public class StockService {
      * KR/US 구분 없이 전체 거래소 종목을 커버
      */
     public List<StockSearchResultDto> searchStocks(String query) {
+        // 한글(CJK) 포함 여부 감지 → 로컬 국내 종목 목록에서 검색
+        if (containsKorean(query)) {
+            return searchKrLocal(query.trim());
+        }
+        // 영문/코드 → Yahoo Finance
+        return searchYahoo(query.trim());
+    }
+
+    /** 한글 문자 포함 여부 */
+    private boolean containsKorean(String s) {
+        for (char c : s.toCharArray()) {
+            if (Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_SYLLABLES
+             || Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_JAMO
+             || Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** KRX 상위 100종목에서 한글 이름 부분 매칭 */
+    private List<StockSearchResultDto> searchKrLocal(String query) {
+        String lower = query.toLowerCase();
+        List<StockSearchResultDto> results = new ArrayList<>();
+
+        for (String[] s : getKrxStocksCached(100)) {
+            if (s[1].contains(query) || s[0].toLowerCase().contains(lower)) {
+                results.add(StockSearchResultDto.builder()
+                    .symbol(s[0])
+                    .name(s[1])
+                    .exchange("KSC")
+                    .type("EQUITY")
+                    .market("KR")
+                    .build());
+            }
+        }
+
+        log.info("KRX 검색 [{}] → {}건", query, results.size());
+        return results;
+    }
+
+    /** Yahoo Finance 검색 (영문/코드용) */
+    private List<StockSearchResultDto> searchYahoo(String query) {
         try {
             String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
             String url = "https://query1.finance.yahoo.com/v1/finance/search"
                 + "?q=" + encoded
-                + "&lang=ko-KR&region=KR&quotesCount=12&newsCount=0&listsCount=0";
+                + "&lang=en-US&region=US&quotesCount=12&newsCount=0&listsCount=0";
 
             HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
-            headers.set("Accept", "application/json");
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json, text/plain, */*");
+            headers.set("Accept-Language", "en-US,en;q=0.9");
+            headers.set("Referer", "https://finance.yahoo.com/");
 
             ResponseEntity<String> resp = restTemplate.exchange(
                 url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
@@ -388,15 +486,14 @@ public class StockService {
                 String type = q.path("quoteType").asText("");
                 if (!"EQUITY".equals(type) && !"ETF".equals(type)) continue;
 
-                String symbol   = q.path("symbol").asText("").trim();
+                String symbol    = q.path("symbol").asText("").trim();
                 String longName  = q.path("longname").asText("").trim();
                 String shortName = q.path("shortname").asText("").trim();
-                String name     = longName.isEmpty() ? shortName : longName;
-                String exchange = q.path("exchange").asText("").trim();
+                String name      = longName.isEmpty() ? shortName : longName;
+                String exchange  = q.path("exchange").asText("").trim();
 
                 if (symbol.isEmpty() || name.isEmpty()) continue;
 
-                // KR 거래소 자동 감지
                 String market = (symbol.endsWith(".KS") || symbol.endsWith(".KQ")
                     || "KSC".equals(exchange) || "KOE".equals(exchange)) ? "KR" : "US";
 
@@ -408,6 +505,7 @@ public class StockService {
                     .market(market)
                     .build());
             }
+            log.info("Yahoo Finance 검색 [{}] → {}건", query, results.size());
             return results;
 
         } catch (Exception e) {
@@ -446,32 +544,41 @@ public class StockService {
     }
 
     /**
-     * Yahoo Finance v8 chart API (개별 종목, 인증 불필요)
-     * v7 quote API가 401로 막혀 v8 chart로 대체
-     * 29개 종목을 10개씩 병렬 처리
+     * KRX 상위 30종목을 Yahoo Finance v8 chart API로 시세 조회 후 섹터별 그룹화
+     * KR_SECTOR_MAP에 없는 종목은 "기타" 섹터로 분류
      */
     private List<StockHeatmapSectorDto> fetchHeatmapFromYahoo() {
+        List<String[]> krStocks = getKrxStocksCached(30);
+        if (krStocks.isEmpty()) {
+            log.warn("KRX 종목 조회 실패 — 히트맵 폴백(하드코딩 목록) 사용");
+            krStocks = KR_HEATMAP_NAME_FALLBACK.entrySet().stream()
+                .map(e -> new String[]{e.getKey(), e.getValue(), "0"})
+                .toList();
+        }
+
         ExecutorService exec = Executors.newFixedThreadPool(10);
-        List<Future<StockHeatmapItemDto>> futures = KR_HEATMAP_STOCKS.stream()
-            .map(hs -> exec.submit(() -> fetchSingleChartStock(hs)))
+        List<Future<StockHeatmapItemDto>> futures = krStocks.stream()
+            .map(s -> exec.submit(() -> fetchSingleChartStock(s[0], s[1])))
             .toList();
 
         Map<String, StockHeatmapItemDto> resultMap = new HashMap<>();
         for (int i = 0; i < futures.size(); i++) {
             try {
                 StockHeatmapItemDto item = futures.get(i).get(10, TimeUnit.SECONDS);
-                if (item != null) resultMap.put(KR_HEATMAP_STOCKS.get(i).symbol(), item);
+                if (item != null) resultMap.put(krStocks.get(i)[0], item);
             } catch (Exception e) {
-                log.warn("히트맵 종목 조회 실패 [{}]: {}", KR_HEATMAP_STOCKS.get(i).symbol(), e.getMessage());
+                log.warn("히트맵 종목 조회 실패 [{}]: {}", krStocks.get(i)[0], e.getMessage());
             }
         }
         exec.shutdown();
 
-        // 섹터별 그룹화 (정의 순서 유지)
+        // 섹터별 그룹화 — KRX 반환 순서(시총 순) 유지
         Map<String, List<StockHeatmapItemDto>> bySector = new LinkedHashMap<>();
-        for (HeatmapStock hs : KR_HEATMAP_STOCKS) {
-            StockHeatmapItemDto item = resultMap.get(hs.symbol());
-            if (item != null) bySector.computeIfAbsent(hs.sector(), k -> new ArrayList<>()).add(item);
+        for (String[] s : krStocks) {
+            StockHeatmapItemDto item = resultMap.get(s[0]);
+            if (item == null) continue;
+            String sector = KR_SECTOR_MAP.getOrDefault(s[0], "기타");
+            bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
         }
 
         log.info("히트맵 수집 완료: {}개 섹터, {}개 종목",
@@ -483,9 +590,9 @@ public class StockService {
             .toList();
     }
 
-    private StockHeatmapItemDto fetchSingleChartStock(HeatmapStock hs) {
+    private StockHeatmapItemDto fetchSingleChartStock(String symbol, String name) {
         try {
-            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + hs.symbol()
+            String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol
                 + "?interval=1d&range=1d&region=KR&lang=ko-KR";
 
             HttpHeaders headers = new HttpHeaders();
@@ -509,15 +616,15 @@ public class StockService {
             if (price == 0) return null;
 
             return StockHeatmapItemDto.builder()
-                .symbol(hs.symbol())
-                .name(hs.name())
+                .symbol(symbol)
+                .name(name)
                 .price(price)
                 .changePercent(Math.round(changePct * 100.0) / 100.0)
                 .marketCap(mktCap > 0 ? mktCap : 1)
                 .build();
 
         } catch (Exception e) {
-            log.warn("v8 chart 조회 실패 [{}]: {}", hs.symbol(), e.getMessage());
+            log.warn("v8 chart 조회 실패 [{}]: {}", symbol, e.getMessage());
             return null;
         }
     }
@@ -529,6 +636,74 @@ public class StockService {
             catch (Exception e) { log.warn("RSS 파싱 실패 [{}]: {}", src[0], e.getMessage()); }
         }
         return all.stream().limit(30).toList();
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // KRX 종목 목록 캐시 (검색·히트맵 공용, 6시간 TTL)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * KRX KOSPI 상위 종목 목록 (캐시). 처음 호출 또는 TTL 만료 시 KRX API 재조회.
+     * @param count 필요한 종목 수 (최대 캐시 크기 이하)
+     */
+    private List<String[]> getKrxStocksCached(int count) {
+        long now = System.currentTimeMillis();
+        if (krxStocksCache == null || (now - krxStocksCacheTime) > CACHE_TTL_MS) {
+            List<String[]> fresh = fetchKRXTopStocks("STK", 100);
+            if (!fresh.isEmpty()) {
+                krxStocksCache     = fresh;
+                krxStocksCacheTime = now;
+                log.info("KRX 종목 캐시 갱신: {}개", fresh.size());
+            }
+        }
+        if (krxStocksCache == null) return Collections.emptyList();
+        return krxStocksCache.subList(0, Math.min(count, krxStocksCache.size()));
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // Yahoo Finance 스크리너 — 미국 시총 상위 종목 동적 조회
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Yahoo Finance predefined screener "largest_companies" — 미국 시총 Top N
+     * 실패 시 빈 리스트 반환 → 호출부에서 US_STOCKS_FALLBACK으로 대체
+     */
+    private List<String[]> fetchUSTopFromYahoo(int count) {
+        try {
+            String url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
+                + "?count=" + count + "&scrIds=largest_companies&start=0";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json, text/plain, */*");
+            headers.set("Accept-Language", "en-US,en;q=0.9");
+            headers.set("Referer", "https://finance.yahoo.com/");
+
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode quotes = objectMapper.readTree(resp.getBody())
+                .path("finance").path("result").get(0).path("quotes");
+
+            if (!quotes.isArray() || quotes.size() == 0) return Collections.emptyList();
+
+            List<String[]> result = new ArrayList<>();
+            for (JsonNode q : quotes) {
+                String symbol = q.path("symbol").asText("").trim();
+                String name   = q.path("shortName").asText("").trim();
+                if (name.isEmpty()) name = q.path("longName").asText("").trim();
+                if (symbol.isEmpty() || name.isEmpty()) continue;
+                result.add(new String[]{symbol, name, "0"});
+            }
+            log.info("Yahoo Finance US 스크리너 조회 → {}개", result.size());
+            return result;
+
+        } catch (Exception e) {
+            log.warn("Yahoo Finance US 스크리너 조회 실패: {}", e.getMessage());
+            return Collections.emptyList();
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -679,14 +854,17 @@ public class StockService {
     // Yahoo Finance v8 chart 단일 종목 조회 (Top10용)
     private RawQuote fetchSingleFromYahoo(String symbol, String name, long shares, String currency) {
         try {
+            // range=5d: 오늘 데이터가 없어도(휴장·주말) 최근 거래일 meta 반환 보장
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol
-                + "?interval=1d&range=1d";
+                + "?interval=1d&range=5d";
 
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent",
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            headers.set("Accept", "application/json");
+                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json, text/plain, */*");
+            headers.set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8");
+            headers.set("Referer", "https://finance.yahoo.com/");
 
             ResponseEntity<String> resp = restTemplate.exchange(
                 url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
@@ -700,9 +878,12 @@ public class StockService {
             double change    = price - prevClose;
             double changePct = (prevClose > 0) ? change / prevClose * 100.0 : 0;
             long   volume    = meta.path("regularMarketVolume").asLong(0);
-            // Yahoo Finance 시가총액 우선, 없으면 현재가 × 발행주식수로 계산
             long   mktCap    = meta.path("marketCap").asLong(0);
-            if (mktCap == 0) mktCap = (long)(price * shares);
+
+            // v8 chart에서 시가총액 없으면 v7 quote API 시도
+            if (mktCap == 0) mktCap = fetchMarketCapFromV7(symbol);
+            // 그래도 0이면 현재가 × 발행주식수 (폴백)
+            if (mktCap == 0 && shares > 0) mktCap = (long)(price * shares);
 
             if (price == 0) return null;
 
@@ -715,6 +896,36 @@ public class StockService {
             log.warn("Top10 Yahoo chart 조회 실패 [{}]: {}", symbol, e.getMessage());
             return null;
         }
+    }
+
+    /** Yahoo Finance v7 quote API — 시가총액 보조 조회 */
+    private long fetchMarketCapFromV7(String symbol) {
+        try {
+            String encoded = URLEncoder.encode(symbol, StandardCharsets.UTF_8);
+            String url = "https://query2.finance.yahoo.com/v7/finance/quote?symbols=" + encoded
+                + "&fields=marketCap";
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent",
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36");
+            headers.set("Accept", "application/json, text/plain, */*");
+            headers.set("Referer", "https://finance.yahoo.com/");
+
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode result = objectMapper.readTree(resp.getBody())
+                .path("quoteResponse").path("result");
+            if (result.isArray() && result.size() > 0) {
+                long cap = result.get(0).path("marketCap").asLong(0);
+                if (cap > 0) log.debug("v7 시가총액 보조 조회 성공 [{}]: {}", symbol, cap);
+                return cap;
+            }
+        } catch (Exception e) {
+            log.debug("v7 시가총액 보조 조회 실패 [{}]: {}", symbol, e.getMessage());
+        }
+        return 0L;
     }
 
     // 내부 전달용 레코드
