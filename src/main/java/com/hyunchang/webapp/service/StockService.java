@@ -185,9 +185,99 @@ public class StockService {
         Map.entry("015760.KS", "한국전력")
     );
 
+    // ─────────────────────────────────────────────────────────────
+    // 미국 주요 종목 한글명 — 국내 투자자가 많이 보유하는 종목 위주
+    // ─────────────────────────────────────────────────────────────
+    private static final Map<String, String> US_STOCK_NAMES_KO = Map.ofEntries(
+        Map.entry("AAPL",   "애플"),
+        Map.entry("NVDA",   "엔비디아"),
+        Map.entry("MSFT",   "마이크로소프트"),
+        Map.entry("AMZN",   "아마존"),
+        Map.entry("GOOGL",  "알파벳(구글) A"),
+        Map.entry("GOOG",   "알파벳(구글) C"),
+        Map.entry("META",   "메타"),
+        Map.entry("TSLA",   "테슬라"),
+        Map.entry("AVGO",   "브로드컴"),
+        Map.entry("BRK-B",  "버크셔 해서웨이"),
+        Map.entry("BRK-A",  "버크셔 해서웨이 A"),
+        Map.entry("LLY",    "일라이 릴리"),
+        Map.entry("JPM",    "JP모건 체이스"),
+        Map.entry("V",      "비자"),
+        Map.entry("MA",     "마스터카드"),
+        Map.entry("COST",   "코스트코"),
+        Map.entry("HD",     "홈디포"),
+        Map.entry("ORCL",   "오라클"),
+        Map.entry("WMT",    "월마트"),
+        Map.entry("BAC",    "뱅크 오브 아메리카"),
+        Map.entry("XOM",    "엑손모빌"),
+        Map.entry("NFLX",   "넷플릭스"),
+        Map.entry("AMD",    "AMD"),
+        Map.entry("INTC",   "인텔"),
+        Map.entry("QCOM",   "퀄컴"),
+        Map.entry("MU",     "마이크론 테크놀로지"),
+        Map.entry("TSM",    "TSMC"),
+        Map.entry("ASML",   "ASML"),
+        Map.entry("PLTR",   "팔란티어"),
+        Map.entry("COIN",   "코인베이스"),
+        Map.entry("MSTR",   "마이크로스트래티지"),
+        Map.entry("SHOP",   "쇼피파이"),
+        Map.entry("PYPL",   "페이팔"),
+        Map.entry("DIS",    "디즈니"),
+        Map.entry("UBER",   "우버"),
+        Map.entry("ABNB",   "에어비앤비"),
+        Map.entry("CRM",    "세일즈포스"),
+        Map.entry("NOW",    "서비스나우"),
+        Map.entry("SNOW",   "스노우플레이크"),
+        Map.entry("PANW",   "팔로알토 네트웍스"),
+        Map.entry("CRWD",   "크라우드스트라이크"),
+        Map.entry("NET",    "클라우드플레어"),
+        Map.entry("ARM",    "ARM 홀딩스"),
+        Map.entry("SMCI",   "슈퍼마이크로컴퓨터"),
+        Map.entry("MRVL",   "마벨 테크놀로지"),
+        Map.entry("ON",     "온세미컨덕터"),
+        Map.entry("AMAT",   "어플라이드 머티리얼즈"),
+        Map.entry("LRCX",   "램리서치"),
+        Map.entry("KLAC",   "KLA"),
+        Map.entry("TXN",    "텍사스 인스트루먼트"),
+        Map.entry("MELI",   "메르카도리브레"),
+        Map.entry("SE",     "씨 리미티드"),
+        Map.entry("PDD",    "핀둬둬"),
+        Map.entry("BABA",   "알리바바"),
+        Map.entry("JD",     "징둥닷컴"),
+        Map.entry("NIO",    "니오"),
+        Map.entry("XPEV",   "샤오펑"),
+        Map.entry("LI",     "리오토"),
+        Map.entry("RIVN",   "리비안"),
+        Map.entry("LCID",   "루시드 그룹"),
+        Map.entry("GM",     "제너럴 모터스"),
+        Map.entry("F",      "포드"),
+        Map.entry("GS",     "골드만삭스"),
+        Map.entry("MS",     "모건 스탠리"),
+        Map.entry("C",      "씨티그룹"),
+        Map.entry("WFC",    "웰스파고"),
+        Map.entry("SCHW",   "찰스 슈왑"),
+        Map.entry("HOOD",   "로빈후드"),
+        Map.entry("SQ",     "블록(스퀘어)"),
+        Map.entry("SOFI",   "소파이"),
+        Map.entry("IONQ",   "아이온큐"),
+        Map.entry("RGTI",   "리게티 컴퓨팅"),
+        Map.entry("SPY",    "S&P500 ETF"),
+        Map.entry("QQQ",    "나스닥100 ETF"),
+        Map.entry("SOXL",   "반도체 3배 ETF"),
+        Map.entry("TQQQ",   "나스닥100 3배 ETF"),
+        Map.entry("SQQQ",   "나스닥100 인버스 3배 ETF"),
+        Map.entry("ARKK",   "ARK 이노베이션 ETF"),
+        Map.entry("VOO",    "뱅가드 S&P500 ETF"),
+        Map.entry("VTI",    "뱅가드 미국 전체시장 ETF")
+    );
+
     // KRX 종목 목록 캐시 (검색·히트맵 공용, 6시간 갱신)
     private volatile List<String[]> krxStocksCache    = null;
     private volatile long           krxStocksCacheTime = 0;
+
+    // KR 전종목 한글명 룩업 캐시 (KOSPI + KOSDAQ, 6시간 갱신)
+    private volatile Map<String, String> krNameLookup     = null;
+    private volatile long                krNameLookupTime = 0;
 
     // 히트맵 캐시 (30분 스케줄 갱신 + Yahoo Finance 기반)
     private volatile List<StockHeatmapSectorDto> heatmapCache     = null;
@@ -497,6 +587,10 @@ public class StockService {
                 String market = (symbol.endsWith(".KS") || symbol.endsWith(".KQ")
                     || "KSC".equals(exchange) || "KOE".equals(exchange)) ? "KR" : "US";
 
+                // 한글명 변환 적용
+                String resolvedName = resolveStockName(symbol);
+                if (resolvedName != null && !resolvedName.isBlank()) name = resolvedName;
+
                 results.add(StockSearchResultDto.builder()
                     .symbol(symbol)
                     .name(name)
@@ -703,6 +797,62 @@ public class StockService {
         } catch (Exception e) {
             log.warn("Yahoo Finance US 스크리너 조회 실패: {}", e.getMessage());
             return Collections.emptyList();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 한글 종목명 변환 — KR(.KS/.KQ): KRX 전종목, US: 주요 종목 매핑
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * 주어진 심볼의 한글명 반환.
+     * - .KS/.KQ: KRX KOSPI+KOSDAQ 전종목 캐시 → 하드코딩 폴백
+     * - US: US_STOCK_NAMES_KO 매핑
+     * - 없으면 null 반환 (호출부에서 원래 이름 유지)
+     */
+    public String resolveStockName(String symbol) {
+        if (symbol == null) return null;
+        String upper = symbol.toUpperCase();
+
+        if (upper.endsWith(".KS") || upper.endsWith(".KQ")) {
+            buildKrNameLookupIfNeeded();
+            if (krNameLookup != null) {
+                String name = krNameLookup.get(upper);
+                if (name != null) return name;
+            }
+            return KR_HEATMAP_NAME_FALLBACK.get(symbol);
+        }
+        return US_STOCK_NAMES_KO.get(upper);
+    }
+
+    private void buildKrNameLookupIfNeeded() {
+        if (krNameLookup != null
+                && (System.currentTimeMillis() - krNameLookupTime) < CACHE_TTL_MS) return;
+        buildKrNameLookup();
+    }
+
+    private synchronized void buildKrNameLookup() {
+        if (krNameLookup != null
+                && (System.currentTimeMillis() - krNameLookupTime) < CACHE_TTL_MS) return;
+
+        Map<String, String> map = new java.util.HashMap<>();
+
+        // KOSPI 전종목 (시총 순, 최대 1000 → 실제 ~900개)
+        List<String[]> kospi = fetchKRXTopStocks("STK", 1000);
+        kospi.forEach(s -> map.put(s[0].toUpperCase(), s[1]));
+
+        // KOSDAQ 전종목 (시총 순, 최대 1500 → 실제 ~1600개)
+        List<String[]> kosdaq = fetchKRXTopStocks("KSQ", 1500);
+        kosdaq.forEach(s -> map.put(s[0].toUpperCase(), s[1]));
+
+        // 하드코딩 폴백도 병합 (KRX 실패 시 최소 보장)
+        KR_HEATMAP_NAME_FALLBACK.forEach((k, v) -> map.putIfAbsent(k.toUpperCase(), v));
+
+        if (!map.isEmpty()) {
+            krNameLookup     = map;
+            krNameLookupTime = System.currentTimeMillis();
+            log.info("KR 종목명 룩업 맵 빌드 완료: KOSPI {}개, KOSDAQ {}개, 총 {}개",
+                kospi.size(), kosdaq.size(), map.size());
         }
     }
 

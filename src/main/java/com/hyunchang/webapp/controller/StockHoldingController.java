@@ -3,6 +3,7 @@ package com.hyunchang.webapp.controller;
 import com.hyunchang.webapp.entity.StockHolding;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.service.StockHoldingService;
+import com.hyunchang.webapp.service.StockService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -20,11 +21,14 @@ public class StockHoldingController {
 
     private final StockHoldingService stockHoldingService;
     private final MenuCrudPermissionService menuCrudPermissionService;
+    private final StockService stockService;
 
     public StockHoldingController(StockHoldingService stockHoldingService,
-                                  MenuCrudPermissionService menuCrudPermissionService) {
+                                  MenuCrudPermissionService menuCrudPermissionService,
+                                  StockService stockService) {
         this.stockHoldingService = stockHoldingService;
         this.menuCrudPermissionService = menuCrudPermissionService;
+        this.stockService = stockService;
     }
 
     private boolean canRead() {
@@ -55,6 +59,11 @@ public class StockHoldingController {
         }
         String userId = SecurityUtils.getCurrentUserId();
         List<StockHolding> holdings = stockHoldingService.getHoldings(userId);
+        // 한글명 자동 변환 (DB에 영문명이 저장된 기존 데이터 포함)
+        holdings.forEach(h -> {
+            String kor = stockService.resolveStockName(h.getSymbol());
+            if (kor != null && !kor.isBlank()) h.setName(kor);
+        });
         return ResponseEntity.ok(holdings);
     }
 
