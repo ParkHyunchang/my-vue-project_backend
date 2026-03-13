@@ -15,4 +15,5 @@ public class StockNewsDto {
     private String description;
     private String pubDate;
     private String source;
+    private String market; // "KR" or "US"
 }

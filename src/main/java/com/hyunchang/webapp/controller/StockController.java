@@ -48,10 +48,11 @@ public class StockController {
         return ResponseEntity.ok(stockService.getHeatmapKR());
     }
 
-    @Operation(summary = "주식 뉴스 (RSS)")
+    @Operation(summary = "주식 뉴스 (RSS) — market: KR(국내) | US(해외) | ALL(전체, 기본값)")
     @GetMapping("/news")
-    public ResponseEntity<List<StockNewsDto>> getNews() {
-        return ResponseEntity.ok(stockService.getNews());
+    public ResponseEntity<List<StockNewsDto>> getNews(
+            @RequestParam(defaultValue = "KR") String market) {
+        return ResponseEntity.ok(stockService.getNews(market));
     }
 
     @Operation(summary = "종목 검색 (Yahoo Finance 프록시, 쿼터 소모 없음)")

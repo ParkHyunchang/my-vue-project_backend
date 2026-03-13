@@ -104,7 +104,14 @@ public class StockService {
     private final Map<String, Long>                singlePriceTimes = new ConcurrentHashMap<>();
     // 6시간 캐시 — 25 calls/day 기준: KR(10) + US(10) = 20 calls/일 사용
     // 하루 최대 2회 갱신 가능 (오전/오후 1회씩)
-    private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L; // 6시간
+    private static final long CACHE_TTL_MS      = 6 * 60 * 60 * 1000L; // 6시간
+    private static final long NEWS_CACHE_TTL_MS = 20 * 60 * 1000L;     // 뉴스 캐시 20분
+
+    // 뉴스 캐시 (KR/US 각각, 번역 포함)
+    private volatile List<StockNewsDto> krNewsCache     = null;
+    private volatile long               krNewsCacheTime = 0;
+    private volatile List<StockNewsDto> usNewsCache     = null;
+    private volatile long               usNewsCacheTime = 0;
 
     // ─────────────────────────────────────────────────────────────
     // 일일 API 호출 카운터 (자정 자동 초기화)
@@ -286,11 +293,14 @@ public class StockService {
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
 
-    // 뉴스 RSS 소스
+    // 뉴스 RSS 소스 — {출처명, URL, 시장(KR|US)}
     private static final List<String[]> RSS_SOURCES = List.of(
-        new String[]{"한국경제", "https://www.hankyung.com/feed/finance"},
-        new String[]{"매일경제", "https://www.mk.co.kr/rss/30000001/"},
-        new String[]{"연합뉴스", "https://www.yna.co.kr/rss/economy.xml"}
+        new String[]{"한국경제",  "https://www.hankyung.com/feed/finance",                                          "KR"},
+        new String[]{"매일경제",  "https://www.mk.co.kr/rss/30000001/",                                             "KR"},
+        new String[]{"연합뉴스",  "https://www.yna.co.kr/rss/economy.xml",                                         "KR"},
+        new String[]{"Reuters",   "https://feeds.reuters.com/reuters/businessNews",                                 "US"},
+        new String[]{"MarketWatch","https://feeds.marketwatch.com/marketwatch/topstories/",                        "US"},
+        new String[]{"CNBC",      "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", "US"}
     );
 
     private final RestTemplate restTemplate;
@@ -723,13 +733,80 @@ public class StockService {
         }
     }
 
-    public List<StockNewsDto> getNews() {
+    public List<StockNewsDto> getNews(String market) {
+        long now = System.currentTimeMillis();
+
+        if ("KR".equalsIgnoreCase(market)) {
+            if (krNewsCache != null && (now - krNewsCacheTime) < NEWS_CACHE_TTL_MS) {
+                log.info("뉴스 캐시 히트 [KR]");
+                return krNewsCache;
+            }
+            List<StockNewsDto> fresh = fetchNewsByMarket("KR");
+            krNewsCache     = fresh;
+            krNewsCacheTime = now;
+            return fresh;
+        }
+
+        if ("US".equalsIgnoreCase(market)) {
+            if (usNewsCache != null && (now - usNewsCacheTime) < NEWS_CACHE_TTL_MS) {
+                log.info("뉴스 캐시 히트 [US]");
+                return usNewsCache;
+            }
+            List<StockNewsDto> fresh = fetchNewsByMarket("US");
+            // 제목·요약 한글 번역
+            List<StockNewsDto> translated = fresh.stream().map(n -> {
+                String koTitle = translateToKorean(n.getTitle());
+                String koDesc  = n.getDescription() != null ? translateToKorean(n.getDescription()) : null;
+                return StockNewsDto.builder()
+                        .title(koTitle).link(n.getLink())
+                        .description(koDesc).pubDate(n.getPubDate())
+                        .source(n.getSource()).market(n.getMarket())
+                        .build();
+            }).toList();
+            usNewsCache     = translated;
+            usNewsCacheTime = now;
+            return translated;
+        }
+
+        // ALL — 두 시장 합산 (번역 포함)
+        List<StockNewsDto> all = new ArrayList<>(getNews("KR"));
+        all.addAll(getNews("US"));
+        return all.stream().limit(30).toList();
+    }
+
+    private List<StockNewsDto> fetchNewsByMarket(String market) {
         List<StockNewsDto> all = new ArrayList<>();
         for (String[] src : RSS_SOURCES) {
-            try { all.addAll(parseRss(src[1], src[0])); }
+            if (!src[2].equalsIgnoreCase(market)) continue;
+            try { all.addAll(parseRss(src[1], src[0], src[2])); }
             catch (Exception e) { log.warn("RSS 파싱 실패 [{}]: {}", src[0], e.getMessage()); }
         }
         return all.stream().limit(30).toList();
+    }
+
+    private String translateToKorean(String text) {
+        if (text == null || text.isBlank()) return text;
+        try {
+            String encoded = URLEncoder.encode(text, StandardCharsets.UTF_8);
+            String url = "https://translate.googleapis.com/translate_a/single"
+                + "?client=gtx&sl=en&tl=ko&dt=t&q=" + encoded;
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent", "Mozilla/5.0");
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+            JsonNode root = objectMapper.readTree(resp.getBody());
+            JsonNode parts = root.get(0);
+            if (parts == null || !parts.isArray()) return text;
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode part : parts) {
+                if (part.isArray() && !part.isEmpty()) sb.append(part.get(0).asText(""));
+            }
+            String result = sb.toString().trim();
+            return result.isEmpty() ? text : result;
+        } catch (Exception e) {
+            log.warn("번역 실패: {}", e.getMessage());
+            return text;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -1088,7 +1165,7 @@ public class StockService {
     // 뉴스 RSS 파싱
     // ─────────────────────────────────────────────────────────────
 
-    private List<StockNewsDto> parseRss(String url, String sourceName) throws Exception {
+    private List<StockNewsDto> parseRss(String url, String sourceName, String market) throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.set("User-Agent", "Mozilla/5.0 (compatible; RSS Reader/1.0)");
         ResponseEntity<String> resp = restTemplate.exchange(
@@ -1122,7 +1199,7 @@ public class StockService {
 
             news.add(StockNewsDto.builder()
                 .title(title).link(link).description(desc)
-                .pubDate(pubDate).source(sourceName).build());
+                .pubDate(pubDate).source(sourceName).market(market).build());
         }
         return news;
     }
