@@ -29,6 +29,7 @@ import org.xml.sax.InputSource;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.DayOfWeek;
@@ -295,12 +296,12 @@ public class StockService {
 
     // 뉴스 RSS 소스 — {출처명, URL, 시장(KR|US)}
     private static final List<String[]> RSS_SOURCES = List.of(
-        new String[]{"한국경제",  "https://www.hankyung.com/feed/finance",                                          "KR"},
-        new String[]{"매일경제",  "https://www.mk.co.kr/rss/30000001/",                                             "KR"},
-        new String[]{"연합뉴스",  "https://www.yna.co.kr/rss/economy.xml",                                         "KR"},
-        new String[]{"Reuters",   "https://feeds.reuters.com/reuters/businessNews",                                 "US"},
-        new String[]{"MarketWatch","https://feeds.marketwatch.com/marketwatch/topstories/",                        "US"},
-        new String[]{"CNBC",      "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114", "US"}
+        new String[]{"한국경제",   "https://www.hankyung.com/feed/finance",                                         "KR"},
+        new String[]{"머니투데이", "https://news.mt.co.kr/newsRSS.php?cast=1&SECTION_CD=SC1",                       "KR"},
+        new String[]{"연합뉴스",   "https://www.yna.co.kr/rss/economy.xml",                                        "KR"},
+        new String[]{"Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories",                               "US"},
+        new String[]{"MarketWatch","https://feeds.marketwatch.com/marketwatch/marketpulse/",                       "US"},
+        new String[]{"CNBC",      "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069", "US"}
     );
 
     private final RestTemplate restTemplate;
@@ -802,7 +803,11 @@ public class StockService {
                 if (part.isArray() && !part.isEmpty()) sb.append(part.get(0).asText(""));
             }
             String result = sb.toString().trim();
-            return result.isEmpty() ? text : result;
+            if (result.isEmpty()) return text;
+            try {
+                result = URLDecoder.decode(result, StandardCharsets.UTF_8);
+            } catch (Exception ignore) { /* 디코딩 실패 시 원문 사용 */ }
+            return result;
         } catch (Exception e) {
             log.warn("번역 실패: {}", e.getMessage());
             return text;
