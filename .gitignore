@@ -4,6 +4,9 @@
 # 빌드 결과물
 /target
 
+# Claude Code
+.claude
+
 # IDE 설정
 /.idea
 *.iml
