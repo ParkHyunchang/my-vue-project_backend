@@ -3,8 +3,8 @@
 spring:
   datasource:
     url: jdbc:mysql://localhost:3306/vue_personal_project_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-    username: hyunchang88
-    password: gusckd88!
+    username: ${DB_USERNAME:hyunchang88}
+    password: ${DB_PASSWORD:gusckd88!}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     show-sql: true
@@ -12,6 +12,13 @@ spring:
     multipart:
       max-file-size: '3GB'
       max-request-size: '15GB'
+
+# 로컬 전용 기본값 (운영 환경에서는 실제 환경변수로 덮어씀)
+jwt:
+  secret: ${JWT_SECRET:mySecretKeyForJWTTokenGeneration123456789}
+
+alphavantage:
+  api-key: ${ALPHAVANTAGE_API_KEY:G9N3LHGFFK11WSGS}
 
 logging:
   level:

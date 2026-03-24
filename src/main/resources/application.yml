@@ -46,14 +46,14 @@ logging:
 
 # JWT Configuration
 jwt:
-  secret: mySecretKeyForJWTTokenGeneration123456789
+  secret: ${JWT_SECRET}
   expiration: 86400000
 
 # Admin Users Configuration
 admin:
-  users: hyunchang88,admin
+  users: ${ADMIN_USERS:hyunchang88,admin}
 
 # Alpha Vantage Stock API (https://www.alphavantage.co)
 # 무료 한도: 25 calls/day, 5 calls/min
 alphavantage:
-  api-key: G9N3LHGFFK11WSGS
+  api-key: ${ALPHAVANTAGE_API_KEY}
