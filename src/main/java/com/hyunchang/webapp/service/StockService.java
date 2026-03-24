@@ -88,6 +88,26 @@ public class StockService {
         return result;
     }
 
+    /** 국내 시총 Top 10 (KOSDAQ) */
+    public List<StockQuoteDto> getTop10KOSDAQ() {
+        Long cachedAt = cacheTimes.get("KOSDAQ");
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+            log.info("Stock 캐시 히트 [KOSDAQ]");
+            return quoteCache.getOrDefault("KOSDAQ", Collections.emptyList());
+        }
+        List<String[]> stocks = krxService.getTopStocks("KSQ", 10);
+        if (stocks.isEmpty()) {
+            log.warn("KRX KOSDAQ 조회 실패, 비상 폴백 사용");
+            stocks = KrxService.KQ_STOCKS_FALLBACK;
+        }
+        List<StockQuoteDto> result = fetchAll("KOSDAQ", stocks, "KRW");
+        if (!result.isEmpty()) {
+            quoteCache.put("KOSDAQ", result);
+            cacheTimes.put("KOSDAQ", System.currentTimeMillis());
+        }
+        return result;
+    }
+
     /** 미국 시총 Top 10 (Yahoo Finance 스크리너 실시간 순위) */
     public List<StockQuoteDto> getTop10US() {
         Long cachedAt = cacheTimes.get("US");
@@ -205,6 +225,16 @@ public class StockService {
         cacheTimes.remove("KR");
         getTop10KR();
         log.info("[스케줄] KR 시총 Top10 갱신 완료");
+    }
+
+    @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
+    public void scheduledRefreshKOSDAQ() {
+        log.info("[스케줄] KOSDAQ 시총 Top10 갱신 시작 (09:00 KST)");
+        saveBaseRanks("KOSDAQ");
+        quoteCache.remove("KOSDAQ");
+        cacheTimes.remove("KOSDAQ");
+        getTop10KOSDAQ();
+        log.info("[스케줄] KOSDAQ 시총 Top10 갱신 완료");
     }
 
     @Scheduled(cron = "0 30 23 * * *", zone = "Asia/Seoul")

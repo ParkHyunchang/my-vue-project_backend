@@ -36,6 +36,12 @@ public class StockController {
         return ResponseEntity.ok(stockService.getTop10KR());
     }
 
+    @Operation(summary = "국내 시총 Top 10 (KOSDAQ)")
+    @GetMapping("/top10/kosdaq")
+    public ResponseEntity<List<StockQuoteDto>> getTop10KOSDAQ() {
+        return ResponseEntity.ok(stockService.getTop10KOSDAQ());
+    }
+
     @Operation(summary = "미국 시총 Top 10")
     @GetMapping("/top10/us")
     public ResponseEntity<List<StockQuoteDto>> getTop10US() {

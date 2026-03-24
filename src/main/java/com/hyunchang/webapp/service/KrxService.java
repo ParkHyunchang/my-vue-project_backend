@@ -33,6 +33,19 @@ public class KrxService {
     private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L; // 6시간
 
     // ── KRX 실패 시 비상 폴백 목록 ────────────────────────────────
+    public static final List<String[]> KQ_STOCKS_FALLBACK = List.of(
+        new String[]{"247540.KQ", "에코프로비엠",    "0"},
+        new String[]{"086520.KQ", "에코프로",        "0"},
+        new String[]{"196170.KQ", "알테오젠",        "0"},
+        new String[]{"357780.KQ", "솔브레인",        "0"},
+        new String[]{"091990.KQ", "셀트리온헬스케어","0"},
+        new String[]{"293490.KQ", "카카오게임즈",    "0"},
+        new String[]{"112040.KQ", "위메이드",        "0"},
+        new String[]{"041510.KQ", "에스엠",          "0"},
+        new String[]{"035720.KQ", "카카오",          "0"},
+        new String[]{"251270.KQ", "넷마블",          "0"}
+    );
+
     public static final List<String[]> KR_STOCKS_FALLBACK = List.of(
         new String[]{"005930.KS", "삼성전자",        "0"},
         new String[]{"000660.KS", "SK하이닉스",      "0"},
