@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.config;
 
 import com.hyunchang.webapp.service.UserService;
+import io.jsonwebtoken.ExpiredJwtException;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -35,6 +36,8 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             jwt = authorizationHeader.substring(7);
             try {
                 username = jwtUtil.extractUsername(jwt);
+            } catch (ExpiredJwtException e) {
+                logger.warn("JWT token expired: " + e.getMessage());
             } catch (Exception e) {
                 logger.error("JWT token parsing error", e);
             }
