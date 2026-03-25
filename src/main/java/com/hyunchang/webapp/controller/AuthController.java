@@ -199,7 +199,7 @@ public class AuthController {
             User user = userOptional.get();
             return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRoleName(user.getRole()));
         } catch (Exception e) {
-            System.out.println("사용자 메뉴 권한 조회 실패: " + e.getMessage());
+            log.warn("사용자 메뉴 권한 조회 실패: {}", e.getMessage());
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }
     }
@@ -226,7 +226,7 @@ public class AuthController {
                             .build()
             );
         } catch (Exception e) {
-            System.out.println("아이디 찾기 실패: " + e.getMessage());
+            log.warn("아이디 찾기 실패: {}", e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("message", "아이디 찾기에 실패했습니다."));
         }
     }
@@ -266,7 +266,7 @@ public class AuthController {
             userService.updatePassword(user, trimmedPassword);
             return ResponseEntity.ok(Map.of("message", "비밀번호가 성공적으로 변경되었습니다."));
         } catch (Exception e) {
-            System.out.println("비밀번호 초기화 실패: " + e.getMessage());
+            log.warn("비밀번호 초기화 실패: {}", e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("message", "비밀번호 초기화에 실패했습니다."));
         }
     }

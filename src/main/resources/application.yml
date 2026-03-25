@@ -1,12 +1,11 @@
 # Common Configuration (공통 설정)
+# ddl-auto / show-sql 는 각 프로파일 yml에서 설정합니다.
+# Docker/NAS 배포 시 환경변수 SPRING_PROFILES_ACTIVE 로 프로파일을 덮어씁니다.
 
 # JPA Configuration
 spring:
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
-    hibernate:
-      ddl-auto: update
-    show-sql: true
 
   # Bean Override
   main:
@@ -18,7 +17,7 @@ spring:
       enabled: true
       path: /h2-console
 
-  # Default profile (로컬 개발용)
+  # 로컬 개발 기본 프로파일 (Docker/NAS는 각자 SPRING_PROFILES_ACTIVE 설정)
   profiles:
     active: local
 

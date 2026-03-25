@@ -61,6 +61,11 @@ mvn spring-boot:run
 .\run-local.ps1
 ```
 
+### 백엔드 테스트 실행
+```bash
+mvn test
+```
+
 ### Docker Compose로 백엔드 + MySQL 실행
 
 ```bash

@@ -2,6 +2,8 @@ package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.dto.UpdateUserRequest;
 import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.exception.UserAlreadyExistsException;
+import com.hyunchang.webapp.exception.UserNotFoundException;
 import com.hyunchang.webapp.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,18 +35,18 @@ public class UserService implements UserDetailsService {
 
     public User registerUser(String userId, String name, String email, String phone, String password, String role) {
         if (userRepository.existsByUserId(userId)) {
-            throw new RuntimeException("이미 사용 중인 사용자ID입니다.");
+            throw new UserAlreadyExistsException("이미 사용 중인 사용자ID입니다.");
         }
         if (userRepository.existsByEmail(email)) {
-            throw new RuntimeException("가입된 메일주소가 있습니다.");
+            throw new UserAlreadyExistsException("가입된 메일주소가 있습니다.");
         }
         if (phone != null && !phone.trim().isEmpty() && userRepository.existsByPhone(phone.trim())) {
-            throw new RuntimeException("가입된 전화번호가 있습니다.");
+            throw new UserAlreadyExistsException("가입된 전화번호가 있습니다.");
         }
 
         String roleUpper = (role != null) ? role.trim().toUpperCase() : "USER";
         if ("ADMIN".equals(roleUpper) && !isAllowedAdmin(userId)) {
-            throw new RuntimeException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
+            throw new IllegalArgumentException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
         }
 
         User user = User.builder()
@@ -104,11 +106,11 @@ public class UserService implements UserDetailsService {
 
     public User updateUserRole(Long userId, String newRole) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
 
         String roleUpper = newRole.trim().toUpperCase();
         if ("ADMIN".equals(roleUpper) && !isAllowedAdmin(user.getUserId())) {
-            throw new RuntimeException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
+            throw new IllegalArgumentException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
         }
 
         user.setRole(roleUpper);
@@ -117,7 +119,7 @@ public class UserService implements UserDetailsService {
 
     public User updateUser(Long userId, UpdateUserRequest request) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new RuntimeException("User not found with id: " + userId));
+                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
 
         if (request.getName() != null && !request.getName().trim().isEmpty()) {
             user.setName(request.getName().trim());
@@ -125,21 +127,21 @@ public class UserService implements UserDetailsService {
         if (request.getEmail() != null && !request.getEmail().trim().isEmpty()) {
             String newEmail = request.getEmail().trim();
             if (!newEmail.equals(user.getEmail()) && userRepository.existsByEmail(newEmail)) {
-                throw new RuntimeException("가입된 메일주소가 있습니다.");
+                throw new UserAlreadyExistsException("가입된 메일주소가 있습니다.");
             }
             user.setEmail(newEmail);
         }
         if (request.getPhone() != null) {
             String newPhone = request.getPhone().trim().isEmpty() ? null : request.getPhone().trim();
             if (newPhone != null && !newPhone.equals(user.getPhone()) && userRepository.existsByPhone(newPhone)) {
-                throw new RuntimeException("가입된 전화번호가 있습니다.");
+                throw new UserAlreadyExistsException("가입된 전화번호가 있습니다.");
             }
             user.setPhone(newPhone);
         }
         if (request.getRole() != null) {
             String roleUpper = request.getRole().trim().toUpperCase();
             if ("ADMIN".equals(roleUpper) && !isAllowedAdmin(user.getUserId())) {
-                throw new RuntimeException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
+                throw new IllegalArgumentException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
             }
             user.setRole(roleUpper);
         }
@@ -153,7 +155,7 @@ public class UserService implements UserDetailsService {
 
     public void deleteUser(Long userId) {
         if (!userRepository.existsById(userId)) {
-            throw new RuntimeException("User not found with id: " + userId);
+            throw new UserNotFoundException("User not found with id: " + userId);
         }
         userRepository.deleteById(userId);
     }
@@ -165,7 +167,7 @@ public class UserService implements UserDetailsService {
 
     public boolean isAdmin(String userId) {
         User user = userRepository.findByUserId(userId)
-                .orElseThrow(() -> new RuntimeException("User not found: " + userId));
+                .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
         return "ADMIN".equals(user.getRole());
     }
 
