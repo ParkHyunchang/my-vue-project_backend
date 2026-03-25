@@ -3,6 +3,10 @@ package com.hyunchang.webapp.service;
 import com.hyunchang.webapp.dto.RoleInfoRequest;
 import com.hyunchang.webapp.dto.RoleInfoResponse;
 import com.hyunchang.webapp.entity.RoleInfo;
+import com.hyunchang.webapp.exception.DuplicateException;
+import com.hyunchang.webapp.exception.ForbiddenException;
+import com.hyunchang.webapp.exception.NotFoundException;
+import com.hyunchang.webapp.exception.ValidationException;
 import com.hyunchang.webapp.repository.RoleInfoRepository;
 import com.hyunchang.webapp.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -59,25 +63,25 @@ public class RoleInfoService {
     @Transactional(readOnly = true)
     public RoleInfoResponse getRoleInfoByRoleName(String roleName) {
         RoleInfo info = roleInfoRepository.findByRoleName(roleName)
-                .orElseThrow(() -> new RuntimeException("권한 정보를 찾을 수 없습니다: " + roleName));
+                .orElseThrow(() -> new NotFoundException("권한 정보를 찾을 수 없습니다: " + roleName));
         return RoleInfoResponse.from(info, countUsersForRole(roleName));
     }
 
     @Transactional
     public RoleInfoResponse createRoleInfo(RoleInfoRequest request) {
         if (request.getRoleName() == null || request.getRoleName().trim().isEmpty()) {
-            throw new RuntimeException("권한 이름은 필수입니다.");
+            throw new ValidationException("권한 이름은 필수입니다.");
         }
         if (request.getDisplayName() == null || request.getDisplayName().trim().isEmpty()) {
-            throw new RuntimeException("표시명은 필수입니다.");
+            throw new ValidationException("표시명은 필수입니다.");
         }
         if (request.getDescription() == null || request.getDescription().trim().isEmpty()) {
-            throw new RuntimeException("설명은 필수입니다.");
+            throw new ValidationException("설명은 필수입니다.");
         }
 
         String roleName = request.getRoleName().trim().toUpperCase();
         if (roleInfoRepository.existsByRoleName(roleName)) {
-            throw new RuntimeException("이미 존재하는 권한 이름입니다: " + roleName);
+            throw new DuplicateException("이미 존재하는 권한 이름입니다: " + roleName);
         }
 
         RoleInfo info = roleInfoRepository.save(RoleInfo.builder()
@@ -93,7 +97,7 @@ public class RoleInfoService {
     @Transactional
     public RoleInfoResponse updateRoleInfo(Long id, RoleInfoRequest request) {
         RoleInfo info = roleInfoRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("권한 정보를 찾을 수 없습니다."));
+                .orElseThrow(() -> new NotFoundException("권한 정보를 찾을 수 없습니다."));
 
         if (request.getDisplayName() != null && !request.getDisplayName().trim().isEmpty()) {
             info.setDisplayName(request.getDisplayName().trim());
@@ -115,9 +119,9 @@ public class RoleInfoService {
     @Transactional
     public void deleteRoleInfo(Long id) {
         RoleInfo info = roleInfoRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("권한 정보를 찾을 수 없습니다."));
+                .orElseThrow(() -> new NotFoundException("권한 정보를 찾을 수 없습니다."));
         if (info.isDefault()) {
-            throw new RuntimeException("기본 권한(" + info.getRoleName() + ")은 삭제할 수 없습니다.");
+            throw new ForbiddenException("기본 권한(" + info.getRoleName() + ")은 삭제할 수 없습니다.");
         }
         roleInfoRepository.deleteById(id);
     }

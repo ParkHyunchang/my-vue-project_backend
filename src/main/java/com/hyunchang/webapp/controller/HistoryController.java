@@ -2,6 +2,8 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.History;
 import com.hyunchang.webapp.service.HistoryService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -17,6 +19,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/histories")
 public class HistoryController {
+    private static final Logger log = LoggerFactory.getLogger(HistoryController.class);
     private final HistoryService historyService;
     private static final String UPLOAD_DIR = getUploadDirectory();
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
@@ -40,7 +43,7 @@ public class HistoryController {
         try {
             Files.createDirectories(Paths.get(UPLOAD_DIR));
         } catch (IOException e) {
-            System.out.println("히스토리 업로드 디렉토리 생성 실패: " + e.getMessage());
+            log.error("히스토리 업로드 디렉토리 생성 실패: {}", e.getMessage());
         }
     }
 

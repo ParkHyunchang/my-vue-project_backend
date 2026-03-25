@@ -4,6 +4,8 @@ import com.hyunchang.webapp.entity.DatingSys;
 import com.hyunchang.webapp.service.DatingSysService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -19,6 +21,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/dating_sys")
 public class DatingSysController {
+    private static final Logger log = LoggerFactory.getLogger(DatingSysController.class);
     private final DatingSysService datingSysService;
     private final MenuCrudPermissionService menuCrudPermissionService;
     private static final String UPLOAD_DIR = getUploadDirectory();
@@ -40,7 +43,7 @@ public class DatingSysController {
         try {
             Files.createDirectories(Paths.get(UPLOAD_DIR));
         } catch (IOException e) {
-            System.out.println("업로드 디렉토리 생성 실패: " + e.getMessage());
+            log.error("업로드 디렉토리 생성 실패: {}", e.getMessage());
         }
     }
 

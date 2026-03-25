@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.hyunchang.webapp.entity.Dating;
+import com.hyunchang.webapp.exception.NotFoundException;
 import com.hyunchang.webapp.repository.DatingRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -20,6 +23,7 @@ import java.util.List;
 
 @Service
 public class DatingService {
+    private static final Logger log = LoggerFactory.getLogger(DatingService.class);
     private final DatingRepository datingRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String UPLOAD_DIR = getUploadDirectory();
@@ -46,7 +50,7 @@ public class DatingService {
 
     public Dating findById(Long id) {
         return datingRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Dating memory not found"));
+                .orElseThrow(() -> new NotFoundException("추억을 찾을 수 없습니다. id: " + id));
     }
 
     private void validateDating(Dating dating) {
@@ -141,7 +145,7 @@ public class DatingService {
         try {
             datingRepository.delete(existingDating);
         } catch (ObjectOptimisticLockingFailureException | EmptyResultDataAccessException e) {
-            System.out.println("이미 삭제된 추억 삭제 시도 - id: " + id + ", message: " + e.getMessage());
+            log.warn("이미 삭제된 추억 삭제 시도 - id: {}, message: {}", id, e.getMessage());
             throw new EntityNotFoundException("이미 삭제된 추억입니다.");
         }
     }

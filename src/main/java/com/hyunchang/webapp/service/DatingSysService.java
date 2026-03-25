@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.hyunchang.webapp.entity.DatingSys;
+import com.hyunchang.webapp.exception.NotFoundException;
 import com.hyunchang.webapp.repository.DatingSysRepository;
 import jakarta.persistence.EntityNotFoundException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
@@ -20,6 +23,7 @@ import java.util.List;
 
 @Service
 public class DatingSysService {
+    private static final Logger log = LoggerFactory.getLogger(DatingSysService.class);
     private final DatingSysRepository datingSysRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String UPLOAD_DIR = getUploadDirectory();
@@ -43,7 +47,7 @@ public class DatingSysService {
 
     public DatingSys findById(Long id) {
         return datingSysRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("DatingSys memory not found"));
+                .orElseThrow(() -> new NotFoundException("추억을 찾을 수 없습니다. id: " + id));
     }
 
     private void validateDatingSys(DatingSys datingSys) {
@@ -131,7 +135,7 @@ public class DatingSysService {
         try {
             datingSysRepository.delete(existing);
         } catch (ObjectOptimisticLockingFailureException | EmptyResultDataAccessException e) {
-            System.out.println("이미 삭제된 추억 삭제 시도 - id: " + id + ", message: " + e.getMessage());
+            log.warn("이미 삭제된 추억 삭제 시도 - id: {}, message: {}", id, e.getMessage());
             throw new EntityNotFoundException("이미 삭제된 추억입니다.");
         }
     }

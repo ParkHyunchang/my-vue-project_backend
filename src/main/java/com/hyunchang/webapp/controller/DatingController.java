@@ -47,7 +47,7 @@ public class DatingController {
         try {
             Files.createDirectories(Paths.get(UPLOAD_DIR));
         } catch (IOException e) {
-            System.out.println("업로드 디렉토리 생성 실패: " + e.getMessage());
+            log.error("업로드 디렉토리 생성 실패: {}", e.getMessage());
         }
     }
 

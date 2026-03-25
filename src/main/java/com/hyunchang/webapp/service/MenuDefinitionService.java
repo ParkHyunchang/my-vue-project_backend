@@ -3,6 +3,10 @@ package com.hyunchang.webapp.service;
 import com.hyunchang.webapp.dto.MenuDefinitionRequest;
 import com.hyunchang.webapp.dto.MenuDefinitionResponse;
 import com.hyunchang.webapp.entity.MenuDefinition;
+import com.hyunchang.webapp.exception.DuplicateException;
+import com.hyunchang.webapp.exception.ForbiddenException;
+import com.hyunchang.webapp.exception.NotFoundException;
+import com.hyunchang.webapp.exception.ValidationException;
 import com.hyunchang.webapp.repository.MenuCrudPermissionRepository;
 import com.hyunchang.webapp.repository.MenuDefinitionRepository;
 import com.hyunchang.webapp.repository.MenuPermissionRepository;
@@ -32,13 +36,13 @@ public class MenuDefinitionService {
     @Transactional
     public MenuDefinitionResponse createMenuDefinition(MenuDefinitionRequest request) {
         if (request.getPath() == null || request.getPath().isBlank()) {
-            throw new RuntimeException("메뉴 경로는 필수입니다.");
+            throw new ValidationException("메뉴 경로는 필수입니다.");
         }
         if (request.getName() == null || request.getName().isBlank()) {
-            throw new RuntimeException("메뉴 이름은 필수입니다.");
+            throw new ValidationException("메뉴 이름은 필수입니다.");
         }
         if (menuDefinitionRepository.existsByPath(request.getPath().trim())) {
-            throw new RuntimeException("이미 존재하는 메뉴 경로입니다: " + request.getPath());
+            throw new DuplicateException("이미 존재하는 메뉴 경로입니다: " + request.getPath());
         }
 
         MenuDefinition menu = new MenuDefinition(
@@ -62,7 +66,7 @@ public class MenuDefinitionService {
     @Transactional
     public MenuDefinitionResponse updateMenuDefinition(Long id, MenuDefinitionRequest request) {
         MenuDefinition menu = menuDefinitionRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("메뉴를 찾을 수 없습니다."));
+                .orElseThrow(() -> new NotFoundException("메뉴를 찾을 수 없습니다."));
 
         if (request.getName() != null && !request.getName().isBlank()) {
             menu.setName(request.getName().trim());
@@ -104,10 +108,10 @@ public class MenuDefinitionService {
     @Transactional
     public void deleteMenuDefinition(Long id) {
         MenuDefinition menu = menuDefinitionRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("메뉴를 찾을 수 없습니다."));
+                .orElseThrow(() -> new NotFoundException("메뉴를 찾을 수 없습니다."));
 
         if (menu.isRequired()) {
-            throw new RuntimeException("필수 메뉴(🔒 보호됨)는 삭제할 수 없습니다. '필수 메뉴' 설정을 해제한 후 삭제하세요.");
+            throw new ForbiddenException("필수 메뉴(🔒 보호됨)는 삭제할 수 없습니다. '필수 메뉴' 설정을 해제한 후 삭제하세요.");
         }
 
         // 연관된 권한 데이터를 먼저 삭제 (트랜잭션 보장)
