@@ -95,6 +95,8 @@ public class YahooFinanceService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
+    private volatile List<String[]> usTopStocksCache = null;  // 미국 Top N (마지막 성공 데이터)
+
     public YahooFinanceService(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.objectMapper  = objectMapper;
@@ -103,6 +105,24 @@ public class YahooFinanceService {
     // ─────────────────────────────────────────────────────────────
     // 미국 시총 상위 종목 조회
     // ─────────────────────────────────────────────────────────────
+
+    /**
+     * 미국 시총 Top N 조회.
+     * 스크리너 성공 시 캐시에 저장, 실패 시 마지막 성공 캐시 반환.
+     * 캐시도 없을 때만 빈 리스트 반환(비상 폴백은 호출자가 처리).
+     */
+    public List<String[]> fetchTopUSCached(int count) {
+        List<String[]> fresh = fetchTopUS(count);
+        if (!fresh.isEmpty()) {
+            usTopStocksCache = fresh;
+            return fresh;
+        }
+        if (usTopStocksCache != null) {
+            log.warn("Yahoo Finance US 스크리너 실패 — 이전 캐시 사용 ({}개)", usTopStocksCache.size());
+            return usTopStocksCache.subList(0, Math.min(count, usTopStocksCache.size()));
+        }
+        return Collections.emptyList();
+    }
 
     /** Yahoo Finance 스크리너로 미국 시총 Top N 종목 목록 조회. 실패 시 빈 리스트. */
     public List<String[]> fetchTopUS(int count) {

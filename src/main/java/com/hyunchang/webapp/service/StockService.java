@@ -75,9 +75,9 @@ public class StockService {
             log.info("Stock 캐시 히트 [KR]");
             return quoteCache.getOrDefault("KR", Collections.emptyList());
         }
-        List<String[]> stocks = krxService.getTopStocks("STK", 10);
+        List<String[]> stocks = krxService.getTopStocksKospiCached(10);
         if (stocks.isEmpty()) {
-            log.warn("KRX 조회 실패, 비상 폴백 사용");
+            log.warn("KRX KOSPI 조회 실패 및 캐시 없음 — 비상 폴백 사용");
             stocks = KrxService.KR_STOCKS_FALLBACK;
         }
         List<StockQuoteDto> result = fetchAll("KR", stocks, "KRW");
@@ -95,9 +95,9 @@ public class StockService {
             log.info("Stock 캐시 히트 [KOSDAQ]");
             return quoteCache.getOrDefault("KOSDAQ", Collections.emptyList());
         }
-        List<String[]> stocks = krxService.getTopStocks("KSQ", 10);
+        List<String[]> stocks = krxService.getTopStocksKosdaqCached(10);
         if (stocks.isEmpty()) {
-            log.warn("KRX KOSDAQ 조회 실패, 비상 폴백 사용");
+            log.warn("KRX KOSDAQ 조회 실패 및 캐시 없음 — 비상 폴백 사용");
             stocks = KrxService.KQ_STOCKS_FALLBACK;
         }
         List<StockQuoteDto> result = fetchAll("KOSDAQ", stocks, "KRW");
@@ -115,9 +115,9 @@ public class StockService {
             log.info("Stock 캐시 히트 [US]");
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
-        List<String[]> stocks = yahooService.fetchTopUS(15);
+        List<String[]> stocks = yahooService.fetchTopUSCached(15);
         if (stocks.isEmpty()) {
-            log.warn("Yahoo Finance US 스크리너 실패, 비상 폴백 사용");
+            log.warn("Yahoo Finance US 스크리너 실패 및 캐시 없음 — 비상 폴백 사용");
             stocks = YahooFinanceService.US_STOCKS_FALLBACK;
         }
         List<StockQuoteDto> result = fetchAll("US", stocks, "USD");

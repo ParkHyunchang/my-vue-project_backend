@@ -58,6 +58,7 @@ Spring Boot와 MySQL 기반 백엔드 API입니다.
 
 ```bash
 mvn spring-boot:run
+.\run-local.ps1
 ```
 
 ### Docker Compose로 백엔드 + MySQL 실행

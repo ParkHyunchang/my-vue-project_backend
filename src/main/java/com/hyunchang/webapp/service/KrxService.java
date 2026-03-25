@@ -34,16 +34,16 @@ public class KrxService {
 
     // ── KRX 실패 시 비상 폴백 목록 ────────────────────────────────
     public static final List<String[]> KQ_STOCKS_FALLBACK = List.of(
+        new String[]{"196170.KQ", "알테오젠",        "0"},
+        new String[]{"028300.KQ", "HLB",             "0"},
         new String[]{"247540.KQ", "에코프로비엠",    "0"},
         new String[]{"086520.KQ", "에코프로",        "0"},
-        new String[]{"196170.KQ", "알테오젠",        "0"},
+        new String[]{"141080.KQ", "리가켐바이오",    "0"},
+        new String[]{"214150.KQ", "클래시스",        "0"},
         new String[]{"357780.KQ", "솔브레인",        "0"},
-        new String[]{"091990.KQ", "셀트리온헬스케어","0"},
-        new String[]{"293490.KQ", "카카오게임즈",    "0"},
-        new String[]{"112040.KQ", "위메이드",        "0"},
-        new String[]{"041510.KQ", "에스엠",          "0"},
-        new String[]{"035720.KQ", "카카오",          "0"},
-        new String[]{"251270.KQ", "넷마블",          "0"}
+        new String[]{"277810.KQ", "레인보우로보틱스","0"},
+        new String[]{"000250.KQ", "삼천당제약",      "0"},
+        new String[]{"214450.KQ", "파마리서치",      "0"}
     );
 
     public static final List<String[]> KR_STOCKS_FALLBACK = List.of(
@@ -126,8 +126,10 @@ public class KrxService {
     );
 
     // ── 캐시 ────────────────────────────────────────────────────
-    private volatile List<String[]>       krxStocksCache    = null;
+    private volatile List<String[]>       krxStocksCache    = null;  // KOSPI (검색·히트맵용, 6h TTL)
     private volatile long                 krxStocksCacheTime = 0;
+    private volatile List<String[]>       kospiTop10Cache   = null;  // KOSPI Top10 (마지막 성공 데이터)
+    private volatile List<String[]>       kqdStocksCache    = null;  // KOSDAQ Top10 (마지막 성공 데이터)
     private volatile Map<String, String>  krNameLookup      = null;
     private volatile long                 krNameLookupTime  = 0;
 
@@ -161,6 +163,42 @@ public class KrxService {
             }
         }
         log.warn("KRX {} 최근 7거래일 데이터 조회 실패", mktId);
+        return Collections.emptyList();
+    }
+
+    /**
+     * KOSPI 시총 상위 N개 조회.
+     * KRX API 성공 시 캐시에 저장, 실패 시 마지막 성공 캐시 반환.
+     * 캐시도 없을 때만 빈 리스트 반환(비상 폴백은 호출자가 처리).
+     */
+    public List<String[]> getTopStocksKospiCached(int limit) {
+        List<String[]> fresh = getTopStocks("STK", limit);
+        if (!fresh.isEmpty()) {
+            kospiTop10Cache = fresh;
+            return fresh;
+        }
+        if (kospiTop10Cache != null) {
+            log.warn("KRX KOSPI API 실패 — 이전 캐시 사용 ({}개)", kospiTop10Cache.size());
+            return kospiTop10Cache.subList(0, Math.min(limit, kospiTop10Cache.size()));
+        }
+        return Collections.emptyList();
+    }
+
+    /**
+     * KOSDAQ 시총 상위 N개 조회.
+     * KRX API 성공 시 캐시에 저장, 실패 시 마지막 성공 캐시 반환.
+     * 캐시도 없을 때만 빈 리스트 반환(비상 폴백은 호출자가 처리).
+     */
+    public List<String[]> getTopStocksKosdaqCached(int limit) {
+        List<String[]> fresh = getTopStocks("KSQ", limit);
+        if (!fresh.isEmpty()) {
+            kqdStocksCache = fresh;
+            return fresh;
+        }
+        if (kqdStocksCache != null) {
+            log.warn("KRX KOSDAQ API 실패 — 이전 캐시 사용 ({}개)", kqdStocksCache.size());
+            return kqdStocksCache.subList(0, Math.min(limit, kqdStocksCache.size()));
+        }
         return Collections.emptyList();
     }
 
