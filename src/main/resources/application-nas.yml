@@ -32,7 +32,7 @@ logging:
     org.hibernate.SQL: INFO
 
 jwt:
-  secret: mySecretKeyForJWTTokenGeneration123456789
+  secret: ${JWT_SECRET}
   expiration: 86400000
 
 # Admin Users Configuration (NAS 배포 시 수정)

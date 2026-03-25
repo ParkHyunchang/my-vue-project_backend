@@ -3,8 +3,8 @@
 spring:
   datasource:
     url: jdbc:mysql://db:3306/vue_personal_project_db?useSSL=false&serverTimezone=UTC&allowPublicKeyRetrieval=true
-    username: hyunchang88
-    password: gusckd88!
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
   jpa:
     show-sql: false
