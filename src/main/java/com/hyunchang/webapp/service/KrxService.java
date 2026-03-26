@@ -1,19 +1,12 @@
 package com.hyunchang.webapp.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockSearchResultDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.*;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
-import java.time.DayOfWeek;
-import java.time.LocalDate;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * KRX(한국거래소) Open API 연동 서비스.
@@ -26,10 +19,6 @@ public class KrxService {
 
     private static final Logger log = LoggerFactory.getLogger(KrxService.class);
 
-    private static final String KRX_API_URL =
-        "http://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd";
-    private static final DateTimeFormatter KRX_DATE_FMT =
-        DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L; // 6시간
 
     // ── KRX 실패 시 비상 폴백 목록 ────────────────────────────────
@@ -128,17 +117,13 @@ public class KrxService {
     // ── 캐시 ────────────────────────────────────────────────────
     private volatile List<String[]>       krxStocksCache    = null;  // KOSPI (검색·히트맵용, 6h TTL)
     private volatile long                 krxStocksCacheTime = 0;
-    private volatile List<String[]>       kospiTop10Cache   = null;  // KOSPI Top10 (마지막 성공 데이터)
-    private volatile List<String[]>       kqdStocksCache    = null;  // KOSDAQ Top10 (마지막 성공 데이터)
     private volatile Map<String, String>  krNameLookup      = null;
     private volatile long                 krNameLookupTime  = 0;
 
-    private final RestTemplate restTemplate;
-    private final ObjectMapper objectMapper;
+    private final NaverFinanceService naverService;
 
-    public KrxService(RestTemplate restTemplate, ObjectMapper objectMapper) {
-        this.restTemplate = restTemplate;
-        this.objectMapper  = objectMapper;
+    public KrxService(NaverFinanceService naverService) {
+        this.naverService = naverService;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -146,71 +131,19 @@ public class KrxService {
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * KOSPI(STK) 또는 KOSDAQ(KSQ) 시총 상위 N개 종목 조회.
-     * 최근 7거래일을 순서대로 시도하며 데이터를 가져옵니다.
+     * KOSPI 종목 목록 캐시 조회 (검색·히트맵 공용, 6시간 TTL).
+     * 네이버 금융에서 실시간으로 가져오며, 실패 시 이전 캐시 → 빈 리스트.
      */
-    public List<String[]> getTopStocks(String mktId, int limit) {
-        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
-        for (int back = 0; back <= 7; back++) {
-            LocalDate tryDate = today.minusDays(back);
-            DayOfWeek dow = tryDate.getDayOfWeek();
-            if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) continue;
-            String trdDd = tryDate.format(KRX_DATE_FMT);
-            List<String[]> result = tryFetch(mktId, trdDd, limit);
-            if (!result.isEmpty()) {
-                log.info("KRX {} 시총 순위 조회 성공 (기준일: {}), {}개 종목", mktId, trdDd, result.size());
-                return result;
-            }
-        }
-        log.warn("KRX {} 최근 7거래일 데이터 조회 실패", mktId);
-        return Collections.emptyList();
-    }
-
-    /**
-     * KOSPI 시총 상위 N개 조회.
-     * KRX API 성공 시 캐시에 저장, 실패 시 마지막 성공 캐시 반환.
-     * 캐시도 없을 때만 빈 리스트 반환(비상 폴백은 호출자가 처리).
-     */
-    public List<String[]> getTopStocksKospiCached(int limit) {
-        List<String[]> fresh = getTopStocks("STK", limit);
-        if (!fresh.isEmpty()) {
-            kospiTop10Cache = fresh;
-            return fresh;
-        }
-        if (kospiTop10Cache != null) {
-            log.warn("KRX KOSPI API 실패 — 이전 캐시 사용 ({}개)", kospiTop10Cache.size());
-            return kospiTop10Cache.subList(0, Math.min(limit, kospiTop10Cache.size()));
-        }
-        return Collections.emptyList();
-    }
-
-    /**
-     * KOSDAQ 시총 상위 N개 조회.
-     * KRX API 성공 시 캐시에 저장, 실패 시 마지막 성공 캐시 반환.
-     * 캐시도 없을 때만 빈 리스트 반환(비상 폴백은 호출자가 처리).
-     */
-    public List<String[]> getTopStocksKosdaqCached(int limit) {
-        List<String[]> fresh = getTopStocks("KSQ", limit);
-        if (!fresh.isEmpty()) {
-            kqdStocksCache = fresh;
-            return fresh;
-        }
-        if (kqdStocksCache != null) {
-            log.warn("KRX KOSDAQ API 실패 — 이전 캐시 사용 ({}개)", kqdStocksCache.size());
-            return kqdStocksCache.subList(0, Math.min(limit, kqdStocksCache.size()));
-        }
-        return Collections.emptyList();
-    }
-
-    /** KRX 종목 목록 캐시 조회 (검색·히트맵 공용, 6시간 TTL) */
     public List<String[]> getTopStocksCached(int count) {
         long now = System.currentTimeMillis();
         if (krxStocksCache == null || (now - krxStocksCacheTime) > CACHE_TTL_MS) {
-            List<String[]> fresh = getTopStocks("STK", 100);
+            List<String[]> fresh = naverService.getTopStocksKospiCached(50).stream()
+                .map(s -> new String[]{s.symbol(), s.name(), "0"})
+                .collect(Collectors.toList());
             if (!fresh.isEmpty()) {
                 krxStocksCache     = fresh;
                 krxStocksCacheTime = now;
-                log.info("KRX 종목 캐시 갱신: {}개", fresh.size());
+                log.info("종목 캐시 갱신 (Naver 출처): {}개", fresh.size());
             }
         }
         if (krxStocksCache == null) return Collections.emptyList();
@@ -255,56 +188,16 @@ public class KrxService {
         if (krNameLookup != null
                 && (System.currentTimeMillis() - krNameLookupTime) < CACHE_TTL_MS) return;
         Map<String, String> map = new HashMap<>();
-        List<String[]> kospi  = getTopStocks("STK", 1000);
-        List<String[]> kosdaq = getTopStocks("KSQ", 1500);
-        kospi.forEach(s  -> map.put(s[0].toUpperCase(), s[1]));
-        kosdaq.forEach(s -> map.put(s[0].toUpperCase(), s[1]));
+        // 네이버 금융에서 KOSPI/KOSDAQ 상위 50개씩 이름 가져오기
+        naverService.getTopStocksKospiCached(50)
+            .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
+        naverService.getTopStocksKosdaqCached(50)
+            .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
+        // 네이버 미수록 종목 보완 (29개 하드코딩)
         KR_HEATMAP_NAME_FALLBACK.forEach((k, v) -> map.putIfAbsent(k.toUpperCase(), v));
-        if (!map.isEmpty()) {
-            krNameLookup     = map;
-            krNameLookupTime = System.currentTimeMillis();
-            log.info("KR 종목명 룩업 맵 빌드 완료: KOSPI {}개, KOSDAQ {}개, 총 {}개",
-                kospi.size(), kosdaq.size(), map.size());
-        }
+        krNameLookup     = map;
+        krNameLookupTime = System.currentTimeMillis();
+        log.info("KR 종목명 룩업 맵 빌드 완료 (Naver 출처): KOSPI+KOSDAQ 실시간 + 폴백 포함 총 {}개", map.size());
     }
 
-    private List<String[]> tryFetch(String mktId, String trdDd, int limit) {
-        try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-            headers.set("User-Agent",
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36");
-            headers.set("Referer",
-                "http://data.krx.co.kr/contents/MDC/STAT/standard/MDCSTAT01501.cmd");
-            headers.set("Accept", "application/json, text/plain, */*");
-
-            String body = "bld=dbms%2FMDC%2FSTAT%2Fstandard%2FMDCSTAT01501"
-                + "&locale=ko_KR&mktId=" + mktId + "&trdDd=" + trdDd
-                + "&share=1&money=1&csvxls_isNo=false";
-
-            ResponseEntity<String> resp = restTemplate.exchange(
-                KRX_API_URL, HttpMethod.POST,
-                new HttpEntity<>(body, headers), String.class);
-
-            JsonNode block = objectMapper.readTree(resp.getBody()).path("OutBlock_1");
-            if (!block.isArray() || block.size() == 0) return Collections.emptyList();
-
-            List<String[]> result = new ArrayList<>();
-            for (int i = 0; i < Math.min(limit, block.size()); i++) {
-                JsonNode item  = block.get(i);
-                String code    = item.path("ISU_SRT_CD").asText("").trim();
-                String name    = item.path("ISU_ABBRV").asText("").trim();
-                String shares  = item.path("LIST_SHRS").asText("0").replace(",", "");
-                if (code.isEmpty() || name.isEmpty()) continue;
-                String yfSymbol = code + ("STK".equals(mktId) ? ".KS" : ".KQ");
-                result.add(new String[]{yfSymbol, name, shares});
-            }
-            return result;
-
-        } catch (Exception e) {
-            log.warn("KRX API 조회 실패 [mktId={}, trdDd={}]: {}", mktId, trdDd, e.getMessage());
-            return Collections.emptyList();
-        }
-    }
 }

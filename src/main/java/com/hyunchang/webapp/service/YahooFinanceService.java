@@ -28,18 +28,18 @@ public class YahooFinanceService {
 
     private static final Logger log = LoggerFactory.getLogger(YahooFinanceService.class);
 
-    // 미국 시총 상위 비상 폴백 목록
+    // 미국 시총 상위 비상 폴백 목록 (세 번째 원소: 발행주식수 — price×shares로 시가총액 계산)
     public static final List<String[]> US_STOCKS_FALLBACK = List.of(
-        new String[]{"AAPL",  "Apple",               "0"},
-        new String[]{"NVDA",  "NVIDIA",              "0"},
-        new String[]{"MSFT",  "Microsoft",           "0"},
-        new String[]{"AMZN",  "Amazon",              "0"},
-        new String[]{"GOOGL", "Alphabet (Google)",   "0"},
-        new String[]{"META",  "Meta",                "0"},
-        new String[]{"TSLA",  "Tesla",               "0"},
-        new String[]{"AVGO",  "Broadcom",            "0"},
-        new String[]{"BRK-B", "Berkshire Hathaway",  "0"},
-        new String[]{"LLY",   "Eli Lilly",           "0"}
+        new String[]{"AAPL",  "Apple",               "15200000000"},
+        new String[]{"NVDA",  "NVIDIA",              "24500000000"},
+        new String[]{"MSFT",  "Microsoft",           "7440000000"},
+        new String[]{"AMZN",  "Amazon",              "10600000000"},
+        new String[]{"GOOGL", "Alphabet (Google)",   "12200000000"},
+        new String[]{"META",  "Meta",                "2540000000"},
+        new String[]{"TSLA",  "Tesla",               "3210000000"},
+        new String[]{"AVGO",  "Broadcom",            "4770000000"},
+        new String[]{"BRK-B", "Berkshire Hathaway",  "2180000000"},
+        new String[]{"LLY",   "Eli Lilly",           "950000000"}
     );
 
     // 미국 주요 종목 한글명 매핑
@@ -145,7 +145,8 @@ public class YahooFinanceService {
                 String name   = q.path("shortName").asText("").trim();
                 if (name.isEmpty()) name = q.path("longName").asText("").trim();
                 if (symbol.isEmpty() || name.isEmpty()) continue;
-                result.add(new String[]{symbol, name, "0"});
+                String shares = String.valueOf(q.path("sharesOutstanding").asLong(0));
+                result.add(new String[]{symbol, name, shares});
             }
             log.info("Yahoo Finance US 스크리너 조회 → {}개", result.size());
             return result;
@@ -182,7 +183,6 @@ public class YahooFinanceService {
             long   volume    = meta.path("regularMarketVolume").asLong(0);
             long   mktCap    = meta.path("marketCap").asLong(0);
 
-            if (mktCap == 0) mktCap = fetchMarketCapFromV7(symbol);
             if (mktCap == 0 && shares > 0) mktCap = (long)(price * shares);
             if (price == 0) return null;
 
@@ -315,29 +315,6 @@ public class YahooFinanceService {
     // ─────────────────────────────────────────────────────────────
     // 내부 메서드
     // ─────────────────────────────────────────────────────────────
-
-    private long fetchMarketCapFromV7(String symbol) {
-        try {
-            String encoded = URLEncoder.encode(symbol, StandardCharsets.UTF_8);
-            String url = "https://query2.finance.yahoo.com/v7/finance/quote?symbols="
-                + encoded + "&fields=marketCap";
-
-            HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
-            ResponseEntity<String> resp = restTemplate.exchange(
-                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-
-            JsonNode result = objectMapper.readTree(resp.getBody())
-                .path("quoteResponse").path("result");
-            if (result.isArray() && result.size() > 0) {
-                long cap = result.get(0).path("marketCap").asLong(0);
-                if (cap > 0) log.debug("v7 시가총액 보조 조회 성공 [{}]: {}", symbol, cap);
-                return cap;
-            }
-        } catch (Exception e) {
-            log.debug("v7 시가총액 보조 조회 실패 [{}]: {}", symbol, e.getMessage());
-        }
-        return 0L;
-    }
 
     private HttpHeaders buildBrowserHeaders(String referer) {
         HttpHeaders headers = new HttpHeaders();

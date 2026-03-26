@@ -1,5 +1,7 @@
 package com.hyunchang.webapp.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockHeatmapItemDto;
 import com.hyunchang.webapp.dto.StockHeatmapResponseDto;
 import com.hyunchang.webapp.dto.StockHeatmapSectorDto;
@@ -8,11 +10,13 @@ import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockQuotaDto;
 import com.hyunchang.webapp.dto.StockQuoteDto;
 import com.hyunchang.webapp.dto.StockSearchResultDto;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -32,7 +36,8 @@ public class StockService {
 
     private static final Logger log = LoggerFactory.getLogger(StockService.class);
 
-    private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L; // 6시간
+    private static final long CACHE_TTL_MS     = 6 * 60 * 60 * 1000L; // 6시간
+    private static final String BASE_RANKS_FILE = "data/base-ranks.json";
     private static final int  DAILY_LIMIT  = 25; // Alpha Vantage 일일 한도 (표시용)
     private static final DateTimeFormatter HEATMAP_FMT =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -52,35 +57,43 @@ public class StockService {
     private final AtomicInteger dailyCallCount = new AtomicInteger(0);
     private volatile LocalDate  counterDate    = LocalDate.now();
 
-    private final KrxService          krxService;
+    private final KrxService           krxService;
     private final YahooFinanceService  yahooService;
     private final StockNewsService     newsService;
+    private final NaverFinanceService  naverService;
+    private final ObjectMapper         objectMapper;
 
     public StockService(KrxService krxService,
                         YahooFinanceService yahooService,
-                        StockNewsService newsService) {
+                        StockNewsService newsService,
+                        NaverFinanceService naverService,
+                        ObjectMapper objectMapper) {
         this.krxService   = krxService;
         this.yahooService = yahooService;
         this.newsService  = newsService;
+        this.naverService = naverService;
+        this.objectMapper = objectMapper;
     }
 
     // ─────────────────────────────────────────────────────────────
     // 공개 API
     // ─────────────────────────────────────────────────────────────
 
-    /** 국내 시총 Top 10 (KRX 실시간 순위, Yahoo Finance 시세) */
+    /** 국내 시총 Top 10 (네이버 금융 실시간 순위 + 시세) */
     public List<StockQuoteDto> getTop10KR() {
         Long cachedAt = cacheTimes.get("KR");
         if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
             log.info("Stock 캐시 히트 [KR]");
             return quoteCache.getOrDefault("KR", Collections.emptyList());
         }
-        List<String[]> stocks = krxService.getTopStocksKospiCached(10);
-        if (stocks.isEmpty()) {
-            log.warn("KRX KOSPI 조회 실패 및 캐시 없음 — 비상 폴백 사용");
-            stocks = KrxService.KR_STOCKS_FALLBACK;
+        List<NaverFinanceService.NaverStockData> naverStocks = naverService.getTopStocksKospiCached(10);
+        List<StockQuoteDto> result;
+        if (!naverStocks.isEmpty()) {
+            result = buildKrQuotes("KR", naverStocks, "KRW");
+        } else {
+            log.warn("Naver Finance KOSPI 조회 실패 및 캐시 없음 — 비상 폴백(하드코딩 + Yahoo) 사용");
+            result = fetchAll("KR", KrxService.KR_STOCKS_FALLBACK, "KRW");
         }
-        List<StockQuoteDto> result = fetchAll("KR", stocks, "KRW");
         if (!result.isEmpty()) {
             quoteCache.put("KR", result);
             cacheTimes.put("KR", System.currentTimeMillis());
@@ -88,19 +101,21 @@ public class StockService {
         return result;
     }
 
-    /** 국내 시총 Top 10 (KOSDAQ) */
+    /** 국내 시총 Top 10 (KOSDAQ, 네이버 금융 실시간 순위 + 시세) */
     public List<StockQuoteDto> getTop10KOSDAQ() {
         Long cachedAt = cacheTimes.get("KOSDAQ");
         if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
             log.info("Stock 캐시 히트 [KOSDAQ]");
             return quoteCache.getOrDefault("KOSDAQ", Collections.emptyList());
         }
-        List<String[]> stocks = krxService.getTopStocksKosdaqCached(10);
-        if (stocks.isEmpty()) {
-            log.warn("KRX KOSDAQ 조회 실패 및 캐시 없음 — 비상 폴백 사용");
-            stocks = KrxService.KQ_STOCKS_FALLBACK;
+        List<NaverFinanceService.NaverStockData> naverStocks = naverService.getTopStocksKosdaqCached(10);
+        List<StockQuoteDto> result;
+        if (!naverStocks.isEmpty()) {
+            result = buildKrQuotes("KOSDAQ", naverStocks, "KRW");
+        } else {
+            log.warn("Naver Finance KOSDAQ 조회 실패 및 캐시 없음 — 비상 폴백(하드코딩 + Yahoo) 사용");
+            result = fetchAll("KOSDAQ", KrxService.KQ_STOCKS_FALLBACK, "KRW");
         }
-        List<StockQuoteDto> result = fetchAll("KOSDAQ", stocks, "KRW");
         if (!result.isEmpty()) {
             quoteCache.put("KOSDAQ", result);
             cacheTimes.put("KOSDAQ", System.currentTimeMillis());
@@ -300,6 +315,26 @@ public class StockService {
         return result;
     }
 
+    /** 네이버 금융 데이터로 StockQuoteDto 목록 생성 (순위 변동 계산 포함) */
+    private List<StockQuoteDto> buildKrQuotes(String cacheKey,
+            List<NaverFinanceService.NaverStockData> stocks, String currency) {
+        Map<String, Integer> base   = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
+        List<StockQuoteDto>  result = new ArrayList<>();
+        for (int idx = 0; idx < stocks.size(); idx++) {
+            NaverFinanceService.NaverStockData s = stocks.get(idx);
+            int     newRank    = idx + 1;
+            Integer baseRank   = base.get(s.symbol());
+            int     rankChange = (baseRank == null) ? 0 : (baseRank - newRank);
+            result.add(StockQuoteDto.builder()
+                .rank(newRank).rankChange(rankChange)
+                .symbol(s.symbol()).name(s.name())
+                .price(s.price()).change(s.change()).changePercent(s.changePercent())
+                .marketCap(s.marketCap()).currency(currency).volume(s.volume())
+                .build());
+        }
+        return result;
+    }
+
     private synchronized void refreshHeatmapCache() {
         List<StockHeatmapSectorDto> result = fetchHeatmapFromYahoo();
         if (!result.isEmpty()) {
@@ -351,6 +386,20 @@ public class StockService {
             .toList();
     }
 
+    @PostConstruct
+    public void loadBaseRanksFromFile() {
+        File file = new File(BASE_RANKS_FILE);
+        if (!file.exists()) return;
+        try {
+            Map<String, Map<String, Integer>> loaded = objectMapper.readValue(
+                file, new TypeReference<>() {});
+            baseRanks.putAll(loaded);
+            log.info("[순위 기준점 로드] 파일에서 {}개 마켓 복원 ({})", loaded.size(), BASE_RANKS_FILE);
+        } catch (Exception e) {
+            log.warn("[순위 기준점 로드] 파일 읽기 실패, 무시: {}", e.getMessage());
+        }
+    }
+
     private void saveBaseRanks(String cacheKey) {
         List<StockQuoteDto> cached = quoteCache.get(cacheKey);
         if (cached != null && !cached.isEmpty()) {
@@ -358,6 +407,18 @@ public class StockService {
             cached.forEach(s -> snapshot.put(s.getSymbol(), s.getRank()));
             baseRanks.put(cacheKey, snapshot);
             log.info("[순위 기준점 저장] {} — {}개 종목", cacheKey, snapshot.size());
+            persistBaseRanks();
+        }
+    }
+
+    private void persistBaseRanks() {
+        try {
+            File file = new File(BASE_RANKS_FILE);
+            file.getParentFile().mkdirs();
+            objectMapper.writeValue(file, baseRanks);
+            log.info("[순위 기준점 파일 저장] {}", BASE_RANKS_FILE);
+        } catch (Exception e) {
+            log.warn("[순위 기준점 파일 저장] 실패: {}", e.getMessage());
         }
     }
 
