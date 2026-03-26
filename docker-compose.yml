@@ -37,6 +37,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${MYSQL_PASSWORD}
       JWT_SECRET: ${JWT_SECRET}
       ALPHAVANTAGE_API_KEY: ${ALPHAVANTAGE_API_KEY}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       ADMIN_USERS: ${ADMIN_USERS:-hyunchang88,admin}
     volumes:
       - /volume1/docker/my-vue-project_backend/uploads:/volume1/docker/my-vue-project_backend/uploads:Z
