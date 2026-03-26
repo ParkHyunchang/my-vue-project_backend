@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.dto.StockHeatmapResponseDto;
-import com.hyunchang.webapp.dto.StockHeatmapSectorDto;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockQuotaDto;

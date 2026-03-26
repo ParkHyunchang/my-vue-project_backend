@@ -71,15 +71,15 @@ public class MenuPermissionService {
         Map<String, List<String>> defaults = new HashMap<>();
 
         defaults.put("USER", Arrays.asList(
-            "/", "/portfolio", "/projects", "/todos", "/todos/create"
+            "/", "/portfolio", "/projects", "/todos", "/todos/create", "/chat"
         ));
         defaults.put("PREMIUM", Arrays.asList(
             "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys",
-            "/todos", "/todos/create"
+            "/todos", "/todos/create", "/chat"
         ));
         defaults.put("ADMIN", Arrays.asList(
             "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys",
-            "/todos", "/todos/create", "/expense", "/stock",
+            "/todos", "/todos/create", "/expense", "/stock", "/chat",
             "/admin", "/admin/users", "/admin/menu-management", "/admin/role-management"
         ));
 

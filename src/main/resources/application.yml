@@ -57,6 +57,10 @@ admin:
 alphavantage:
   api-key: ${ALPHAVANTAGE_API_KEY}
 
+# Anthropic Claude API
+anthropic:
+  api-key: ${ANTHROPIC_API_KEY}
+
 # CORS 허용 도메인 (로컬 개발 기본값, 배포 환경에서는 각 프로파일 yml에서 재정의)
 # 환경변수로 재정의 가능: APP_CORS_ALLOWED_ORIGINS=도메인1,도메인2,...
 app:

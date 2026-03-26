@@ -143,7 +143,8 @@ public class MenuDefinitionService {
             new DefaultMenu("/admin/users", "사용자 관리", "👥", "사용자 계정 관리", "admin", false, false, "사용자 관리", true, "ADMIN", 11, null),
             new DefaultMenu("/admin/menu-management", "권한별 접근메뉴관리", "🔐", "메뉴 접근 권한 설정", "admin", false, false, "권한별 접근메뉴관리", true, "ADMIN", 12, null),
             new DefaultMenu("/admin/role-management", "권한 관리", "🛡️", "사용자 권한(Role) 관리", "admin", false, false, "권한 관리", true, "ADMIN", 13, null),
-            new DefaultMenu("/admin/menu-definition", "메뉴 정의 관리", "📋", "메뉴 목록 조회 및 정의 관리", "admin", false, false, "메뉴 정의 관리", true, "ADMIN", 14, null)
+            new DefaultMenu("/admin/menu-definition", "메뉴 정의 관리", "📋", "메뉴 목록 조회 및 정의 관리", "admin", false, false, "메뉴 정의 관리", true, "ADMIN", 14, null),
+            new DefaultMenu("/chat", "AI 채팅", "💬", "Claude AI 채팅", "main", false, true, "CHAT", false, "USER,PREMIUM,ADMIN", 15, null)
         );
 
         for (DefaultMenu d : defaults) {
