@@ -3,6 +3,7 @@ package com.hyunchang.webapp.controller;
 import com.hyunchang.webapp.dto.CreateUserRequest;
 import com.hyunchang.webapp.dto.MenuDefinitionRequest;
 import com.hyunchang.webapp.dto.MenuDefinitionResponse;
+import com.hyunchang.webapp.dto.MenuSortOrderRequest;
 import com.hyunchang.webapp.dto.MenuPermissionRequest;
 import com.hyunchang.webapp.dto.RoleInfoRequest;
 import com.hyunchang.webapp.dto.RoleInfoResponse;
@@ -469,6 +470,23 @@ public class AdminController {
             return ResponseEntity.ok(updated);
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 수정에 실패했습니다: " + e.getMessage());
+        }
+    }
+
+    // 메뉴 순서 일괄 업데이트
+    @PutMapping("/menus/sort-order")
+    public ResponseEntity<?> updateMenuSortOrders(
+            @RequestBody List<MenuSortOrderRequest> requests,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            menuDefinitionService.updateSortOrders(requests);
+            log.info("[ADMIN] admin={}, action=UPDATE_SORT_ORDERS, count={}", authentication.getName(), requests.size());
+            return ResponseEntity.ok("메뉴 순서가 업데이트되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("메뉴 순서 업데이트에 실패했습니다.");
         }
     }
 

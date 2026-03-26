@@ -23,7 +23,7 @@ public class RoleInfoService {
     private final RoleInfoRepository roleInfoRepository;
     private final UserRepository userRepository;
 
-    private static final List<String> DEFAULT_ROLE_NAMES = List.of("USER", "PREMIUM", "ADMIN");
+    private static final List<String> DEFAULT_ROLE_NAMES = List.of("USER", "PREMIUM", "ADMIN", "GUEST");
 
     @Transactional
     public void initializeDefaultRoles() {
@@ -32,7 +32,8 @@ public class RoleInfoService {
         List<DefaultRole> defaults = List.of(
             new DefaultRole("USER",    "일반 사용자",    "기본 서비스 이용 권한을 가진 일반 사용자입니다."),
             new DefaultRole("PREMIUM", "프리미엄 사용자", "유료 구독으로 프리미엄 기능을 이용할 수 있는 사용자입니다."),
-            new DefaultRole("ADMIN",   "관리자",        "시스템 전체를 관리할 수 있는 최고 권한을 가진 관리자입니다.")
+            new DefaultRole("ADMIN",   "관리자",        "시스템 전체를 관리할 수 있는 최고 권한을 가진 관리자입니다."),
+            new DefaultRole("GUEST",   "비로그인 사용자", "로그인 없이 접근 가능한 공개 메뉴를 볼 수 있는 비로그인 사용자입니다.")
         );
 
         for (DefaultRole d : defaults) {

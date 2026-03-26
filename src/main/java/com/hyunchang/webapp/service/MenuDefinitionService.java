@@ -2,6 +2,7 @@ package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.dto.MenuDefinitionRequest;
 import com.hyunchang.webapp.dto.MenuDefinitionResponse;
+import com.hyunchang.webapp.dto.MenuSortOrderRequest;
 import com.hyunchang.webapp.entity.MenuDefinition;
 import com.hyunchang.webapp.exception.DuplicateException;
 import com.hyunchang.webapp.exception.ForbiddenException;
@@ -119,6 +120,16 @@ public class MenuDefinitionService {
         menuCrudPermissionRepository.deleteByMenuPath(menu.getPath());
 
         menuDefinitionRepository.deleteById(id);
+    }
+
+    @Transactional
+    public void updateSortOrders(List<MenuSortOrderRequest> requests) {
+        for (MenuSortOrderRequest r : requests) {
+            menuDefinitionRepository.findById(r.getId()).ifPresent(menu -> {
+                menu.setSortOrder(r.getSortOrder());
+                menuDefinitionRepository.save(menu);
+            });
+        }
     }
 
     // 앱 시작 시 기본 메뉴 정의 초기화 (이미 존재하면 스킵) + 기존 레코드 마이그레이션

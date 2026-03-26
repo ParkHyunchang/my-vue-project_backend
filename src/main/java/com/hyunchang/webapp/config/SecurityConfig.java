@@ -59,6 +59,8 @@ public class SecurityConfig {
                 .requestMatchers("/api/auth/**").permitAll()
                 .requestMatchers("/api/public/**").permitAll()
                 .requestMatchers("/uploads/images/**").permitAll()  // 이미지 파일 접근 허용
+                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/chat").permitAll()
+                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/chat/history/**").permitAll()
 
                 // Swagger / OpenAPI
                 .requestMatchers(

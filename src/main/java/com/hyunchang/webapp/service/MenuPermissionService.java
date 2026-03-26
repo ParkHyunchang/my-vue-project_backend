@@ -70,6 +70,9 @@ public class MenuPermissionService {
     public void initializeDefaultPermissions() {
         Map<String, List<String>> defaults = new HashMap<>();
 
+        defaults.put("GUEST", Arrays.asList(
+            "/", "/chat"
+        ));
         defaults.put("USER", Arrays.asList(
             "/", "/portfolio", "/projects", "/todos", "/todos/create", "/chat"
         ));
