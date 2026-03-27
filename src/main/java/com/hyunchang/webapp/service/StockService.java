@@ -130,13 +130,11 @@ public class StockService {
             log.info("Stock 캐시 히트 [US]");
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
-        List<String[]> stocks = yahooService.fetchTopUSCached(15);
-        if (stocks.isEmpty()) {
-            log.warn("Yahoo Finance US 스크리너 실패 및 캐시 없음 — 비상 폴백 사용");
-            stocks = YahooFinanceService.US_STOCKS_FALLBACK;
-        }
+        List<String[]> stocks = YahooFinanceService.US_STOCKS_FALLBACK;
         List<StockQuoteDto> result = fetchAll("US", stocks, "USD");
         if (!result.isEmpty()) {
+            log.info("미국 시총 Top10 조회 완료: 후보 {}개 중 상위 {}개 선별 (실시간 시총 정렬)",
+                stocks.size(), result.size());
             quoteCache.put("US", result);
             cacheTimes.put("US", System.currentTimeMillis());
         }

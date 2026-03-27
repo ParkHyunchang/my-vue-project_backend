@@ -28,7 +28,12 @@ public class YahooFinanceService {
 
     private static final Logger log = LoggerFactory.getLogger(YahooFinanceService.class);
 
-    // 미국 시총 상위 비상 폴백 목록 (세 번째 원소: 발행주식수 — price×shares로 시가총액 계산)
+    /**
+     * 미국 시총 Top10 후보 심볼 목록 (20개).
+     * fetchAll()이 Yahoo Finance v8/chart로 각 종목의 실시간 시총을 조회한 뒤
+     * 시총 내림차순으로 정렬하므로, 실제 표시되는 순위는 완전히 동적입니다.
+     * 세 번째 원소(발행주식수)는 chart API가 marketCap을 반환하지 않을 때만 사용되는 보조값입니다.
+     */
     public static final List<String[]> US_STOCKS_FALLBACK = List.of(
         new String[]{"AAPL",  "Apple",               "15200000000"},
         new String[]{"NVDA",  "NVIDIA",              "24500000000"},
@@ -39,7 +44,17 @@ public class YahooFinanceService {
         new String[]{"TSLA",  "Tesla",               "3210000000"},
         new String[]{"AVGO",  "Broadcom",            "4770000000"},
         new String[]{"BRK-B", "Berkshire Hathaway",  "2180000000"},
-        new String[]{"LLY",   "Eli Lilly",           "950000000"}
+        new String[]{"LLY",   "Eli Lilly",           "950000000"},
+        new String[]{"JPM",   "JPMorgan Chase",      "2880000000"},
+        new String[]{"V",     "Visa",                "2050000000"},
+        new String[]{"WMT",   "Walmart",             "8010000000"},
+        new String[]{"XOM",   "ExxonMobil",          "3960000000"},
+        new String[]{"ORCL",  "Oracle",              "2760000000"},
+        new String[]{"MA",    "Mastercard",          "930000000"},
+        new String[]{"COST",  "Costco",              "440000000"},
+        new String[]{"NFLX",  "Netflix",             "420000000"},
+        new String[]{"PLTR",  "Palantir",            "21400000000"},
+        new String[]{"AMD",   "AMD",                 "1620000000"}
     );
 
     // 미국 주요 종목 한글명 매핑
@@ -95,66 +110,9 @@ public class YahooFinanceService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
 
-    private volatile List<String[]> usTopStocksCache = null;  // 미국 Top N (마지막 성공 데이터)
-
     public YahooFinanceService(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.objectMapper  = objectMapper;
-    }
-
-    // ─────────────────────────────────────────────────────────────
-    // 미국 시총 상위 종목 조회
-    // ─────────────────────────────────────────────────────────────
-
-    /**
-     * 미국 시총 Top N 조회.
-     * 스크리너 성공 시 캐시에 저장, 실패 시 마지막 성공 캐시 반환.
-     * 캐시도 없을 때만 빈 리스트 반환(비상 폴백은 호출자가 처리).
-     */
-    public List<String[]> fetchTopUSCached(int count) {
-        List<String[]> fresh = fetchTopUS(count);
-        if (!fresh.isEmpty()) {
-            usTopStocksCache = fresh;
-            return fresh;
-        }
-        if (usTopStocksCache != null) {
-            log.warn("Yahoo Finance US 스크리너 실패 — 이전 캐시 사용 ({}개)", usTopStocksCache.size());
-            return usTopStocksCache.subList(0, Math.min(count, usTopStocksCache.size()));
-        }
-        return Collections.emptyList();
-    }
-
-    /** Yahoo Finance 스크리너로 미국 시총 Top N 종목 목록 조회. 실패 시 빈 리스트. */
-    public List<String[]> fetchTopUS(int count) {
-        try {
-            String url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved"
-                + "?count=" + count + "&scrIds=largest_companies&start=0";
-
-            HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
-            ResponseEntity<String> resp = restTemplate.exchange(
-                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-
-            JsonNode quotes = objectMapper.readTree(resp.getBody())
-                .path("finance").path("result").get(0).path("quotes");
-
-            if (!quotes.isArray() || quotes.size() == 0) return Collections.emptyList();
-
-            List<String[]> result = new ArrayList<>();
-            for (JsonNode q : quotes) {
-                String symbol = q.path("symbol").asText("").trim();
-                String name   = q.path("shortName").asText("").trim();
-                if (name.isEmpty()) name = q.path("longName").asText("").trim();
-                if (symbol.isEmpty() || name.isEmpty()) continue;
-                String shares = String.valueOf(q.path("sharesOutstanding").asLong(0));
-                result.add(new String[]{symbol, name, shares});
-            }
-            log.info("Yahoo Finance US 스크리너 조회 → {}개", result.size());
-            return result;
-
-        } catch (Exception e) {
-            log.warn("Yahoo Finance US 스크리너 조회 실패: {}", e.getMessage());
-            return Collections.emptyList();
-        }
     }
 
     // ─────────────────────────────────────────────────────────────
