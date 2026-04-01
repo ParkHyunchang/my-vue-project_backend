@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.config;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.lang.NonNull;
@@ -15,6 +16,9 @@ public class WebConfig implements WebMvcConfigurer {
     @Autowired
     private ActivityLogInterceptor activityLogInterceptor;
 
+    @Value("${app.upload-base-url:}")
+    private String uploadBaseUrl;
+
     @Override
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(activityLogInterceptor)
@@ -27,9 +31,11 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addResourceHandlers(@NonNull ResourceHandlerRegistry registry) {
+        if (!uploadBaseUrl.isEmpty()) {
+            // UPLOAD_BASE_URL 설정 시: UploadRedirectController 가 리다이렉트 처리
+            return;
+        }
         String uploadPath = getUploadDirectory();
-        // 이미지 파일들을 위한 정적 리소스 핸들러
-        // /uploads/images/** 패턴으로 dating/과 history/ 하위 디렉토리 모두 포함
         registry.addResourceHandler("/uploads/images/**")
                 .addResourceLocations("file:" + uploadPath)
                 .setCachePeriod(3600);

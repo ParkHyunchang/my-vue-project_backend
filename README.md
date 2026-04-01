@@ -1,37 +1,51 @@
-# my-vue-project_backend (Spring Boot + MySQL)
+# my-vue-project_backend
 
-Spring Boot와 MySQL 기반 백엔드 API입니다.
+Spring Boot + MySQL 기반 백엔드 API 서버입니다.
 
 ---
 
 ## 기술 스택
 
-- **Backend**: Spring Boot 3.2.0
-- **Database**: MySQL 8.0
-- **ORM**: Spring Data JPA
-- **Language**: Java 17
-- **Security**: Spring Security + JWT
-- **Build**: Maven
+| 항목 | 버전/기술 |
+|------|----------|
+| Language | Java 17 |
+| Framework | Spring Boot 3.2.0 |
+| Database | MySQL 8.0 + Spring Data JPA |
+| Security | Spring Security + JWT |
+| Build | Maven |
 
 ---
 
-## 권한별 접근 가능한 기능
+## 로컬 실행
 
-### 일반 사용자 (USER)
+### 실행
 
-- **HOME** - 메인 페이지
-- **TODOS** - 할일 관리 (CRUD)
+```powershell
+.\run-local.ps1
+```
 
-### 프리미엄 사용자 (PREMIUM)
+`.env` 파일의 환경변수를 읽어 Spring Boot를 실행합니다.
 
-- 일반 사용자 모든 기능
-- **HISTORY** - 히스토리 페이지
-- **DATING** - 데이팅 페이지
+### .env 설정
 
-### 관리자 (ADMIN)
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `DB_HOST` | `NAS_SERVER_IP` | DB 호스트 (로컬 DB 사용 시 → `localhost`) |
+| `UPLOAD_BASE_URL` | `http://NAS_SERVER_IP:3200` | 사진 리다이렉트 URL (로컬 사진 사용 시 → 빈값) |
 
-- 프리미엄 사용자 모든 기능
-- **가계부** - 가계부 관리
+**서버 리소스 사용 (기본)** — 로컬에서 실행해도 서버 DB와 사진을 그대로 봅니다.
+```env
+DB_HOST=NAS_SERVER_IP
+UPLOAD_BASE_URL=http://NAS_SERVER_IP:3200
+```
+
+**로컬 리소스 사용** — 로컬 MySQL과 `./uploads/images/` 폴더를 사용합니다.
+```env
+DB_HOST=localhost
+UPLOAD_BASE_URL=
+```
+
+> `UPLOAD_BASE_URL`이 설정되어 있으면 `/uploads/images/**` 요청을 해당 서버로 302 리다이렉트합니다 (NAS 마운트 불필요).
 
 ---
 
@@ -42,124 +56,69 @@ Spring Boot와 MySQL 기반 백엔드 API입니다.
 | 로컬 | `http://localhost:3200/swagger-ui/index.html` |
 | 서버 | `http://hyunchang.synology.me:3200/swagger-ui/index.html` |
 
-**OpenAPI JSON**: `/v3/api-docs`
-
-### Swagger에서 JWT 인증 후 API 호출
-
-1. `POST /api/auth/login` 호출 후 응답의 **token** 값 복사
-2. Swagger 우측 상단 **Authorize** → 토큰 문자열만 입력
-3. 보호된 API 호출 가능
-
----
-
-## 로컬 개발
-
-### 백엔드만 실행
-
-```bash
-mvn spring-boot:run
-.\run-local.ps1
-```
-
-### 백엔드 테스트 실행
-```bash
-mvn test
-```
-
-### Docker Compose로 백엔드 + MySQL 실행
-
-```bash
-docker-compose up -d --build
-# http://localhost:3200
-```
-
-Dockerfile은 멀티스테이지 빌드로, 로컬에 JAR 없이도 `docker-compose build` 가능합니다.
-
-### 로그 / 재빌드
-
-```bash
-# 실시간 로그
-docker-compose logs -f backend
-
-# 완전 초기화 후 재빌드
-docker-compose down --rmi all --volumes --remove-orphans
-docker-compose up -d --build
-```
+**JWT 인증 방법**: `POST /api/auth/login` → 응답의 `token` 복사 → Swagger 우측 상단 **Authorize** → 토큰 입력
 
 ---
 
 ## CI/CD 배포
 
-`main` 브랜치에 **push**하면 GitHub Actions가 자동으로:
+`main` 브랜치 push 시 GitHub Actions가 자동으로 실행됩니다.
 
-1. **Docker 이미지 빌드** — Maven 빌드 포함 멀티스테이지 Dockerfile로 이미지 생성
-2. **GHCR 푸시** — `ghcr.io/parkhyunchang/my-vue-project_backend:latest`
-3. **설정 파일 배포** — `docker-compose.yml`, `init.sql` NAS로 자동 전송
-4. **NAS 배포** — SSH 접속 후 `docker-compose pull backend` → `docker-compose up -d --no-deps backend`
+1. Docker 이미지 빌드 및 GHCR 푸시 (`ghcr.io/parkhyunchang/my-vue-project_backend:latest`)
+2. `docker-compose.yml`, `init.sql` NAS 전송
+3. NAS SSH 접속 후 이미지 pull → 컨테이너 재시작
 
-### GitHub Secrets (레포 Settings → Secrets and variables → Actions)
+### GitHub Secrets
 
 | Secret | 설명 |
 |--------|------|
 | `NAS_HOST` | NAS IP |
 | `NAS_USER` | NAS SSH 사용자명 |
 | `NAS_SSH_PASSWORD` | NAS SSH 비밀번호 |
-| `GHCR_PAT` | GitHub PAT (`read:packages`) — NAS에서 이미지 pull용 |
+| `GHCR_PAT` | GitHub PAT (`read:packages`) |
 
-### NAS 사전 준비 (최초 1회)
+### NAS 최초 설정
 
 1. 디렉토리 생성: `/volume1/docker/my-vue-project_backend`
 2. `.env` 파일 생성 (동일 경로):
 
-   ```env
-   MYSQL_ROOT_PASSWORD=비밀번호
-   MYSQL_DATABASE=vue_personal_project_db
-   MYSQL_USER=DB유저
-   MYSQL_PASSWORD=DB비밀번호
-   ```
+```env
+MYSQL_ROOT_PASSWORD=
+MYSQL_DATABASE=vue_personal_project_db
+MYSQL_USER=
+MYSQL_PASSWORD=
+DB_USERNAME=
+DB_PASSWORD=
+JWT_SECRET=
+ALPHAVANTAGE_API_KEY=
+ANTHROPIC_API_KEY=
+ADMIN_USERS=hyunchang88,admin
+```
 
-이후에는 push만 하면 자동 배포됩니다.
-
-### 배포 정보
-
-| 항목 | 값 |
-|------|-----|
-| 컨테이너명 | `vue_personal_project-backend` |
-| NAS 포트 | `3200` |
-| 접속 URL | `http://hyunchang.synology.me:3200` |
-
-### 수동 재시작 (NAS에서)
+### 수동 재시작 (NAS)
 
 ```bash
 cd /volume1/docker/my-vue-project_backend
-docker-compose pull backend
-docker-compose up -d --no-deps backend
+docker-compose pull backend && docker-compose up -d --no-deps backend
 ```
 
 ---
 
-## 로그 (서버)
+## 서버 로그
 
-서버의 `/volume1/docker/my-vue-project_backend/logs/` 폴더에 날짜별 로그 파일이 자동 저장됩니다.
-
-| 항목 | 값 |
-|------|-----|
-| 파일명 형식 | `application-YYYY-MM-DD.i.log` |
-| 파일당 최대 크기 | 100MB (초과 시 자동 롤링) |
-| 보관 기간 | 30일 |
-| 전체 최대 크기 | 3GB |
+로그 파일 위치: `/volume1/docker/my-vue-project_backend/logs/`
 
 ```bash
-# 현재 로그 실시간 확인
+# 실시간 확인
 tail -f /volume1/docker/my-vue-project_backend/logs/application.log
 
-# 에러 로그 검색
+# 에러 검색
 grep "ERROR" /volume1/docker/my-vue-project_backend/logs/application.log
 ```
 
 ---
 
-## DB 접속 (서버)
+## 서버 DB 접속
 
 ```bash
 docker exec -it vue_personal_project-backend-db mysql -u hyunchang88 -p vue_personal_project_db
