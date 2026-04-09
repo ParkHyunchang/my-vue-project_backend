@@ -43,6 +43,11 @@ public class ExperienceService {
 
     @Transactional
     public void delete(Long id) {
+        Experience experience = findById(id);
+        Integer deletedOrder = experience.getSortOrder();
         experienceRepository.deleteById(id);
+        if (deletedOrder != null) {
+            experienceRepository.decrementSortOrderAfter(deletedOrder);
+        }
     }
 }

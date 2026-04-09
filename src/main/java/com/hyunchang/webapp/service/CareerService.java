@@ -46,6 +46,11 @@ public class CareerService {
 
     @Transactional
     public void delete(Long id) {
+        Career career = findById(id);
+        Integer deletedOrder = career.getSortOrder();
         careerRepository.deleteById(id);
+        if (deletedOrder != null) {
+            careerRepository.decrementSortOrderAfter(deletedOrder);
+        }
     }
 }

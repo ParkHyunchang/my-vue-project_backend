@@ -42,6 +42,11 @@ public class PortfolioSkillService {
 
     @Transactional
     public void delete(Long id) {
+        PortfolioSkill skill = findById(id);
+        Integer deletedOrder = skill.getSortOrder();
         portfolioSkillRepository.deleteById(id);
+        if (deletedOrder != null) {
+            portfolioSkillRepository.decrementSortOrderAfter(deletedOrder);
+        }
     }
 }
