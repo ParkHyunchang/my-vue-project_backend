@@ -104,9 +104,8 @@ public class YahooFinanceService {
         Map.entry("SOXL",  "반도체 3배 ETF"), Map.entry("TQQQ", "나스닥100 3배 ETF"),
         Map.entry("SQQQ",  "나스닥100 인버스 3배 ETF"), Map.entry("ARKK", "ARK 이노베이션 ETF"),
         Map.entry("VOO",   "뱅가드 S&P500 ETF"), Map.entry("VTI", "뱅가드 미국 전체시장 ETF"),
-        Map.entry("UNH",   "유나이티드헬스"), Map.entry("HD",   "홈디포"),
-        Map.entry("PG",    "프록터 앤 갬블"), Map.entry("JNJ",  "존슨앤드존슨"),
-        Map.entry("ABBV",  "애브비")
+        Map.entry("UNH",   "유나이티드헬스"), Map.entry("PG",   "프록터 앤 갬블"),
+        Map.entry("JNJ",   "존슨앤드존슨"),  Map.entry("ABBV", "애브비")
     );
 
     /** 시세 데이터 내부 전달용 레코드 (StockService에서 순위 계산에 사용) */
