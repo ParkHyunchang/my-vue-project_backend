@@ -77,11 +77,11 @@ public class MenuPermissionService {
             "/", "/portfolio", "/projects", "/todos", "/todos/create", "/chat", "/diary"
         ));
         defaults.put("PREMIUM", Arrays.asList(
-            "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys",
+            "/", "/portfolio", "/projects", "/history", "/dating",
             "/todos", "/todos/create", "/chat", "/diary"
         ));
         defaults.put("ADMIN", Arrays.asList(
-            "/", "/portfolio", "/projects", "/history", "/dating", "/dating_sys",
+            "/", "/portfolio", "/projects", "/history", "/dating",
             "/todos", "/todos/create", "/expense", "/stock", "/chat", "/diary",
             "/admin", "/admin/users", "/admin/menu-management", "/admin/role-management"
         ));

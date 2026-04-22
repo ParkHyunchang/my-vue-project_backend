@@ -94,7 +94,6 @@ public class MenuCrudPermissionService {
         premium.addAll(Arrays.asList(
             perm("/history", false, true, false, false),
             perm("/dating", true, true, true, false),
-            perm("/dating_sys", true, true, true, false),
             perm("/expense", false, true, false, false)
         ));
         defaults.put("PREMIUM", premium);
@@ -105,7 +104,6 @@ public class MenuCrudPermissionService {
             perm("/projects", true, true, true, true),
             perm("/history", true, true, true, true),
             perm("/dating", true, true, true, true),
-            perm("/dating_sys", true, true, true, true),
             perm("/todos", true, true, true, true),
             perm("/todos/create", true, true, true, true),
             perm("/expense", true, true, true, true),

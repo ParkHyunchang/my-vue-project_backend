@@ -145,7 +145,6 @@ public class MenuDefinitionService {
             new DefaultMenu("/projects", "프로젝트", "🚀", "프로젝트 관리 및 조회", "work", true, false, "PROJECTS", false, "USER,PREMIUM,ADMIN", 3, null),
             new DefaultMenu("/history", "히스토리", "📚", "작업 이력 및 기록", "work", false, true, "HISTORY", false, "PREMIUM,ADMIN", 4, null),
             new DefaultMenu("/dating", "데이팅", "💕", "데이팅 관련 기능", "personal", false, true, "DATING", false, "PREMIUM,ADMIN", 5, null),
-            new DefaultMenu("/dating_sys", "데이팅 추억", "📸", "데이팅 추억 기록", "personal", false, false, "DATING SYS", false, "PREMIUM,ADMIN", 6, "/dating"),
             new DefaultMenu("/todos", "할일 목록", "📝", "할일 관리", "productivity", false, true, "TODOS", false, "USER,PREMIUM,ADMIN", 7, null),
             new DefaultMenu("/todos/create", "할일 생성", "➕", "새로운 할일 추가", "productivity", false, false, "할일 생성", false, "USER,PREMIUM,ADMIN", 8, null),
             new DefaultMenu("/expense", "지출 관리", "💰", "지출 내역 관리", "finance", false, true, "가계부", false, "ADMIN", 9, null),
@@ -169,20 +168,11 @@ public class MenuDefinitionService {
             }
         }
 
-        // 기존 레코드 마이그레이션: parentPath가 없는 /dating_sys를 업데이트
+        // /dating_sys 메뉴 삭제 (dating_sys 기능 제거) // 추후 삭제 예정
         menuDefinitionRepository.findByPath("/dating_sys").ifPresent(menu -> {
-            boolean needsUpdate = false;
-            if (menu.getParentPath() == null || menu.getParentPath().isBlank()) {
-                menu.setParentPath("/dating");
-                needsUpdate = true;
-            }
-            if (menu.isShowInNav()) {
-                menu.setShowInNav(false);
-                needsUpdate = true;
-            }
-            if (needsUpdate) {
-                menuDefinitionRepository.save(menu);
-            }
+            menuPermissionRepository.deleteByMenuPath("/dating_sys");
+            menuCrudPermissionRepository.deleteByMenuPath("/dating_sys");
+            menuDefinitionRepository.delete(menu);
         });
 
         // 기존 레코드 마이그레이션: /portfolio, /projects는 홈 화면에 통합 - nav 숨김 + 접근권한 개방
