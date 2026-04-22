@@ -58,21 +58,24 @@ public class StockService {
     private volatile LocalDate  counterDate    = LocalDate.now();
 
     private final KrxService           krxService;
+    private final KrxOpenApiService    krxApiService;
     private final YahooFinanceService  yahooService;
     private final StockNewsService     newsService;
     private final NaverFinanceService  naverService;
     private final ObjectMapper         objectMapper;
 
     public StockService(KrxService krxService,
+                        KrxOpenApiService krxApiService,
                         YahooFinanceService yahooService,
                         StockNewsService newsService,
                         NaverFinanceService naverService,
                         ObjectMapper objectMapper) {
-        this.krxService   = krxService;
-        this.yahooService = yahooService;
-        this.newsService  = newsService;
-        this.naverService = naverService;
-        this.objectMapper = objectMapper;
+        this.krxService    = krxService;
+        this.krxApiService = krxApiService;
+        this.yahooService  = yahooService;
+        this.newsService   = newsService;
+        this.naverService  = naverService;
+        this.objectMapper  = objectMapper;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -172,12 +175,13 @@ public class StockService {
 
     /**
      * 포트폴리오 개별 종목 시세.
-     * 1) Top10 캐시 → 2) 개별 캐시 → 3) Yahoo Finance v8 chart 호출
+     * 1) Top10 캐시 → 2) 개별 캐시 → 3) KRX 전체 캐시(KR 전용) → 4) Yahoo Finance
      */
     public StockPriceDto getQuote(String symbol, String market) {
         String cacheKey = market.toUpperCase();
         String currency = "KR".equalsIgnoreCase(market) ? "KRW" : "USD";
 
+        // 1) Top10 캐시
         List<StockQuoteDto> top10 = quoteCache.get(cacheKey);
         if (top10 != null) {
             for (StockQuoteDto q : top10) {
@@ -190,12 +194,29 @@ public class StockService {
             }
         }
 
+        // 2) 개별 캐시
         Long cachedAt = singlePriceTimes.get(symbol);
         if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
             StockPriceDto cached = singlePriceCache.get(symbol);
             if (cached != null) return cached;
         }
 
+        // 3) KRX 전체 캐시 (KR 종목 전용 — .KS/.KQ)
+        String upperSym = symbol.toUpperCase();
+        if (upperSym.endsWith(".KS") || upperSym.endsWith(".KQ")) {
+            NaverFinanceService.NaverStockData krx = krxApiService.getKrPrice(symbol);
+            if (krx != null) {
+                StockPriceDto dto = StockPriceDto.builder()
+                    .symbol(symbol).price(krx.price())
+                    .change(krx.change()).changePercent(krx.changePercent())
+                    .currency("KRW").build();
+                singlePriceCache.put(symbol, dto);
+                singlePriceTimes.put(symbol, System.currentTimeMillis());
+                return dto;
+            }
+        }
+
+        // 4) Yahoo Finance (미국 주식 또는 KRX 미수록 종목)
         StockPriceDto dto = yahooService.fetchQuote(symbol, currency);
         if (dto == null) return null;
         singlePriceCache.put(symbol, dto);
@@ -374,11 +395,47 @@ public class StockService {
         }
     }
 
-    /** KRX 상위 30종목을 Yahoo Finance로 조회 후 섹터별 그룹화 */
+    /** KRX 상위 30종목 히트맵. KRX 데이터 우선, 실패 시 Yahoo Finance 폴백. */
     private List<StockHeatmapSectorDto> fetchHeatmapFromYahoo() {
+        List<NaverFinanceService.NaverStockData> krxStocks = naverService.getTopStocksKospiCached(50);
+        if (!krxStocks.isEmpty()) {
+            return buildHeatmapFromKrx(krxStocks);
+        }
+        log.warn("KRX 데이터 없음 — 히트맵 Yahoo Finance 폴백 사용");
+        return buildHeatmapFromYahoo();
+    }
+
+    /** KRX NaverStockData → 섹터별 StockHeatmapSectorDto 변환 */
+    private List<StockHeatmapSectorDto> buildHeatmapFromKrx(
+            List<NaverFinanceService.NaverStockData> krxStocks) {
+        List<NaverFinanceService.NaverStockData> top30 =
+            krxStocks.subList(0, Math.min(30, krxStocks.size()));
+
+        Map<String, List<StockHeatmapItemDto>> bySector = new LinkedHashMap<>();
+        for (NaverFinanceService.NaverStockData s : top30) {
+            StockHeatmapItemDto item = StockHeatmapItemDto.builder()
+                .symbol(s.symbol()).name(s.name()).price(s.price())
+                .changePercent(s.changePercent())
+                .marketCap(s.marketCap() > 0 ? s.marketCap() : 1)
+                .build();
+            String sector = KrxService.KR_SECTOR_MAP.getOrDefault(s.symbol(), "기타");
+            bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
+        }
+
+        log.info("히트맵 수집 완료 (KRX): {}개 섹터, {}개 종목",
+            bySector.size(), bySector.values().stream().mapToLong(List::size).sum());
+
+        return bySector.entrySet().stream()
+            .map(e -> StockHeatmapSectorDto.builder()
+                .sector(e.getKey()).stocks(e.getValue()).build())
+            .toList();
+    }
+
+    /** Yahoo Finance 30개 병렬 조회 (KRX 실패 시 폴백) */
+    private List<StockHeatmapSectorDto> buildHeatmapFromYahoo() {
         List<String[]> krStocks = krxService.getTopStocksCached(30);
         if (krStocks.isEmpty()) {
-            log.warn("KRX 종목 조회 실패 — 히트맵 폴백(하드코딩 목록) 사용");
+            log.warn("KRX 종목 목록 없음 — 히트맵 하드코딩 목록 사용");
             krStocks = KrxService.KR_HEATMAP_NAME_FALLBACK.entrySet().stream()
                 .map(e -> new String[]{e.getKey(), e.getValue(), "0"})
                 .toList();
@@ -408,7 +465,7 @@ public class StockService {
             bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
         }
 
-        log.info("히트맵 수집 완료: {}개 섹터, {}개 종목",
+        log.info("히트맵 수집 완료 (Yahoo 폴백): {}개 섹터, {}개 종목",
             bySector.size(), bySector.values().stream().mapToLong(List::size).sum());
 
         return bySector.entrySet().stream()
@@ -420,14 +477,26 @@ public class StockService {
     @PostConstruct
     public void loadBaseRanksFromFile() {
         File file = new File(BASE_RANKS_FILE);
-        if (!file.exists()) return;
+        if (file.exists()) {
+            try {
+                Map<String, Map<String, Integer>> loaded = objectMapper.readValue(
+                    file, new TypeReference<>() {});
+                baseRanks.putAll(loaded);
+                log.info("[순위 기준점 로드] 파일에서 {}개 마켓 복원 ({})", loaded.size(), BASE_RANKS_FILE);
+                return;
+            } catch (Exception e) {
+                log.warn("[순위 기준점 로드] 파일 읽기 실패, 초기 데이터로 기준점 생성: {}", e.getMessage());
+            }
+        }
+        // 파일이 없거나 읽기 실패 시 — 초기 데이터를 가져와 기준점 저장
+        log.info("[순위 기준점 초기화] 파일 없음 — KR/KOSDAQ/US 초기 데이터 로드 후 기준점 저장");
         try {
-            Map<String, Map<String, Integer>> loaded = objectMapper.readValue(
-                file, new TypeReference<>() {});
-            baseRanks.putAll(loaded);
-            log.info("[순위 기준점 로드] 파일에서 {}개 마켓 복원 ({})", loaded.size(), BASE_RANKS_FILE);
+            getTop10KR();     saveBaseRanks("KR");
+            getTop10KOSDAQ(); saveBaseRanks("KOSDAQ");
+            getTop10US();     saveBaseRanks("US");
+            log.info("[순위 기준점 초기화] 완료 — 다음 스케줄 갱신 시 순위 변동 표시 가능");
         } catch (Exception e) {
-            log.warn("[순위 기준점 로드] 파일 읽기 실패, 무시: {}", e.getMessage());
+            log.warn("[순위 기준점 초기화] 실패: {}", e.getMessage());
         }
     }
 

@@ -38,10 +38,12 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       ALPHAVANTAGE_API_KEY: ${ALPHAVANTAGE_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      KRX_API_KEY: ${KRX_API_KEY}
       ADMIN_USERS: ${ADMIN_USERS:-hyunchang88,admin}
     volumes:
       - /volume1/docker/my-vue-project_backend/uploads:/volume1/docker/my-vue-project_backend/uploads:Z
       - /volume1/docker/my-vue-project_backend/logs:/app/logs:Z
+      - /volume1/docker/my-vue-project_backend/data:/app/data:Z
     depends_on:
       db:
         condition: service_healthy
