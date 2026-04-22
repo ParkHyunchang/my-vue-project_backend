@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
  * 네이버 금융 HTML 파싱 서비스.
  * - KOSPI/KOSDAQ 시가총액 순위 조회 (세션·로그인 불필요)
  * - 순위, 현재가, 전일비, 등락률, 시가총액, 거래량 포함
+ * - TTL 캐시 없음 — 캐싱은 호출자(StockService)가 전담. 여기서는 장애 시 폴백 데이터만 보관.
  *
  * 출처: https://finance.naver.com/sise/sise_market_sum.naver
  */
@@ -26,8 +27,6 @@ public class NaverFinanceService {
 
     private static final String NAVER_SISE_URL =
         "https://finance.naver.com/sise/sise_market_sum.naver?sosok=%s&page=1";
-
-    private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L; // 6시간
 
     // ── 테이블 컬럼 인덱스 (0부터 시작) ────────────────────────────
     // [0] 순위 | [1] 종목명 | [2] 현재가 | [3] 전일비 | [4] 등락률
@@ -51,49 +50,41 @@ public class NaverFinanceService {
         long   volume         // 거래량
     ) {}
 
-    // ── 캐시 ────────────────────────────────────────────────────
-    private volatile List<NaverStockData> kospiCache      = null;
-    private volatile long                 kospiCacheTime  = 0;
-    private volatile List<NaverStockData> kosdaqCache     = null;
-    private volatile long                 kosdaqCacheTime = 0;
+    // ── 장애 시 폴백 데이터 (TTL 없음, 가장 최근 성공 데이터 보관) ───
+    private volatile List<NaverStockData> kospiCache  = null;
+    private volatile List<NaverStockData> kosdaqCache = null;
 
     // ─────────────────────────────────────────────────────────────
     // 공개 메서드
     // ─────────────────────────────────────────────────────────────
 
     /**
-     * KOSPI 시가총액 Top N 조회 (캐시 6h TTL).
-     * 실패 시 마지막 성공 캐시 반환, 캐시도 없으면 빈 리스트.
+     * KOSPI 시가총액 Top N 조회.
+     * 항상 신선한 데이터를 가져오며, 실패 시 마지막 성공 데이터를 반환합니다.
+     * TTL 캐시는 StockService에서 제어합니다.
      */
     public List<NaverStockData> getTopStocksKospiCached(int count) {
-        long now = System.currentTimeMillis();
-        if (kospiCache == null || (now - kospiCacheTime) > CACHE_TTL_MS) {
-            List<NaverStockData> fresh = fetchTopStocks("0", count);
-            if (!fresh.isEmpty()) {
-                kospiCache     = fresh;
-                kospiCacheTime = now;
-            } else if (kospiCache != null) {
-                log.warn("Naver KOSPI 조회 실패 — 이전 캐시 사용 ({}개)", kospiCache.size());
-            }
+        List<NaverStockData> fresh = fetchTopStocks("0", count);
+        if (!fresh.isEmpty()) {
+            kospiCache = fresh;
+        } else if (kospiCache != null) {
+            log.warn("Naver KOSPI 조회 실패 — 마지막 성공 데이터 반환 ({}개)", kospiCache.size());
         }
         if (kospiCache == null) return Collections.emptyList();
         return kospiCache.subList(0, Math.min(count, kospiCache.size()));
     }
 
     /**
-     * KOSDAQ 시가총액 Top N 조회 (캐시 6h TTL).
-     * 실패 시 마지막 성공 캐시 반환, 캐시도 없으면 빈 리스트.
+     * KOSDAQ 시가총액 Top N 조회.
+     * 항상 신선한 데이터를 가져오며, 실패 시 마지막 성공 데이터를 반환합니다.
+     * TTL 캐시는 StockService에서 제어합니다.
      */
     public List<NaverStockData> getTopStocksKosdaqCached(int count) {
-        long now = System.currentTimeMillis();
-        if (kosdaqCache == null || (now - kosdaqCacheTime) > CACHE_TTL_MS) {
-            List<NaverStockData> fresh = fetchTopStocks("1", count);
-            if (!fresh.isEmpty()) {
-                kosdaqCache     = fresh;
-                kosdaqCacheTime = now;
-            } else if (kosdaqCache != null) {
-                log.warn("Naver KOSDAQ 조회 실패 — 이전 캐시 사용 ({}개)", kosdaqCache.size());
-            }
+        List<NaverStockData> fresh = fetchTopStocks("1", count);
+        if (!fresh.isEmpty()) {
+            kosdaqCache = fresh;
+        } else if (kosdaqCache != null) {
+            log.warn("Naver KOSDAQ 조회 실패 — 마지막 성공 데이터 반환 ({}개)", kosdaqCache.size());
         }
         if (kosdaqCache == null) return Collections.emptyList();
         return kosdaqCache.subList(0, Math.min(count, kosdaqCache.size()));

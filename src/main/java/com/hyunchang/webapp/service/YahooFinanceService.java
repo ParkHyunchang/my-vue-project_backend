@@ -54,7 +54,12 @@ public class YahooFinanceService {
         new String[]{"COST",  "Costco",              "440000000"},
         new String[]{"NFLX",  "Netflix",             "420000000"},
         new String[]{"PLTR",  "Palantir",            "21400000000"},
-        new String[]{"AMD",   "AMD",                 "1620000000"}
+        new String[]{"AMD",   "AMD",                 "1620000000"},
+        new String[]{"UNH",   "UnitedHealth Group",  "930000000"},
+        new String[]{"HD",    "Home Depot",          "990000000"},
+        new String[]{"PG",    "Procter & Gamble",    "2360000000"},
+        new String[]{"JNJ",   "Johnson & Johnson",   "2410000000"},
+        new String[]{"ABBV",  "AbbVie",              "1770000000"}
     );
 
     // 미국 주요 종목 한글명 매핑
@@ -98,7 +103,10 @@ public class YahooFinanceService {
         Map.entry("SPY",   "S&P500 ETF"),    Map.entry("QQQ",   "나스닥100 ETF"),
         Map.entry("SOXL",  "반도체 3배 ETF"), Map.entry("TQQQ", "나스닥100 3배 ETF"),
         Map.entry("SQQQ",  "나스닥100 인버스 3배 ETF"), Map.entry("ARKK", "ARK 이노베이션 ETF"),
-        Map.entry("VOO",   "뱅가드 S&P500 ETF"), Map.entry("VTI", "뱅가드 미국 전체시장 ETF")
+        Map.entry("VOO",   "뱅가드 S&P500 ETF"), Map.entry("VTI", "뱅가드 미국 전체시장 ETF"),
+        Map.entry("UNH",   "유나이티드헬스"), Map.entry("HD",   "홈디포"),
+        Map.entry("PG",    "프록터 앤 갬블"), Map.entry("JNJ",  "존슨앤드존슨"),
+        Map.entry("ABBV",  "애브비")
     );
 
     /** 시세 데이터 내부 전달용 레코드 (StockService에서 순위 계산에 사용) */
@@ -116,14 +124,81 @@ public class YahooFinanceService {
     }
 
     // ─────────────────────────────────────────────────────────────
-    // 개별 종목 시세 조회 (Top10 병렬 처리용)
+    // 여러 종목 일괄 시세 조회 (v7/quote — 시총 정확도 높음)
     // ─────────────────────────────────────────────────────────────
 
-    /** 개별 종목의 Yahoo Finance v8 chart 시세 조회 (Top10 병렬 호출용). */
+    /**
+     * Yahoo Finance v7/quote API로 여러 종목을 한 번에 조회합니다.
+     * v8/chart 개별 호출 대비 시가총액 데이터가 정확하며 API 호출 횟수가 1회로 줄어듭니다.
+     * 실패 시 빈 리스트를 반환하고 호출자가 폴백을 처리합니다.
+     */
+    public List<RawQuote> fetchBulkQuotes(List<String[]> stocks) {
+        StringJoiner sj = new StringJoiner(",");
+        Map<String, String[]> stockMap = new HashMap<>();
+        for (String[] s : stocks) {
+            sj.add(s[0]);
+            stockMap.put(s[0].toUpperCase(), s);
+        }
+
+        try {
+            String url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols="
+                + sj
+                + "&lang=en-US&region=US";
+
+            HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
+            headers.set("Accept-Language", "en-US,en;q=0.9");
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode results = objectMapper.readTree(resp.getBody())
+                .path("quoteResponse").path("result");
+
+            List<RawQuote> quotes = new ArrayList<>();
+            for (JsonNode q : results) {
+                String symbol = q.path("symbol").asText("").trim();
+                if (symbol.isEmpty()) continue;
+
+                String[] info   = stockMap.get(symbol.toUpperCase());
+                String   koName = resolveUsStockName(symbol);
+                String   name   = (koName != null && !koName.isBlank()) ? koName
+                                : (info != null ? info[1] : symbol);
+
+                double price     = q.path("regularMarketPrice").asDouble(0);
+                double change    = q.path("regularMarketChange").asDouble(0);
+                double changePct = q.path("regularMarketChangePercent").asDouble(0);
+                long   mktCap    = q.path("marketCap").asLong(0);
+                long   volume    = q.path("regularMarketVolume").asLong(0);
+
+                if (mktCap == 0 && info != null && info.length > 2) {
+                    long shares = Long.parseLong(info[2]);
+                    if (shares > 0) mktCap = (long)(price * shares);
+                }
+                if (price == 0) continue;
+
+                quotes.add(new RawQuote(symbol, name, price,
+                    Math.round(change * 100.0) / 100.0,
+                    Math.round(changePct * 100.0) / 100.0,
+                    mktCap, volume));
+            }
+
+            log.info("Yahoo Finance v7/quote 일괄 조회 완료: {}개 종목", quotes.size());
+            return quotes;
+
+        } catch (Exception e) {
+            log.warn("Yahoo Finance v7/quote 일괄 조회 실패: {}", e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 개별 종목 시세 조회 (Top10 병렬 처리용 폴백)
+    // ─────────────────────────────────────────────────────────────
+
+    /** 개별 종목의 Yahoo Finance v8 chart 시세 조회 (v7/quote 실패 시 폴백용). */
     public RawQuote fetchSingle(String symbol, String name, long shares, String currency) {
         try {
             String url = "https://query1.finance.yahoo.com/v8/finance/chart/" + symbol
-                + "?interval=1d&range=5d";
+                + "?interval=1d&range=1d";
 
             HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
             headers.set("Accept-Language", "ko-KR,ko;q=0.9,en-US;q=0.8");

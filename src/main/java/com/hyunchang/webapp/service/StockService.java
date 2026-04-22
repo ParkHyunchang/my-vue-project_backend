@@ -123,7 +123,7 @@ public class StockService {
         return result;
     }
 
-    /** 미국 시총 Top 10 (Yahoo Finance 스크리너 실시간 순위) */
+    /** 미국 시총 Top 10 (Yahoo Finance v7/quote 일괄 조회 → 실패 시 v8/chart 개별 폴백) */
     public List<StockQuoteDto> getTop10US() {
         Long cachedAt = cacheTimes.get("US");
         if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
@@ -131,7 +131,16 @@ public class StockService {
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
         List<String[]> stocks = YahooFinanceService.US_STOCKS_FALLBACK;
-        List<StockQuoteDto> result = fetchAll("US", stocks, "USD");
+
+        List<YahooFinanceService.RawQuote> raws = yahooService.fetchBulkQuotes(stocks);
+        List<StockQuoteDto> result;
+        if (!raws.isEmpty()) {
+            result = buildQuoteDtos("US", raws, "USD");
+        } else {
+            log.warn("v7/quote 일괄 조회 실패 — v8/chart 개별 조회로 폴백");
+            result = fetchAll("US", stocks, "USD");
+        }
+
         if (!result.isEmpty()) {
             log.info("미국 시총 Top10 조회 완료: 후보 {}개 중 상위 {}개 선별 (실시간 시총 정렬)",
                 stocks.size(), result.size());
@@ -196,10 +205,27 @@ public class StockService {
 
     /**
      * 종목 검색. 한글 포함 시 KRX 로컬 검색, 영문/코드 시 Yahoo Finance 검색.
+     * Yahoo 결과 중 KR 종목은 한글명으로 변환합니다.
      */
     public List<StockSearchResultDto> searchStocks(String query) {
         if (containsKorean(query)) return krxService.searchKrLocal(query.trim());
-        return yahooService.searchYahoo(query.trim());
+
+        List<StockSearchResultDto> raw = yahooService.searchYahoo(query.trim());
+        List<StockSearchResultDto> result = new ArrayList<>();
+        for (StockSearchResultDto r : raw) {
+            if ("KR".equals(r.getMarket())) {
+                String koName = krxService.resolveKrStockName(r.getSymbol());
+                if (koName != null && !koName.isBlank()) {
+                    result.add(StockSearchResultDto.builder()
+                        .symbol(r.getSymbol()).name(koName)
+                        .exchange(r.getExchange()).type(r.getType()).market(r.getMarket())
+                        .build());
+                    continue;
+                }
+            }
+            result.add(r);
+        }
+        return result;
     }
 
     /** 국내 주식 히트맵 데이터 (30분 자동 갱신) */
@@ -233,30 +259,30 @@ public class StockService {
     @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
     public void scheduledRefreshKR() {
         log.info("[스케줄] KR 시총 Top10 갱신 시작 (09:00 KST)");
-        saveBaseRanks("KR");
         quoteCache.remove("KR");
         cacheTimes.remove("KR");
         getTop10KR();
+        saveBaseRanks("KR"); // 새 데이터를 캐시에 넣은 뒤 저장 (다음 실행 때 기준점으로 사용)
         log.info("[스케줄] KR 시총 Top10 갱신 완료");
     }
 
     @Scheduled(cron = "0 0 9 * * *", zone = "Asia/Seoul")
     public void scheduledRefreshKOSDAQ() {
         log.info("[스케줄] KOSDAQ 시총 Top10 갱신 시작 (09:00 KST)");
-        saveBaseRanks("KOSDAQ");
         quoteCache.remove("KOSDAQ");
         cacheTimes.remove("KOSDAQ");
         getTop10KOSDAQ();
+        saveBaseRanks("KOSDAQ");
         log.info("[스케줄] KOSDAQ 시총 Top10 갱신 완료");
     }
 
     @Scheduled(cron = "0 30 23 * * *", zone = "Asia/Seoul")
     public void scheduledRefreshUS() {
         log.info("[스케줄] US 시총 Top10 갱신 시작 (23:30 KST)");
-        saveBaseRanks("US");
         quoteCache.remove("US");
         cacheTimes.remove("US");
         getTop10US();
+        saveBaseRanks("US");
         log.info("[스케줄] US 시총 Top10 갱신 완료");
     }
 
@@ -271,7 +297,34 @@ public class StockService {
     // 내부 메서드
     // ─────────────────────────────────────────────────────────────
 
-    /** KRX 시총 순 종목을 Yahoo Finance에서 병렬 조회 후 시총 내림차순 정렬 + 순위 변동 계산 */
+    /** RawQuote 목록을 시총 내림차순 정렬 후 순위 변동 포함 StockQuoteDto 목록으로 변환 */
+    private List<StockQuoteDto> buildQuoteDtos(String cacheKey,
+            List<YahooFinanceService.RawQuote> raws, String currency) {
+        if (raws.isEmpty()) return Collections.emptyList();
+
+        List<YahooFinanceService.RawQuote> sorted = new ArrayList<>(raws);
+        sorted.sort(Comparator.comparingLong(YahooFinanceService.RawQuote::marketCap).reversed());
+
+        Map<String, Integer> base   = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
+        List<StockQuoteDto>  result = new ArrayList<>();
+
+        for (int idx = 0; idx < sorted.size(); idx++) {
+            YahooFinanceService.RawQuote raw     = sorted.get(idx);
+            int                          newRank  = idx + 1;
+            Integer                      baseRank = base.get(raw.symbol());
+            int rankChange = (baseRank == null) ? 0 : (baseRank - newRank);
+
+            result.add(StockQuoteDto.builder()
+                .rank(newRank).rankChange(rankChange)
+                .symbol(raw.symbol()).name(raw.name())
+                .price(raw.price()).change(raw.change()).changePercent(raw.changePercent())
+                .marketCap(raw.marketCap()).currency(currency).volume(raw.volume())
+                .build());
+        }
+        return result;
+    }
+
+    /** KRX 시총 순 종목을 Yahoo Finance v8/chart로 병렬 조회 (v7/quote 실패 시 폴백) */
     private List<StockQuoteDto> fetchAll(String cacheKey, List<String[]> stocks, String currency) {
         ExecutorService exec = Executors.newFixedThreadPool(10);
         List<Future<YahooFinanceService.RawQuote>> futures = stocks.stream()
@@ -290,27 +343,7 @@ public class StockService {
         }
         exec.shutdown();
 
-        if (raws.isEmpty()) return Collections.emptyList();
-
-        raws.sort(Comparator.comparingLong(YahooFinanceService.RawQuote::marketCap).reversed());
-
-        Map<String, Integer> base   = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
-        List<StockQuoteDto>  result = new ArrayList<>();
-
-        for (int idx = 0; idx < raws.size(); idx++) {
-            YahooFinanceService.RawQuote raw      = raws.get(idx);
-            int                          newRank   = idx + 1;
-            Integer                      baseRank  = base.get(raw.symbol());
-            int rankChange = (baseRank == null) ? 0 : (baseRank - newRank);
-
-            result.add(StockQuoteDto.builder()
-                .rank(newRank).rankChange(rankChange)
-                .symbol(raw.symbol()).name(raw.name())
-                .price(raw.price()).change(raw.change()).changePercent(raw.changePercent())
-                .marketCap(raw.marketCap()).currency(currency).volume(raw.volume())
-                .build());
-        }
-        return result;
+        return buildQuoteDtos(cacheKey, raws, currency);
     }
 
     /** 네이버 금융 데이터로 StockQuoteDto 목록 생성 (순위 변동 계산 포함) */

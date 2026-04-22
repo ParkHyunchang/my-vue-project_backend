@@ -150,14 +150,23 @@ public class KrxService {
         return krxStocksCache.subList(0, Math.min(count, krxStocksCache.size()));
     }
 
-    /** 한글 검색어로 KRX 종목 검색 */
+    /**
+     * 한글 검색어로 KRX 종목 검색.
+     * krNameLookup (KOSPI+KOSDAQ 각 50개 + 하드코딩 29개) 을 검색 풀로 사용합니다.
+     */
     public List<StockSearchResultDto> searchKrLocal(String query) {
+        buildKrNameLookupIfNeeded();
+        if (krNameLookup == null || krNameLookup.isEmpty()) return Collections.emptyList();
+
         String lower = query.toLowerCase();
         List<StockSearchResultDto> results = new ArrayList<>();
-        for (String[] s : getTopStocksCached(100)) {
-            if (s[1].contains(query) || s[0].toLowerCase().contains(lower)) {
+        for (Map.Entry<String, String> entry : krNameLookup.entrySet()) {
+            String sym  = entry.getKey();   // e.g., "005930.KS"
+            String name = entry.getValue(); // e.g., "삼성전자"
+            if (name.contains(query) || sym.toLowerCase().contains(lower)) {
+                String exchange = sym.endsWith(".KQ") ? "KOE" : "KSC";
                 results.add(StockSearchResultDto.builder()
-                    .symbol(s[0]).name(s[1]).exchange("KSC").type("EQUITY").market("KR").build());
+                    .symbol(sym).name(name).exchange(exchange).type("EQUITY").market("KR").build());
             }
         }
         log.info("KRX 검색 [{}] → {}건", query, results.size());
