@@ -32,7 +32,8 @@ public class KrxOpenApiService {
     private static final String KOSPI_URL  = "https://data-dbg.krx.co.kr/svc/apis/sto/stk_bydd_trd";
     private static final String KOSDAQ_URL = "https://data-dbg.krx.co.kr/svc/apis/sto/ksq_bydd_trd";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
-    private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L;
+    private static final long CACHE_TTL_MS      = 6 * 60 * 60 * 1000L;
+    private static final long FAIL_COOLDOWN_MS  = 10 * 60 * 1000L; // 연속 실패 시 재시도 쿨다운
 
     @Value("${KRX_API_KEY:}")
     private String apiKey;
@@ -42,11 +43,13 @@ public class KrxOpenApiService {
 
     // ── KOSPI 전체 캐시 (symbol.toUpperCase() → NaverStockData) ──
     private volatile Map<String, NaverFinanceService.NaverStockData> kospiMap  = Collections.emptyMap();
-    private volatile long kospiMapTime = 0;
+    private volatile long kospiMapTime     = 0;
+    private volatile long kospiMapFailTime = 0;
 
     // ── KOSDAQ 전체 캐시 ──
     private volatile Map<String, NaverFinanceService.NaverStockData> kosdaqMap = Collections.emptyMap();
-    private volatile long kosdaqMapTime = 0;
+    private volatile long kosdaqMapTime     = 0;
+    private volatile long kosdaqMapFailTime = 0;
 
     // ─────────────────────────────────────────────────────────────
     // 공개 메서드
@@ -64,9 +67,28 @@ public class KrxOpenApiService {
 
     /**
      * KR 종목 시세 직접 조회.
-     * .KS → KOSPI 캐시, .KQ → KOSDAQ 캐시에서 반환. 없으면 null.
+     * .KS → KOSPI 캐시, .KQ → KOSDAQ 캐시에서 반환. 없거나 가격 0이면 null.
+     * 거래 없는 날 우선주 등은 캐시에는 있으나 price==0 이므로 시세로는 null 반환.
      */
     public NaverFinanceService.NaverStockData getKrPrice(String symbol) {
+        NaverFinanceService.NaverStockData data = lookup(symbol);
+        if (data == null || data.price() == 0) return null;
+        return data;
+    }
+
+    /**
+     * KR 종목 한글명 직접 조회 (가격 무관).
+     * 거래 없는 날 우선주도 이름은 반환되도록 price 필터링을 하지 않습니다.
+     */
+    public String getKrName(String symbol) {
+        NaverFinanceService.NaverStockData data = lookup(symbol);
+        if (data == null) return null;
+        String name = data.name();
+        return (name != null && !name.isBlank()) ? name : null;
+    }
+
+    private NaverFinanceService.NaverStockData lookup(String symbol) {
+        if (symbol == null) return null;
         String upper = symbol.toUpperCase();
         if (upper.endsWith(".KS")) return getOrLoadKospiMap().get(upper);
         if (upper.endsWith(".KQ")) return getOrLoadKosdaqMap().get(upper);
@@ -79,13 +101,19 @@ public class KrxOpenApiService {
 
     private Map<String, NaverFinanceService.NaverStockData> getOrLoadKospiMap() {
         if (!isStale(kospiMapTime)) return kospiMap;
+        if (inFailCooldown(kospiMapFailTime)) return kospiMap;
         synchronized (this) {
             if (!isStale(kospiMapTime)) return kospiMap;
+            if (inFailCooldown(kospiMapFailTime)) return kospiMap;
             List<NaverFinanceService.NaverStockData> all = fetchAllFromKrx(KOSPI_URL, ".KS");
             if (!all.isEmpty()) {
-                kospiMap     = toMap(all);
-                kospiMapTime = System.currentTimeMillis();
+                kospiMap         = toMap(all);
+                kospiMapTime     = System.currentTimeMillis();
+                kospiMapFailTime = 0;
                 log.info("KRX KOSPI 캐시 갱신: {}개 종목", kospiMap.size());
+            } else {
+                kospiMapFailTime = System.currentTimeMillis();
+                log.warn("KRX KOSPI 로드 실패 — {}분 쿨다운 적용", FAIL_COOLDOWN_MS / 60_000);
             }
         }
         return kospiMap;
@@ -93,16 +121,26 @@ public class KrxOpenApiService {
 
     private Map<String, NaverFinanceService.NaverStockData> getOrLoadKosdaqMap() {
         if (!isStale(kosdaqMapTime)) return kosdaqMap;
+        if (inFailCooldown(kosdaqMapFailTime)) return kosdaqMap;
         synchronized (this) {
             if (!isStale(kosdaqMapTime)) return kosdaqMap;
+            if (inFailCooldown(kosdaqMapFailTime)) return kosdaqMap;
             List<NaverFinanceService.NaverStockData> all = fetchAllFromKrx(KOSDAQ_URL, ".KQ");
             if (!all.isEmpty()) {
-                kosdaqMap     = toMap(all);
-                kosdaqMapTime = System.currentTimeMillis();
+                kosdaqMap         = toMap(all);
+                kosdaqMapTime     = System.currentTimeMillis();
+                kosdaqMapFailTime = 0;
                 log.info("KRX KOSDAQ 캐시 갱신: {}개 종목", kosdaqMap.size());
+            } else {
+                kosdaqMapFailTime = System.currentTimeMillis();
+                log.warn("KRX KOSDAQ 로드 실패 — {}분 쿨다운 적용", FAIL_COOLDOWN_MS / 60_000);
             }
         }
         return kosdaqMap;
+    }
+
+    private boolean inFailCooldown(long failTime) {
+        return failTime > 0 && (System.currentTimeMillis() - failTime) < FAIL_COOLDOWN_MS;
     }
 
     private boolean isStale(long cacheTime) {
@@ -163,8 +201,8 @@ public class KrxOpenApiService {
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
         if (response.statusCode() != 200) {
-            log.warn("KRX API HTTP {}: {}", response.statusCode(),
-                response.body().substring(0, Math.min(300, response.body().length())));
+            log.debug("KRX API HTTP {} (basDd={}): {}", response.statusCode(), basDd,
+                response.body().substring(0, Math.min(200, response.body().length())));
             return Collections.emptyList();
         }
 
@@ -192,8 +230,9 @@ public class KrxOpenApiService {
             String name = item.path("ISU_ABBRV").asText("").trim();
             if (name.isEmpty()) continue;
 
+            // 거래 없는 날의 우선주 등은 price==0 일 수 있으나, 이름 룩업용으로
+            // 캐시에는 포함시킵니다. 시세 조회는 getKrPrice() 쪽에서 price==0 을 걸러냅니다.
             double price = parseDouble(item.path("TDD_CLSPRC").asText("0"));
-            if (price == 0) continue;
 
             double changeAbs  = parseDouble(item.path("CMPPREVDD_PRC").asText("0"));
             double changeRate = parseDouble(item.path("FLUC_RT").asText("0"));

@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -58,6 +59,12 @@ public class NaverFinanceService {
     private volatile List<NaverStockData> kospiCache  = null;
     private volatile List<NaverStockData> kosdaqCache = null;
 
+    // ── 개별 종목 한글명 캐시 (6자리 단축코드 → 한글명) ──
+    // 값이 빈 문자열이면 "네이버에도 없음"을 의미 (재호출 방지용 네거티브 캐시)
+    private static final long   NAME_CACHE_TTL_MS = 24 * 60 * 60 * 1000L;
+    private final Map<String, String> stockNameCache     = new ConcurrentHashMap<>();
+    private final Map<String, Long>   stockNameCacheTime = new ConcurrentHashMap<>();
+
     // ─────────────────────────────────────────────────────────────
     // 공개 메서드
     // ─────────────────────────────────────────────────────────────
@@ -100,6 +107,61 @@ public class NaverFinanceService {
         }
         if (kosdaqCache == null) return Collections.emptyList();
         return kosdaqCache.subList(0, Math.min(count, kosdaqCache.size()));
+    }
+
+    /**
+     * 개별 KR 종목의 한글명을 네이버 금융 종목 페이지에서 조회합니다.
+     * KRX OpenAPI / 상위 100 리스트에 없는 종목(우선주, 소형주 등)의 최후 폴백.
+     * 결과는 24시간 캐시되며, 실패(null)도 빈 문자열로 캐시해 재호출을 방지합니다.
+     */
+    public String resolveStockNameByCode(String symbol) {
+        if (symbol == null) return null;
+        String code = extractCode(symbol);
+        if (code == null) return null;
+
+        Long at = stockNameCacheTime.get(code);
+        if (at != null && (System.currentTimeMillis() - at) < NAME_CACHE_TTL_MS) {
+            String cached = stockNameCache.get(code);
+            return (cached != null && !cached.isEmpty()) ? cached : null;
+        }
+
+        String name = fetchStockNameFromNaver(code);
+        stockNameCache.put(code, name != null ? name : "");
+        stockNameCacheTime.put(code, System.currentTimeMillis());
+        return name;
+    }
+
+    private String extractCode(String symbol) {
+        int dot = symbol.indexOf('.');
+        String code = (dot >= 0) ? symbol.substring(0, dot) : symbol;
+        return code.length() == 6 && code.chars().allMatch(Character::isDigit) ? code : null;
+    }
+
+    private String fetchStockNameFromNaver(String code) {
+        try {
+            String url = "https://finance.naver.com/item/main.naver?code=" + code;
+            Document doc = Jsoup.connect(url)
+                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                           "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                           "Chrome/122.0.0.0 Safari/537.36")
+                .header("Referer", "https://finance.naver.com/")
+                .header("Accept-Language", "ko-KR,ko;q=0.9")
+                .timeout(10_000)
+                .get();
+            Element link = doc.selectFirst(".wrap_company h2 a");
+            if (link != null) {
+                String name = link.text().trim();
+                if (!name.isEmpty()) {
+                    log.info("Naver 개별 종목 한글명 조회 [{}] → {}", code, name);
+                    return name;
+                }
+            }
+            log.debug("Naver 개별 종목 한글명 미발견 [{}]", code);
+            return null;
+        } catch (Exception e) {
+            log.warn("Naver 개별 종목 한글명 조회 실패 [{}]: {}", code, e.getMessage());
+            return null;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────

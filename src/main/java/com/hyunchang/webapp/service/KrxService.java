@@ -121,9 +121,11 @@ public class KrxService {
     private volatile long                 krNameLookupTime  = 0;
 
     private final NaverFinanceService naverService;
+    private final KrxOpenApiService   krxApiService;
 
-    public KrxService(NaverFinanceService naverService) {
-        this.naverService = naverService;
+    public KrxService(NaverFinanceService naverService, KrxOpenApiService krxApiService) {
+        this.naverService  = naverService;
+        this.krxApiService = krxApiService;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -152,7 +154,7 @@ public class KrxService {
 
     /**
      * 한글 검색어로 KRX 종목 검색.
-     * krNameLookup (KOSPI+KOSDAQ 각 50개 + 하드코딩 29개) 을 검색 풀로 사용합니다.
+     * krNameLookup (KRX OpenAPI 전체 + 네이버 상위 100 + 폴백)을 검색 풀로 사용합니다.
      */
     public List<StockSearchResultDto> searchKrLocal(String query) {
         buildKrNameLookupIfNeeded();
@@ -173,14 +175,28 @@ public class KrxService {
         return results;
     }
 
-    /** KR 심볼(.KS/.KQ)의 한글명 반환. 없으면 null. */
+    /**
+     * KR 심볼(.KS/.KQ)의 한글명 반환. 없으면 null.
+     * 1) KRX 공식 OpenAPI 전체 사전(ISU_ABBRV, 2500+개)
+     * 2) 네이버 기반 상위 100개 + 하드코딩 폴백 룩업
+     * 3) 히트맵용 하드코딩 폴백
+     * 4) 네이버 금융 개별 종목 페이지 스크래핑 (우선주·소형주 등 최후 폴백)
+     */
     public String resolveKrStockName(String symbol) {
+        if (symbol == null) return null;
+
+        String krxName = krxApiService.getKrName(symbol);
+        if (krxName != null) return krxName;
+
         buildKrNameLookupIfNeeded();
         if (krNameLookup != null) {
             String name = krNameLookup.get(symbol.toUpperCase());
             if (name != null) return name;
         }
-        return KR_HEATMAP_NAME_FALLBACK.get(symbol);
+        String fallback = KR_HEATMAP_NAME_FALLBACK.get(symbol);
+        if (fallback != null) return fallback;
+
+        return naverService.resolveStockNameByCode(symbol);
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -197,16 +213,21 @@ public class KrxService {
         if (krNameLookup != null
                 && (System.currentTimeMillis() - krNameLookupTime) < CACHE_TTL_MS) return;
         Map<String, String> map = new HashMap<>();
-        // 네이버 금융에서 KOSPI/KOSDAQ 상위 50개씩 이름 가져오기
+        // KRX 공식 OpenAPI 전체 KOSPI/KOSDAQ 종목명 (2500+개, 최우선)
+        krxApiService.getTopKospiStocks(Integer.MAX_VALUE)
+            .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
+        krxApiService.getTopKosdaqStocks(Integer.MAX_VALUE)
+            .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
+        // 네이버 금융에서 KOSPI/KOSDAQ 상위 50개씩 (KRX API 미동작 시 폴백 경로)
         naverService.getTopStocksKospiCached(50)
-            .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
+            .forEach(s -> map.putIfAbsent(s.symbol().toUpperCase(), s.name()));
         naverService.getTopStocksKosdaqCached(50)
-            .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
-        // 네이버 미수록 종목 보완 (29개 하드코딩)
+            .forEach(s -> map.putIfAbsent(s.symbol().toUpperCase(), s.name()));
+        // 네이버/KRX 모두 실패 시 최종 폴백 (29개 하드코딩)
         KR_HEATMAP_NAME_FALLBACK.forEach((k, v) -> map.putIfAbsent(k.toUpperCase(), v));
         krNameLookup     = map;
         krNameLookupTime = System.currentTimeMillis();
-        log.info("KR 종목명 룩업 맵 빌드 완료 (Naver 출처): KOSPI+KOSDAQ 실시간 + 폴백 포함 총 {}개", map.size());
+        log.info("KR 종목명 룩업 맵 빌드 완료 (KRX+Naver+폴백): 총 {}개", map.size());
     }
 
 }
