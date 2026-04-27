@@ -36,7 +36,8 @@ public class StockService {
 
     private static final Logger log = LoggerFactory.getLogger(StockService.class);
 
-    private static final long CACHE_TTL_MS     = 6 * 60 * 60 * 1000L; // 6시간
+    private static final long CACHE_TTL_MS          = 6 * 60 * 60 * 1000L; // 6시간 (Top10)
+    private static final long PORTFOLIO_PRICE_TTL_MS = 2 * 60 * 1000L;      // 2분 (포트폴리오 개별 시세)
     private static final String BASE_RANKS_FILE = "data/base-ranks.json";
     private static final int  DAILY_LIMIT  = 25; // Alpha Vantage 일일 한도 (표시용)
     private static final DateTimeFormatter HEATMAP_FMT =
@@ -95,7 +96,7 @@ public class StockService {
             result = buildKrQuotes("KR", naverStocks, "KRW");
         } else {
             log.warn("Naver Finance KOSPI 조회 실패 및 캐시 없음 — 비상 폴백(하드코딩 + Yahoo) 사용");
-            result = fetchAll("KR", KrxService.KR_STOCKS_FALLBACK, "KRW");
+            result = fetchAll("KR", krxService.getKrStocksFallback(), "KRW");
         }
         if (!result.isEmpty()) {
             quoteCache.put("KR", result);
@@ -117,7 +118,7 @@ public class StockService {
             result = buildKrQuotes("KOSDAQ", naverStocks, "KRW");
         } else {
             log.warn("Naver Finance KOSDAQ 조회 실패 및 캐시 없음 — 비상 폴백(하드코딩 + Yahoo) 사용");
-            result = fetchAll("KOSDAQ", KrxService.KQ_STOCKS_FALLBACK, "KRW");
+            result = fetchAll("KOSDAQ", krxService.getKqStocksFallback(), "KRW");
         }
         if (!result.isEmpty()) {
             quoteCache.put("KOSDAQ", result);
@@ -133,7 +134,7 @@ public class StockService {
             log.info("Stock 캐시 히트 [US]");
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
-        List<String[]> stocks = YahooFinanceService.US_STOCKS_FALLBACK;
+        List<String[]> stocks = yahooService.getUsStocksFallback();
 
         List<YahooFinanceService.RawQuote> raws = yahooService.fetchBulkQuotes(stocks);
         List<StockQuoteDto> result;
@@ -194,9 +195,9 @@ public class StockService {
             }
         }
 
-        // 2) 개별 캐시
+        // 2) 개별 캐시 (포트폴리오용: 2분 TTL)
         Long cachedAt = singlePriceTimes.get(symbol);
-        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < PORTFOLIO_PRICE_TTL_MS) {
             StockPriceDto cached = singlePriceCache.get(symbol);
             if (cached != null) return cached;
         }
@@ -259,8 +260,13 @@ public class StockService {
     }
 
     /** 뉴스 조회 — StockNewsService에 위임 */
-    public List<StockNewsDto> getNews(String market) {
-        return newsService.getNews(market);
+    public List<StockNewsDto> getNews(String market, boolean force) {
+        return newsService.getNews(market, force);
+    }
+
+    /** 미국 종목 ticker → 영문 검색어 맵 (뉴스 필터링용) */
+    public Map<String, String> getUsEnNames() {
+        return yahooService.getUsEnNames();
     }
 
     /** 종목 한글명 반환 (KR: KrxService, US: YahooFinanceService) */
@@ -418,7 +424,7 @@ public class StockService {
                 .changePercent(s.changePercent())
                 .marketCap(s.marketCap() > 0 ? s.marketCap() : 1)
                 .build();
-            String sector = KrxService.KR_SECTOR_MAP.getOrDefault(s.symbol(), "기타");
+            String sector = krxService.getKrSectorMap().getOrDefault(s.symbol(), "기타");
             bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
         }
 
@@ -436,7 +442,7 @@ public class StockService {
         List<String[]> krStocks = krxService.getTopStocksCached(30);
         if (krStocks.isEmpty()) {
             log.warn("KRX 종목 목록 없음 — 히트맵 하드코딩 목록 사용");
-            krStocks = KrxService.KR_HEATMAP_NAME_FALLBACK.entrySet().stream()
+            krStocks = krxService.getKrHeatmapNameFallback().entrySet().stream()
                 .map(e -> new String[]{e.getKey(), e.getValue(), "0"})
                 .toList();
         }
@@ -461,7 +467,7 @@ public class StockService {
         for (String[] s : krStocks) {
             StockHeatmapItemDto item = resultMap.get(s[0]);
             if (item == null) continue;
-            String sector = KrxService.KR_SECTOR_MAP.getOrDefault(s[0], "기타");
+            String sector = krxService.getKrSectorMap().getOrDefault(s[0], "기타");
             bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
         }
 

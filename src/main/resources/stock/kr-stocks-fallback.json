@@ -1,0 +1,12 @@
+[
+  {"symbol": "005930.KS", "name": "삼성전자",         "shares": "0"},
+  {"symbol": "000660.KS", "name": "SK하이닉스",       "shares": "0"},
+  {"symbol": "373220.KS", "name": "LG에너지솔루션",   "shares": "0"},
+  {"symbol": "207940.KS", "name": "삼성바이오로직스",  "shares": "0"},
+  {"symbol": "005380.KS", "name": "현대자동차",        "shares": "0"},
+  {"symbol": "000270.KS", "name": "기아",             "shares": "0"},
+  {"symbol": "005490.KS", "name": "POSCO홀딩스",      "shares": "0"},
+  {"symbol": "006400.KS", "name": "삼성SDI",          "shares": "0"},
+  {"symbol": "035420.KS", "name": "NAVER",            "shares": "0"},
+  {"symbol": "105560.KS", "name": "KB금융",           "shares": "0"}
+]

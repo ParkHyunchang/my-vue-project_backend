@@ -1,19 +1,23 @@
 package com.hyunchang.webapp.service;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockHeatmapItemDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockSearchResultDto;
+import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Yahoo Finance API 연동 서비스.
@@ -21,7 +25,7 @@ import java.util.*;
  * - 개별 종목 시세 조회 (v8 chart)
  * - 종목 검색 (영문)
  * - 히트맵용 개별 종목 조회
- * - 미국 종목 한글명 변환
+ * - 미국 종목 한글명/영문명 변환
  */
 @Service
 public class YahooFinanceService {
@@ -29,84 +33,17 @@ public class YahooFinanceService {
     private static final Logger log = LoggerFactory.getLogger(YahooFinanceService.class);
 
     /**
-     * 미국 시총 Top10 후보 심볼 목록 (20개).
+     * 미국 시총 Top10 후보 심볼 목록 — src/main/resources/stock/us-stocks-fallback.json 에서 로드.
      * fetchAll()이 Yahoo Finance v8/chart로 각 종목의 실시간 시총을 조회한 뒤
      * 시총 내림차순으로 정렬하므로, 실제 표시되는 순위는 완전히 동적입니다.
-     * 세 번째 원소(발행주식수)는 chart API가 marketCap을 반환하지 않을 때만 사용되는 보조값입니다.
      */
-    public static final List<String[]> US_STOCKS_FALLBACK = List.of(
-        new String[]{"AAPL",  "Apple",               "15200000000"},
-        new String[]{"NVDA",  "NVIDIA",              "24500000000"},
-        new String[]{"MSFT",  "Microsoft",           "7440000000"},
-        new String[]{"AMZN",  "Amazon",              "10600000000"},
-        new String[]{"GOOGL", "Alphabet (Google)",   "12200000000"},
-        new String[]{"META",  "Meta",                "2540000000"},
-        new String[]{"TSLA",  "Tesla",               "3210000000"},
-        new String[]{"AVGO",  "Broadcom",            "4770000000"},
-        new String[]{"BRK-B", "Berkshire Hathaway",  "2180000000"},
-        new String[]{"LLY",   "Eli Lilly",           "950000000"},
-        new String[]{"JPM",   "JPMorgan Chase",      "2880000000"},
-        new String[]{"V",     "Visa",                "2050000000"},
-        new String[]{"WMT",   "Walmart",             "8010000000"},
-        new String[]{"XOM",   "ExxonMobil",          "3960000000"},
-        new String[]{"ORCL",  "Oracle",              "2760000000"},
-        new String[]{"MA",    "Mastercard",          "930000000"},
-        new String[]{"COST",  "Costco",              "440000000"},
-        new String[]{"NFLX",  "Netflix",             "420000000"},
-        new String[]{"PLTR",  "Palantir",            "21400000000"},
-        new String[]{"AMD",   "AMD",                 "1620000000"},
-        new String[]{"UNH",   "UnitedHealth Group",  "930000000"},
-        new String[]{"HD",    "Home Depot",          "990000000"},
-        new String[]{"PG",    "Procter & Gamble",    "2360000000"},
-        new String[]{"JNJ",   "Johnson & Johnson",   "2410000000"},
-        new String[]{"ABBV",  "AbbVie",              "1770000000"}
-    );
+    private List<String[]> usStocksFallback = Collections.emptyList();
 
-    // 미국 주요 종목 한글명 매핑
-    public static final Map<String, String> US_STOCK_NAMES_KO = Map.ofEntries(
-        Map.entry("AAPL",  "애플"),          Map.entry("NVDA",  "엔비디아"),
-        Map.entry("MSFT",  "마이크로소프트"),  Map.entry("AMZN",  "아마존"),
-        Map.entry("GOOGL", "알파벳(구글) A"), Map.entry("GOOG",  "알파벳(구글) C"),
-        Map.entry("META",  "메타"),          Map.entry("TSLA",  "테슬라"),
-        Map.entry("AVGO",  "브로드컴"),       Map.entry("BRK-B", "버크셔 해서웨이"),
-        Map.entry("BRK-A", "버크셔 해서웨이 A"), Map.entry("LLY",  "일라이 릴리"),
-        Map.entry("JPM",   "JP모건 체이스"),  Map.entry("V",     "비자"),
-        Map.entry("MA",    "마스터카드"),     Map.entry("COST",  "코스트코"),
-        Map.entry("HD",    "홈디포"),        Map.entry("ORCL",  "오라클"),
-        Map.entry("WMT",   "월마트"),        Map.entry("BAC",   "뱅크 오브 아메리카"),
-        Map.entry("XOM",   "엑손모빌"),      Map.entry("NFLX",  "넷플릭스"),
-        Map.entry("AMD",   "AMD"),           Map.entry("INTC",  "인텔"),
-        Map.entry("QCOM",  "퀄컴"),          Map.entry("MU",    "마이크론 테크놀로지"),
-        Map.entry("TSM",   "TSMC"),          Map.entry("ASML",  "ASML"),
-        Map.entry("PLTR",  "팔란티어"),      Map.entry("COIN",  "코인베이스"),
-        Map.entry("MSTR",  "마이크로스트래티지"), Map.entry("SHOP", "쇼피파이"),
-        Map.entry("PYPL",  "페이팔"),        Map.entry("DIS",   "디즈니"),
-        Map.entry("UBER",  "우버"),          Map.entry("ABNB",  "에어비앤비"),
-        Map.entry("CRM",   "세일즈포스"),    Map.entry("NOW",   "서비스나우"),
-        Map.entry("SNOW",  "스노우플레이크"), Map.entry("PANW",  "팔로알토 네트웍스"),
-        Map.entry("CRWD",  "크라우드스트라이크"), Map.entry("NET",  "클라우드플레어"),
-        Map.entry("ARM",   "ARM 홀딩스"),    Map.entry("SMCI",  "슈퍼마이크로컴퓨터"),
-        Map.entry("MRVL",  "마벨 테크놀로지"), Map.entry("ON",   "온세미컨덕터"),
-        Map.entry("AMAT",  "어플라이드 머티리얼즈"), Map.entry("LRCX", "램리서치"),
-        Map.entry("KLAC",  "KLA"),           Map.entry("TXN",   "텍사스 인스트루먼트"),
-        Map.entry("MELI",  "메르카도리브레"), Map.entry("SE",    "씨 리미티드"),
-        Map.entry("PDD",   "핀둬둬"),        Map.entry("BABA",  "알리바바"),
-        Map.entry("JD",    "징둥닷컴"),      Map.entry("NIO",   "니오"),
-        Map.entry("XPEV",  "샤오펑"),        Map.entry("LI",    "리오토"),
-        Map.entry("RIVN",  "리비안"),        Map.entry("LCID",  "루시드 그룹"),
-        Map.entry("GM",    "제너럴 모터스"), Map.entry("F",     "포드"),
-        Map.entry("GS",    "골드만삭스"),    Map.entry("MS",    "모건 스탠리"),
-        Map.entry("C",     "씨티그룹"),      Map.entry("WFC",   "웰스파고"),
-        Map.entry("SCHW",  "찰스 슈왑"),     Map.entry("HOOD",  "로빈후드"),
-        Map.entry("SQ",    "블록(스퀘어)"),  Map.entry("SOFI",  "소파이"),
-        Map.entry("IONQ",  "아이온큐"),      Map.entry("RGTI",  "리게티 컴퓨팅"),
-        Map.entry("SPY",   "S&P500 ETF"),    Map.entry("QQQ",   "나스닥100 ETF"),
-        Map.entry("SOXL",  "반도체 3배 ETF"), Map.entry("TQQQ", "나스닥100 3배 ETF"),
-        Map.entry("SQQQ",  "나스닥100 인버스 3배 ETF"), Map.entry("ARKK", "ARK 이노베이션 ETF"),
-        Map.entry("VOO",   "뱅가드 S&P500 ETF"), Map.entry("VTI", "뱅가드 미국 전체시장 ETF"),
-        Map.entry("UNH",   "유나이티드헬스"), Map.entry("PG",   "프록터 앤 갬블"),
-        Map.entry("JNJ",   "존슨앤드존슨"),  Map.entry("ABBV", "애브비")
-    );
+    /** 미국 주요 종목 한글명 매핑 — src/main/resources/stock/us-names-ko.json 에서 로드 */
+    private Map<String, String> usStockNamesKo = Collections.emptyMap();
+
+    /** 미국 주요 종목 영문 검색어 매핑 (뉴스 필터링용) — src/main/resources/stock/us-en-names.json 에서 로드 */
+    private Map<String, String> usEnNames = Collections.emptyMap();
 
     /** 시세 데이터 내부 전달용 레코드 (StockService에서 순위 계산에 사용) */
     public record RawQuote(
@@ -120,6 +57,32 @@ public class YahooFinanceService {
     public YahooFinanceService(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.objectMapper  = objectMapper;
+    }
+
+    @PostConstruct
+    private void loadConfig() {
+        usStocksFallback = loadFallbackList("stock/us-stocks-fallback.json");
+        log.info("us-stocks-fallback.json 로드 완료: {}개 종목", usStocksFallback.size());
+
+        usStockNamesKo = loadStringMap("stock/us-names-ko.json");
+        log.info("us-names-ko.json 로드 완료: {}개 항목", usStockNamesKo.size());
+
+        usEnNames = loadStringMap("stock/us-en-names.json");
+        log.info("us-en-names.json 로드 완료: {}개 항목", usEnNames.size());
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 공개 데이터 접근자
+    // ─────────────────────────────────────────────────────────────
+
+    public List<String[]> getUsStocksFallback() { return usStocksFallback; }
+
+    public Map<String, String> getUsEnNames() { return usEnNames; }
+
+    /** 미국 종목 심볼의 한글명 반환. 없으면 null. */
+    public String resolveUsStockName(String symbol) {
+        if (symbol == null) return null;
+        return usStockNamesKo.get(symbol.toUpperCase());
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -339,14 +302,48 @@ public class YahooFinanceService {
         }
     }
 
-    /** 미국 종목 심볼의 한글명 반환. 없으면 null. */
-    public String resolveUsStockName(String symbol) {
-        return US_STOCK_NAMES_KO.get(symbol == null ? null : symbol.toUpperCase());
-    }
-
     // ─────────────────────────────────────────────────────────────
     // 내부 메서드
     // ─────────────────────────────────────────────────────────────
+
+    private List<String[]> loadFallbackList(String resourcePath) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
+            if (is == null) {
+                log.warn("리소스 파일 없음: {}", resourcePath);
+                return Collections.emptyList();
+            }
+            List<Map<String, String>> list = objectMapper.readValue(is,
+                new TypeReference<>() {});
+            return list.stream()
+                .map(m -> new String[]{
+                    m.get("symbol"),
+                    m.getOrDefault("name", m.get("symbol")),
+                    m.getOrDefault("shares", "0")
+                })
+                .collect(Collectors.toList());
+        } catch (Exception e) {
+            log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    private Map<String, String> loadStringMap(String resourcePath) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
+            if (is == null) {
+                log.warn("리소스 파일 없음: {}", resourcePath);
+                return Collections.emptyMap();
+            }
+            Map<String, String> raw = objectMapper.readValue(is,
+                new TypeReference<>() {});
+            // 키를 대문자로 정규화
+            Map<String, String> normalized = new HashMap<>();
+            raw.forEach((k, v) -> normalized.put(k.toUpperCase(), v));
+            return Collections.unmodifiableMap(normalized);
+        } catch (Exception e) {
+            log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
+            return Collections.emptyMap();
+        }
+    }
 
     private HttpHeaders buildBrowserHeaders(String referer) {
         HttpHeaders headers = new HttpHeaders();

@@ -68,3 +68,5 @@ app:
   cors:
     allowed-origins: "http://localhost:8080,http://localhost:3100,http://localhost:3200,http://127.0.0.1:8080,http://127.0.0.1:3100,http://127.0.0.1:3200"
   upload-base-url: ${UPLOAD_BASE_URL:}
+  krx:
+    expiry-date: "2027-04-21"

@@ -9,6 +9,7 @@ import com.hyunchang.webapp.dto.StockSearchResultDto;
 import com.hyunchang.webapp.service.StockService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +25,9 @@ import java.util.Map;
 public class StockController {
 
     private final StockService stockService;
+
+    @Value("${app.krx.expiry-date:2027-04-21}")
+    private String krxExpiryDate;
 
     public StockController(StockService stockService) {
         this.stockService = stockService;
@@ -53,11 +57,12 @@ public class StockController {
         return ResponseEntity.ok(stockService.getHeatmapKR());
     }
 
-    @Operation(summary = "주식 뉴스 (RSS) — market: KR(국내) | US(해외) | ALL(전체, 기본값)")
+    @Operation(summary = "주식 뉴스 (RSS) — market: KR(국내) | US(해외) | ALL(전체, 기본값) / force=true 시 캐시 무효화")
     @GetMapping("/news")
     public ResponseEntity<List<StockNewsDto>> getNews(
-            @RequestParam(defaultValue = "KR") String market) {
-        return ResponseEntity.ok(stockService.getNews(market));
+            @RequestParam(defaultValue = "KR") String market,
+            @RequestParam(defaultValue = "false") boolean force) {
+        return ResponseEntity.ok(stockService.getNews(market, force));
     }
 
     @Operation(summary = "종목 검색 (Yahoo Finance 프록시, 쿼터 소모 없음)")
@@ -93,5 +98,17 @@ public class StockController {
             "connected", false,
             "message", "KFTC 오픈뱅킹 연동이 필요합니다. openbanking.or.kr에서 신청하세요."
         ));
+    }
+
+    @Operation(summary = "KRX API 설정 (만료일 등) — application.yml 기반")
+    @GetMapping("/krx-config")
+    public ResponseEntity<Map<String, String>> getKrxConfig() {
+        return ResponseEntity.ok(Map.of("expiryDate", krxExpiryDate));
+    }
+
+    @Operation(summary = "미국 종목 ticker → 영문 검색어 맵 (뉴스 필터링용, resources/stock/us-en-names.json 기반)")
+    @GetMapping("/en-names")
+    public ResponseEntity<Map<String, String>> getUsEnNames() {
+        return ResponseEntity.ok(stockService.getUsEnNames());
     }
 }
