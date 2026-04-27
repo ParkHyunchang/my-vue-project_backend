@@ -58,14 +58,6 @@ class UserServiceTest {
     }
 
     @Test
-    void updateUserRole_whenUserNotFound_throwsUserNotFoundException() {
-        when(userRepository.findById(999L)).thenReturn(Optional.empty());
-
-        assertThrows(UserNotFoundException.class, () ->
-            userService.updateUserRole(999L, "USER"));
-    }
-
-    @Test
     void updateUser_whenUserNotFound_throwsUserNotFoundException() {
         when(userRepository.findById(999L)).thenReturn(Optional.empty());
 

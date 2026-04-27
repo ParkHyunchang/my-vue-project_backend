@@ -8,7 +8,6 @@ import com.hyunchang.webapp.dto.MenuPermissionRequest;
 import com.hyunchang.webapp.dto.RoleInfoRequest;
 import com.hyunchang.webapp.dto.RoleInfoResponse;
 import com.hyunchang.webapp.dto.UpdateUserRequest;
-import com.hyunchang.webapp.dto.UpdateUserRoleRequest;
 import com.hyunchang.webapp.dto.UserResponse;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuDefinitionService;
@@ -86,27 +85,6 @@ public class AdminController {
         }
     }
     
-    // 사용자 권한 수정
-    @PutMapping("/users/{id}/role")
-    public ResponseEntity<?> updateUserRole(
-            @PathVariable Long id,
-            @RequestBody UpdateUserRoleRequest request,
-            Authentication authentication) {
-        
-        if (!isAdmin(authentication)) {
-            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
-        }
-        
-        try {
-            User updatedUser = userService.updateUserRole(id, request.getRole());
-            log.info("[ADMIN] admin={}, action=UPDATE_USER_ROLE, target_id={}, new_role={}",
-                    authentication.getName(), id, request.getRole());
-            return ResponseEntity.ok(UserResponse.from(updatedUser));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("권한 수정 실패: " + e.getMessage());
-        }
-    }
-    
     // 사용자 정보 전체 수정
     @PutMapping("/users/{id}")
     public ResponseEntity<?> updateUser(
@@ -134,16 +112,45 @@ public class AdminController {
         if (!isAdmin(authentication)) {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
         }
-        
+
         try {
             User targetUser = userService.findById(id).orElse(null);
             String targetUserId = targetUser != null ? targetUser.getUserId() : "id=" + id;
+
+            if (targetUser != null && "ADMIN".equals(targetUser.getRole())) {
+                return ResponseEntity.badRequest().body("관리자 계정은 삭제할 수 없습니다.");
+            }
+
             userService.deleteUser(id);
             log.info("[ADMIN] admin={}, action=DELETE_USER, target_id={}, target_user_id={}",
                     authentication.getName(), id, targetUserId);
             return ResponseEntity.ok("사용자가 성공적으로 삭제되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("사용자 삭제 실패: " + e.getMessage());
+        }
+    }
+
+    // 관리자가 사용자 비밀번호 초기화
+    @PutMapping("/users/{id}/password")
+    public ResponseEntity<?> resetUserPassword(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> request,
+            Authentication authentication) {
+        if (!isAdmin(authentication)) {
+            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
+        }
+        try {
+            String newPassword = request.get("password");
+            if (newPassword == null || newPassword.length() < 6) {
+                return ResponseEntity.badRequest().body("비밀번호는 최소 6자 이상이어야 합니다.");
+            }
+            User user = userService.findById(id)
+                    .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+            userService.updatePassword(user, newPassword);
+            log.info("[ADMIN] admin={}, action=RESET_PASSWORD, target_id={}", authentication.getName(), id);
+            return ResponseEntity.ok("비밀번호가 성공적으로 변경되었습니다.");
+        } catch (Exception e) {
+            return ResponseEntity.badRequest().body("비밀번호 변경 실패: " + e.getMessage());
         }
     }
     

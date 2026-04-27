@@ -104,19 +104,6 @@ public class UserService implements UserDetailsService {
         return userRepository.findById(id);
     }
 
-    public User updateUserRole(Long userId, String newRole) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
-
-        String roleUpper = newRole.trim().toUpperCase();
-        if ("ADMIN".equals(roleUpper) && !isAllowedAdmin(user.getUserId())) {
-            throw new IllegalArgumentException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
-        }
-
-        user.setRole(roleUpper);
-        return userRepository.save(user);
-    }
-
     public User updateUser(Long userId, UpdateUserRequest request) {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
