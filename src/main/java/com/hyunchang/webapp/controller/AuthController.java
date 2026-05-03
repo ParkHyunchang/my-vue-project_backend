@@ -124,20 +124,72 @@ public class AuthController {
         if (authentication != null && authentication.isAuthenticated()) {
             UserDetails userDetails = (UserDetails) authentication.getPrincipal();
             User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
-            
+
             AuthResponse response = AuthResponse.builder()
                 .username(user.getUserId())
+                .name(user.getName())
                 .email(user.getEmail())
+                .phone(user.getPhone())
                 .role(user.getRole())
                 .message("현재 사용자 정보")
                 .build();
-            
+
             return ResponseEntity.ok(response);
         }
-        
+
         return ResponseEntity.badRequest().body(
             AuthResponse.builder().message("인증되지 않은 사용자입니다.").build()
         );
+    }
+
+    @PutMapping("/me")
+    public ResponseEntity<?> updateProfile(@RequestBody com.hyunchang.webapp.dto.UpdateUserRequest request, Authentication authentication) {
+        try {
+            if (authentication == null || !authentication.isAuthenticated()) {
+                return ResponseEntity.status(401).body(Map.of("message", "인증이 필요합니다."));
+            }
+            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+            User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
+            request.setRole(null);
+            User updated = userService.updateUser(user.getId(), request);
+            return ResponseEntity.ok(AuthResponse.builder()
+                .username(updated.getUserId())
+                .name(updated.getName())
+                .email(updated.getEmail())
+                .phone(updated.getPhone())
+                .role(updated.getRole())
+                .message("정보가 수정되었습니다.")
+                .build());
+        } catch (Exception e) {
+            log.warn("프로필 수정 실패: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage() != null ? e.getMessage() : "정보 수정에 실패했습니다."));
+        }
+    }
+
+    @PutMapping("/change-password")
+    public ResponseEntity<?> changePassword(@RequestBody Map<String, String> request, Authentication authentication) {
+        try {
+            if (authentication == null || !authentication.isAuthenticated()) {
+                return ResponseEntity.status(401).body(Map.of("message", "인증이 필요합니다."));
+            }
+            String currentPassword = request.get("currentPassword");
+            String newPassword = request.get("newPassword");
+            if (currentPassword == null || newPassword == null) {
+                return ResponseEntity.badRequest().body(Map.of("message", "현재 비밀번호와 새 비밀번호를 모두 입력해주세요."));
+            }
+            if (newPassword.trim().length() < 8) {
+                return ResponseEntity.badRequest().body(Map.of("message", "새 비밀번호는 8자 이상이어야 합니다."));
+            }
+            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
+            User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
+            userService.verifyAndChangePassword(user, currentPassword, newPassword.trim());
+            return ResponseEntity.ok(Map.of("message", "비밀번호가 변경되었습니다."));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (Exception e) {
+            log.warn("비밀번호 변경 실패: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("message", "비밀번호 변경에 실패했습니다."));
+        }
     }
     
     @GetMapping("/check-username/{username}")
