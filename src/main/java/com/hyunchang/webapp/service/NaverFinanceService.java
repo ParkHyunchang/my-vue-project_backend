@@ -71,14 +71,14 @@ public class NaverFinanceService {
 
     /**
      * KOSPI 시가총액 Top N 조회.
-     * 1순위: KRX 공식 API, 폴백: Naver HTML 파싱.
+     * 1순위: Naver HTML 파싱(실시간 인트라데이), 폴백: KRX 공식 API(전일 종가).
      * 실패 시 마지막 성공 데이터를 반환. TTL 캐시는 StockService에서 제어.
      */
     public List<NaverStockData> getTopStocksKospiCached(int count) {
-        List<NaverStockData> fresh = krxOpenApiService.getTopKospiStocks(count);
+        List<NaverStockData> fresh = fetchTopStocks("0", count);
         if (fresh.isEmpty()) {
-            log.info("KRX API KOSPI 실패 — Naver HTML 파싱 폴백");
-            fresh = fetchTopStocks("0", count);
+            log.info("Naver HTML KOSPI 실패 — KRX Open API(전일 종가) 폴백");
+            fresh = krxOpenApiService.getTopKospiStocks(count);
         }
         if (!fresh.isEmpty()) {
             kospiCache = fresh;
@@ -91,14 +91,14 @@ public class NaverFinanceService {
 
     /**
      * KOSDAQ 시가총액 Top N 조회.
-     * 1순위: KRX 공식 API, 폴백: Naver HTML 파싱.
+     * 1순위: Naver HTML 파싱(실시간 인트라데이), 폴백: KRX 공식 API(전일 종가).
      * 실패 시 마지막 성공 데이터를 반환. TTL 캐시는 StockService에서 제어.
      */
     public List<NaverStockData> getTopStocksKosdaqCached(int count) {
-        List<NaverStockData> fresh = krxOpenApiService.getTopKosdaqStocks(count);
+        List<NaverStockData> fresh = fetchTopStocks("1", count);
         if (fresh.isEmpty()) {
-            log.info("KRX API KOSDAQ 실패 — Naver HTML 파싱 폴백");
-            fresh = fetchTopStocks("1", count);
+            log.info("Naver HTML KOSDAQ 실패 — KRX Open API(전일 종가) 폴백");
+            fresh = krxOpenApiService.getTopKosdaqStocks(count);
         }
         if (!fresh.isEmpty()) {
             kosdaqCache = fresh;

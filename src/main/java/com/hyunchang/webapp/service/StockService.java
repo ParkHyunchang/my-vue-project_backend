@@ -36,7 +36,7 @@ public class StockService {
 
     private static final Logger log = LoggerFactory.getLogger(StockService.class);
 
-    private static final long CACHE_TTL_MS          = 6 * 60 * 60 * 1000L; // 6시간 (Top10)
+    private static final long TOP10_CACHE_TTL_MS    = 2 * 60 * 1000L;      // 2분 (Top10 실시간 갱신)
     private static final long PORTFOLIO_PRICE_TTL_MS = 2 * 60 * 1000L;      // 2분 (포트폴리오 개별 시세)
     private static final String BASE_RANKS_FILE = "data/base-ranks.json";
     private static final int  DAILY_LIMIT  = 25; // Alpha Vantage 일일 한도 (표시용)
@@ -86,7 +86,7 @@ public class StockService {
     /** 국내 시총 Top 10 (네이버 금융 실시간 순위 + 시세) */
     public List<StockQuoteDto> getTop10KR() {
         Long cachedAt = cacheTimes.get("KR");
-        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < TOP10_CACHE_TTL_MS) {
             log.info("Stock 캐시 히트 [KR]");
             return quoteCache.getOrDefault("KR", Collections.emptyList());
         }
@@ -108,7 +108,7 @@ public class StockService {
     /** 국내 시총 Top 10 (KOSDAQ, 네이버 금융 실시간 순위 + 시세) */
     public List<StockQuoteDto> getTop10KOSDAQ() {
         Long cachedAt = cacheTimes.get("KOSDAQ");
-        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < TOP10_CACHE_TTL_MS) {
             log.info("Stock 캐시 히트 [KOSDAQ]");
             return quoteCache.getOrDefault("KOSDAQ", Collections.emptyList());
         }
@@ -130,7 +130,7 @@ public class StockService {
     /** 미국 시총 Top 10 (Yahoo Finance v7/quote 일괄 조회 → 실패 시 v8/chart 개별 폴백) */
     public List<StockQuoteDto> getTop10US() {
         Long cachedAt = cacheTimes.get("US");
-        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < CACHE_TTL_MS) {
+        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < TOP10_CACHE_TTL_MS) {
             log.info("Stock 캐시 히트 [US]");
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
@@ -176,53 +176,45 @@ public class StockService {
 
     /**
      * 포트폴리오 개별 종목 시세.
-     * 1) Top10 캐시 → 2) 개별 캐시 → 3) KRX 전체 캐시(KR 전용) → 4) Yahoo Finance
+     * 1) 개별 캐시(2분) → 2) Yahoo Finance(실시간) → 3) KRX Open API 폴백(.KS/.KQ 전일 종가)
+     *
+     * Top10 캐시는 시총 순위 표시용(6시간 TTL, KRX 전일 종가 기반)이므로
+     * 포트폴리오 실시간 시세에는 사용하지 않습니다.
      */
     public StockPriceDto getQuote(String symbol, String market) {
-        String cacheKey = market.toUpperCase();
         String currency = "KR".equalsIgnoreCase(market) ? "KRW" : "USD";
 
-        // 1) Top10 캐시
-        List<StockQuoteDto> top10 = quoteCache.get(cacheKey);
-        if (top10 != null) {
-            for (StockQuoteDto q : top10) {
-                if (q.getSymbol().equalsIgnoreCase(symbol)) {
-                    return StockPriceDto.builder()
-                        .symbol(q.getSymbol()).price(q.getPrice())
-                        .change(q.getChange()).changePercent(q.getChangePercent())
-                        .currency(q.getCurrency()).build();
-                }
-            }
-        }
-
-        // 2) 개별 캐시 (포트폴리오용: 2분 TTL)
+        // 1) 개별 캐시 (포트폴리오용: 2분 TTL)
         Long cachedAt = singlePriceTimes.get(symbol);
         if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < PORTFOLIO_PRICE_TTL_MS) {
             StockPriceDto cached = singlePriceCache.get(symbol);
             if (cached != null) return cached;
         }
 
-        // 3) KRX 전체 캐시 (KR 종목 전용 — .KS/.KQ)
+        // 2) Yahoo Finance (KR/US 공통 — 실시간 인트라데이)
+        StockPriceDto dto = yahooService.fetchQuote(symbol, currency);
+        if (dto != null) {
+            singlePriceCache.put(symbol, dto);
+            singlePriceTimes.put(symbol, System.currentTimeMillis());
+            return dto;
+        }
+
+        // 3) Yahoo 실패 시 KRX Open API 폴백 (.KS/.KQ 전일 종가)
         String upperSym = symbol.toUpperCase();
         if (upperSym.endsWith(".KS") || upperSym.endsWith(".KQ")) {
             NaverFinanceService.NaverStockData krx = krxApiService.getKrPrice(symbol);
             if (krx != null) {
-                StockPriceDto dto = StockPriceDto.builder()
+                StockPriceDto fallback = StockPriceDto.builder()
                     .symbol(symbol).price(krx.price())
                     .change(krx.change()).changePercent(krx.changePercent())
                     .currency("KRW").build();
-                singlePriceCache.put(symbol, dto);
+                singlePriceCache.put(symbol, fallback);
                 singlePriceTimes.put(symbol, System.currentTimeMillis());
-                return dto;
+                return fallback;
             }
         }
 
-        // 4) Yahoo Finance (미국 주식 또는 KRX 미수록 종목)
-        StockPriceDto dto = yahooService.fetchQuote(symbol, currency);
-        if (dto == null) return null;
-        singlePriceCache.put(symbol, dto);
-        singlePriceTimes.put(symbol, System.currentTimeMillis());
-        return dto;
+        return null;
     }
 
     /**
