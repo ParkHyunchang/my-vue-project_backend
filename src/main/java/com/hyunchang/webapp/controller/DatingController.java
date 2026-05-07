@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Set;
+import java.util.UUID;
 
 @RestController
 @RequestMapping("/dating")
@@ -25,17 +26,15 @@ public class DatingController {
     private final DatingService datingService;
     private final MenuCrudPermissionService menuCrudPermissionService;
     private static final String UPLOAD_DIR = getUploadDirectory();
+    private static final Path UPLOAD_ROOT = Paths.get(UPLOAD_DIR).toAbsolutePath().normalize();
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
-    
+
     private static String getUploadDirectory() {
-        // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
         String os = System.getProperty("os.name").toLowerCase();
         if (os.contains("linux") || os.contains("unix")) {
-            // Linux/Unix 환경 (Docker 컨테이너) - 실제 NAS 경로
             return "/volume1/docker/my-vue-project_backend/uploads/images/dating/";
         } else {
-            // Windows 환경 (로컬 개발)
             return System.getProperty("user.dir") + "/uploads/images/dating/";
         }
     }
@@ -43,9 +42,8 @@ public class DatingController {
     public DatingController(DatingService datingService, MenuCrudPermissionService menuCrudPermissionService) {
         this.datingService = datingService;
         this.menuCrudPermissionService = menuCrudPermissionService;
-        // 업로드 디렉토리 생성
         try {
-            Files.createDirectories(Paths.get(UPLOAD_DIR));
+            Files.createDirectories(UPLOAD_ROOT);
         } catch (IOException e) {
             log.error("업로드 디렉토리 생성 실패: {}", e.getMessage());
         }
@@ -75,7 +73,7 @@ public class DatingController {
         if (!menuCrudPermissionService.canCreate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
         }
-        Dating created = datingService.create(dating);
+        Dating created = datingService.create(dating, SecurityUtils.getCurrentUserId());
         log.info("[DATING] user={}, action=CREATE, id={}, title={}, date={}, category={}",
                 SecurityUtils.getCurrentUserId(), created.getId(),
                 created.getTitle(), created.getDate() != null ? created.getDate() : created.getStartDate(),
@@ -89,7 +87,7 @@ public class DatingController {
         if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
         }
-        Dating updated = datingService.update(id, dating);
+        Dating updated = datingService.update(id, dating, SecurityUtils.getCurrentUserId(), roleName);
         log.info("[DATING] user={}, action=UPDATE, id={}, title={}",
                 SecurityUtils.getCurrentUserId(), id, updated.getTitle());
         return ResponseEntity.ok(updated);
@@ -103,7 +101,7 @@ public class DatingController {
         }
         Dating target = datingService.findById(id);
         String title = target != null ? target.getTitle() : "id=" + id;
-        datingService.delete(id);
+        datingService.delete(id, SecurityUtils.getCurrentUserId(), roleName);
         log.info("[DATING] user={}, action=DELETE, id={}, title={}",
                 SecurityUtils.getCurrentUserId(), id, title);
         return ResponseEntity.ok().body("삭제되었습니다.");
@@ -115,14 +113,15 @@ public class DatingController {
         if (!menuCrudPermissionService.canDelete(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 삭제 권한이 없습니다.");
         }
-        
+
         try {
             datingService.deleteImageFile(imagePath);
             log.info("[DATING] user={}, action=DELETE_IMAGE, path={}",
                     SecurityUtils.getCurrentUserId(), imagePath);
             return ResponseEntity.ok("미디어가 삭제되었습니다.");
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("미디어 삭제에 실패했습니다: " + e.getMessage());
+            log.error("dating 미디어 삭제 실패: path={}", imagePath, e);
+            return ResponseEntity.internalServerError().body("미디어 삭제에 실패했습니다.");
         }
     }
 
@@ -132,38 +131,38 @@ public class DatingController {
         if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 업로드 권한이 없습니다.");
         }
-        
+
         try {
-            // 파일이 비어있는지 확인
             if (file.isEmpty()) {
                 return ResponseEntity.badRequest().body("파일이 선택되지 않았습니다.");
             }
 
-            // 파일 확장자 확인
             String originalFilename = file.getOriginalFilename();
             if (originalFilename == null || !isValidMediaFile(originalFilename)) {
                 return ResponseEntity.badRequest().body("이미지 또는 동영상 파일만 업로드 가능합니다.");
             }
 
-            // 고유한 파일명 생성 (원본 파일명 + 타임스탬프)
-            String fileExtension = getFileExtension(originalFilename);
-            String baseName = originalFilename.substring(0, originalFilename.lastIndexOf('.'));
-            String uniqueFilename = baseName + "_" + System.currentTimeMillis() + fileExtension;
-            
-            // 파일 저장
-            Path targetPath = Paths.get(UPLOAD_DIR + uniqueFilename);
+            String fileExtension = getFileExtension(originalFilename).toLowerCase();
+            String uniqueFilename = UUID.randomUUID().toString().replace("-", "") + fileExtension;
+
+            Path targetPath = UPLOAD_ROOT.resolve(uniqueFilename).normalize();
+            if (!targetPath.startsWith(UPLOAD_ROOT)) {
+                log.warn("dating 업로드 path traversal 시도 차단: {}", uniqueFilename);
+                return ResponseEntity.badRequest().body("잘못된 파일 경로입니다.");
+            }
             Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
 
-            // 저장된 파일의 URL 반환
             String fileUrl = "/uploads/images/dating/" + uniqueFilename;
             log.info("[DATING] user={}, action=UPLOAD_IMAGE, filename={}",
                     SecurityUtils.getCurrentUserId(), uniqueFilename);
             return ResponseEntity.ok(fileUrl);
 
         } catch (IOException e) {
-            return ResponseEntity.internalServerError().body("파일 업로드 중 오류가 발생했습니다: " + e.getMessage());
+            log.error("dating 미디어 업로드 IOException", e);
+            return ResponseEntity.internalServerError().body("파일 업로드 중 오류가 발생했습니다.");
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("예상치 못한 오류가 발생했습니다: " + e.getMessage());
+            log.error("dating 미디어 업로드 예상치 못한 오류", e);
+            return ResponseEntity.internalServerError().body("예상치 못한 오류가 발생했습니다.");
         }
     }
 
@@ -176,5 +175,4 @@ public class DatingController {
         int lastDotIndex = filename.lastIndexOf(".");
         return lastDotIndex > 0 ? filename.substring(lastDotIndex) : "";
     }
-    
 }

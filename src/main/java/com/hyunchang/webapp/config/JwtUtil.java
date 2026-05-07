@@ -17,13 +17,16 @@ import java.util.function.Function;
 @Component
 public class JwtUtil {
     
-    @Value("${jwt.secret:mySecretKey}")
+    @Value("${jwt.secret}")
     private String secret;
-    
-    @Value("${jwt.expiration:86400000}")
+
+    @Value("${jwt.expiration}")
     private Long expiration;
-    
+
     private SecretKey getSigningKey() {
+        if (secret == null || secret.getBytes().length < 32) {
+            throw new IllegalStateException("jwt.secret must be at least 32 bytes (256 bits) for HS256");
+        }
         return Keys.hmacShaKeyFor(secret.getBytes());
     }
     

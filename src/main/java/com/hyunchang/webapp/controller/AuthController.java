@@ -3,7 +3,6 @@ package com.hyunchang.webapp.controller;
 import com.hyunchang.webapp.config.JwtUtil;
 import com.hyunchang.webapp.dto.AuthResponse;
 import com.hyunchang.webapp.dto.FindIdRequest;
-import com.hyunchang.webapp.dto.FindIdResponse;
 import com.hyunchang.webapp.dto.LoginRequest;
 import com.hyunchang.webapp.dto.RegisterRequest;
 import com.hyunchang.webapp.dto.ResetPasswordRequest;
@@ -24,7 +23,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 import java.util.Optional;
-import java.util.regex.Pattern;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -50,10 +48,10 @@ public class AuthController {
                 request.getPassword(),
                 request.getRole()
             );
-            
+
             UserDetails userDetails = userService.loadUserByUsername(user.getUsername());
             String token = jwtUtil.generateToken(userDetails);
-            
+
             AuthResponse response = AuthResponse.builder()
                 .token(token)
                 .username(user.getUserId())
@@ -61,36 +59,36 @@ public class AuthController {
                 .role(user.getRole())
                 .message("회원가입이 완료되었습니다.")
                 .build();
-            
+
             return ResponseEntity.ok(response);
-        } catch (Exception e) {
+        } catch (IllegalArgumentException | com.hyunchang.webapp.exception.UserAlreadyExistsException e) {
+            // 사용자 입력에 기인한 예측 가능한 오류만 메시지를 그대로 노출
             AuthResponse response = AuthResponse.builder()
-                .message("회원가입 실패: " + e.getMessage())
+                .message(e.getMessage())
+                .build();
+            return ResponseEntity.badRequest().body(response);
+        } catch (Exception e) {
+            log.warn("회원가입 실패: {}", e.getMessage());
+            AuthResponse response = AuthResponse.builder()
+                .message("회원가입에 실패했습니다.")
                 .build();
             return ResponseEntity.badRequest().body(response);
         }
     }
-    
+
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
         String ip = httpRequest.getRemoteAddr();
+        // 계정 enumeration 방지: 사용자 존재/비밀번호 오류를 동일 메시지로 응답
+        final String GENERIC_FAIL_MESSAGE = "로그인 실패: 아이디 또는 비밀번호가 올바르지 않습니다.";
         try {
-            // 먼저 사용자 존재 여부 확인
-            if (!userService.existsByUserId(request.getUsername())) {
-                log.warn("[LOGIN FAIL] reason=USER_NOT_FOUND, user_id={}, ip={}", request.getUsername(), ip);
-                AuthResponse response = AuthResponse.builder()
-                    .message("로그인 실패: 존재하지 않는 아이디입니다.")
-                    .build();
-                return ResponseEntity.badRequest().body(response);
-            }
-            
             Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
             );
-            
+
             UserDetails userDetails = (UserDetails) authentication.getPrincipal();
             String token = jwtUtil.generateToken(userDetails);
-            
+
             User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
 
             log.info("[LOGIN SUCCESS] user_id={}, role={}, ip={}", user.getUserId(), user.getRole(), ip);
@@ -102,20 +100,19 @@ public class AuthController {
                 .role(user.getRole())
                 .message("로그인이 완료되었습니다.")
                 .build();
-            
+
             return ResponseEntity.ok(response);
-        } catch (org.springframework.security.authentication.BadCredentialsException e) {
-            log.warn("[LOGIN FAIL] reason=WRONG_PASSWORD, user_id={}, ip={}", request.getUsername(), ip);
-            AuthResponse response = AuthResponse.builder()
-                .message("로그인 실패: 비밀번호가 올바르지 않습니다.")
-                .build();
-            return ResponseEntity.badRequest().body(response);
+        } catch (org.springframework.security.authentication.BadCredentialsException
+                | org.springframework.security.core.userdetails.UsernameNotFoundException e) {
+            log.warn("[LOGIN FAIL] reason=BAD_CREDENTIALS, user_id={}, ip={}", request.getUsername(), ip);
+            return ResponseEntity.badRequest().body(
+                AuthResponse.builder().message(GENERIC_FAIL_MESSAGE).build()
+            );
         } catch (Exception e) {
             log.warn("[LOGIN FAIL] reason=ERROR, user_id={}, ip={}, error={}", request.getUsername(), ip, e.getMessage());
-            AuthResponse response = AuthResponse.builder()
-                .message("로그인 실패: " + e.getMessage())
-                .build();
-            return ResponseEntity.badRequest().body(response);
+            return ResponseEntity.badRequest().body(
+                AuthResponse.builder().message(GENERIC_FAIL_MESSAGE).build()
+            );
         }
     }
     
@@ -256,86 +253,25 @@ public class AuthController {
         }
     }
 
+    /**
+     * 아이디 찾기 / 비밀번호 재설정 엔드포인트는 임시 비활성화.
+     * 사유: 이메일 OTP 인프라가 준비되기 전까지 (이름+이메일) 또는 (아이디+이메일+전화번호)
+     *      만으로 비밀번호를 즉시 재설정하는 기존 흐름은 계정 탈취 primitive로 작동했음.
+     *      비밀번호 분실 시에는 관리자 콘솔의 reset 기능을 사용한다.
+     */
     @PostMapping("/find-id")
     public ResponseEntity<?> findUserId(@RequestBody FindIdRequest request) {
-        try {
-            if (request == null || request.getName() == null || request.getEmail() == null) {
-                return ResponseEntity.badRequest().body(Map.of("message", "이름과 이메일을 모두 입력해주세요."));
-            }
-
-            Optional<User> userOptional = userService.findByNameAndEmail(request.getName(), request.getEmail());
-            if (userOptional.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("message", "일치하는 사용자 정보를 찾을 수 없습니다."));
-            }
-
-            User user = userOptional.get();
-            String maskedUserId = maskUserId(user.getUserId());
-
-            return ResponseEntity.ok(
-                    FindIdResponse.builder()
-                            .maskedUserId(maskedUserId)
-                            .message("입력하신 정보와 일치하는 아이디를 찾았습니다.")
-                            .build()
-            );
-        } catch (Exception e) {
-            log.warn("아이디 찾기 실패: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("message", "아이디 찾기에 실패했습니다."));
-        }
+        log.info("[DISABLED ENDPOINT] /api/auth/find-id 호출 차단");
+        return ResponseEntity.status(410).body(Map.of(
+                "message", "아이디 찾기 기능은 보안 강화를 위해 임시 비활성화되었습니다. 관리자에게 문의해주세요."
+        ));
     }
 
     @PostMapping("/reset-password")
     public ResponseEntity<?> resetPassword(@RequestBody ResetPasswordRequest request) {
-        try {
-            if (request == null
-                    || request.getUserId() == null
-                    || request.getEmail() == null
-                    || request.getPhone() == null
-                    || request.getNewPassword() == null) {
-                return ResponseEntity.badRequest().body(Map.of("message", "모든 정보를 입력해주세요."));
-            }
-
-            String trimmedPassword = request.getNewPassword().trim();
-            if (trimmedPassword.length() < 8) {
-                return ResponseEntity.badRequest().body(Map.of("message", "비밀번호는 8자 이상이어야 합니다."));
-            }
-
-            Optional<User> userOptional = userService.findByUserId(request.getUserId().trim());
-            if (userOptional.isEmpty()) {
-                return ResponseEntity.badRequest().body(Map.of("message", "일치하는 사용자 정보를 찾을 수 없습니다."));
-            }
-
-            User user = userOptional.get();
-            if (!user.getEmail().equalsIgnoreCase(request.getEmail().trim())) {
-                return ResponseEntity.badRequest().body(Map.of("message", "이메일 정보가 일치하지 않습니다."));
-            }
-
-            String storedPhone = user.getPhone();
-            String providedPhone = request.getPhone().trim();
-            if (storedPhone == null || !normalizeDigits(storedPhone).equals(normalizeDigits(providedPhone))) {
-                return ResponseEntity.badRequest().body(Map.of("message", "전화번호 정보가 일치하지 않습니다."));
-            }
-
-            userService.updatePassword(user, trimmedPassword);
-            return ResponseEntity.ok(Map.of("message", "비밀번호가 성공적으로 변경되었습니다."));
-        } catch (Exception e) {
-            log.warn("비밀번호 초기화 실패: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("message", "비밀번호 초기화에 실패했습니다."));
-        }
-    }
-
-    private String maskUserId(String userId) {
-        if (userId == null || userId.length() <= 2) {
-            return "****";
-        }
-        int visibleLength = Math.min(4, userId.length() - 2);
-        String visiblePart = userId.substring(0, visibleLength);
-        return visiblePart + "*".repeat(userId.length() - visibleLength);
-    }
-
-    private String normalizeDigits(String value) {
-        if (value == null) {
-            return "";
-        }
-        return Pattern.compile("[^0-9]").matcher(value).replaceAll("");
+        log.info("[DISABLED ENDPOINT] /api/auth/reset-password 호출 차단");
+        return ResponseEntity.status(410).body(Map.of(
+                "message", "비밀번호 재설정 기능은 보안 강화를 위해 임시 비활성화되었습니다. 관리자에게 문의해주세요."
+        ));
     }
 }

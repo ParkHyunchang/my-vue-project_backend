@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.hyunchang.webapp.entity.Dating;
+import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.exception.ForbiddenException;
 import com.hyunchang.webapp.exception.NotFoundException;
 import com.hyunchang.webapp.repository.DatingRepository;
+import com.hyunchang.webapp.repository.UserRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,23 +28,23 @@ import java.util.List;
 public class DatingService {
     private static final Logger log = LoggerFactory.getLogger(DatingService.class);
     private final DatingRepository datingRepository;
+    private final UserRepository userRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private static final String UPLOAD_DIR = getUploadDirectory();
-    
+    private static final Path UPLOAD_ROOT = Paths.get(UPLOAD_DIR).toAbsolutePath().normalize();
+
     private static String getUploadDirectory() {
-        // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
         String os = System.getProperty("os.name").toLowerCase();
         if (os.contains("linux") || os.contains("unix")) {
-            // Linux/Unix 환경 (Docker 컨테이너) - 실제 NAS 경로
             return "/volume1/docker/my-vue-project_backend/uploads/images/dating/";
         } else {
-            // Windows 환경 (로컬 개발)
             return System.getProperty("user.dir") + "/uploads/images/dating/";
         }
     }
 
-    public DatingService(DatingRepository datingRepository) {
+    public DatingService(DatingRepository datingRepository, UserRepository userRepository) {
         this.datingRepository = datingRepository;
+        this.userRepository = userRepository;
     }
 
     public List<Dating> findAll() {
@@ -57,14 +60,12 @@ public class DatingService {
         if (dating.getTitle() == null || dating.getTitle().trim().isEmpty()) {
             throw new IllegalArgumentException("제목은 필수 입력값입니다.");
         }
-        
-        // 날짜 타입에 따른 검증
+
         if (dating.getDateType() == null || dating.getDateType().trim().isEmpty()) {
             throw new IllegalArgumentException("날짜 타입은 필수 입력값입니다.");
         }
-        
+
         if ("single".equals(dating.getDateType())) {
-            // 단일 날짜 검증
             if (dating.getDate() == null) {
                 throw new IllegalArgumentException("날짜는 필수 입력값입니다.");
             }
@@ -72,7 +73,6 @@ public class DatingService {
                 throw new IllegalArgumentException("미래의 날짜는 입력할 수 없습니다.");
             }
         } else if ("range".equals(dating.getDateType())) {
-            // 기간 날짜 검증
             if (dating.getStartDate() == null) {
                 throw new IllegalArgumentException("시작일은 필수 입력값입니다.");
             }
@@ -91,22 +91,24 @@ public class DatingService {
         } else {
             throw new IllegalArgumentException("올바른 날짜 타입을 선택해주세요.");
         }
-        
+
         if (dating.getCategory() == null || dating.getCategory().trim().isEmpty()) {
             throw new IllegalArgumentException("카테고리는 필수 입력값입니다.");
         }
     }
 
     @Transactional
-    public Dating create(Dating dating) {
+    public Dating create(Dating dating, String ownerUserId) {
         validateDating(dating);
+        userRepository.findByUserId(ownerUserId).ifPresent(dating::setUser);
         return datingRepository.save(dating);
     }
 
     @Transactional
-    public Dating update(Long id, Dating dating) {
+    public Dating update(Long id, Dating dating, String currentUserId, String roleName) {
         validateDating(dating);
         Dating existingDating = findById(id);
+        verifyOwnership(existingDating, currentUserId, roleName);
         existingDating.setTitle(dating.getTitle());
         existingDating.setDate(dating.getDate());
         existingDating.setDateType(dating.getDateType());
@@ -115,33 +117,30 @@ public class DatingService {
         existingDating.setCategory(dating.getCategory());
         existingDating.setDescription(dating.getDescription());
         existingDating.setLocation(dating.getLocation());
-        
-        // 이미지 업데이트 처리
+
         if (dating.getImage() != null && !dating.getImage().trim().isEmpty()) {
             existingDating.setImage(dating.getImage());
         } else {
             existingDating.setImage(null);
         }
-        
-        // 다중 이미지 업데이트 처리
+
         if (dating.getImages() != null && !dating.getImages().trim().isEmpty()) {
             existingDating.setImages(dating.getImages());
         } else {
             existingDating.setImages(null);
         }
-        
+
         return datingRepository.save(existingDating);
     }
 
     @Transactional
-    public void delete(Long id) {
+    public void delete(Long id, String currentUserId, String roleName) {
         Dating existingDating = datingRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("이미 삭제된 추억입니다."));
-        
-        // 이미지 파일들 삭제
+        verifyOwnership(existingDating, currentUserId, roleName);
+
         deleteImageFiles(existingDating);
-        
-        // 데이터베이스에서 레코드 삭제
+
         try {
             datingRepository.delete(existingDating);
         } catch (ObjectOptimisticLockingFailureException | EmptyResultDataAccessException e) {
@@ -149,15 +148,27 @@ public class DatingService {
             throw new EntityNotFoundException("이미 삭제된 추억입니다.");
         }
     }
-    
+
+    private void verifyOwnership(Dating dating, String currentUserId, String roleName) {
+        if ("ADMIN".equals(roleName)) {
+            return;
+        }
+        User owner = dating.getUser();
+        // 레거시: 소유자 정보가 없는 기존 데이터는 권한 검사를 스킵 (메뉴 권한으로 이미 게이팅됨)
+        if (owner == null) {
+            return;
+        }
+        if (currentUserId == null || !currentUserId.equals(owner.getUserId())) {
+            throw new ForbiddenException("해당 데이터에 대한 권한이 없습니다.");
+        }
+    }
+
     private void deleteImageFiles(Dating dating) {
         try {
-            // 단일 이미지 파일 삭제
             if (dating.getImage() != null && !dating.getImage().trim().isEmpty()) {
                 deleteImageFile(dating.getImage());
             }
-            
-            // 다중 이미지 파일들 삭제
+
             if (dating.getImages() != null && !dating.getImages().trim().isEmpty()) {
                 boolean parsed = false;
                 try {
@@ -190,11 +201,10 @@ public class DatingService {
                 }
             }
         } catch (Exception e) {
-            System.err.println("미디어 파일 삭제 중 오류 발생: " + e.getMessage());
-            // 파일 삭제 실패해도 데이터베이스 삭제는 계속 진행
+            log.error("미디어 파일 삭제 중 오류 발생", e);
         }
     }
-    
+
     private String extractMediaPath(JsonNode node) {
         if (node == null) {
             return "";
@@ -214,20 +224,22 @@ public class DatingService {
         }
         return "";
     }
-    
+
     public void deleteImageFile(String imagePath) {
         try {
             if (imagePath != null && !imagePath.trim().isEmpty()) {
-                // URL에서 파일명만 추출
                 String fileName = imagePath.substring(imagePath.lastIndexOf("/") + 1);
-                Path filePath = Paths.get(UPLOAD_DIR + fileName);
-                
+                Path filePath = UPLOAD_ROOT.resolve(fileName).normalize();
+                if (!filePath.startsWith(UPLOAD_ROOT)) {
+                    log.warn("dating 이미지 삭제 path traversal 시도 차단: {}", imagePath);
+                    return;
+                }
                 if (Files.exists(filePath)) {
                     Files.delete(filePath);
                 }
             }
         } catch (IOException e) {
-            System.err.println("미디어 파일 삭제 실패: " + imagePath + " - " + e.getMessage());
+            log.error("미디어 파일 삭제 실패: path={}", imagePath, e);
         }
     }
 }

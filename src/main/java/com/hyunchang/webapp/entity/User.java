@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -37,9 +38,10 @@ public class User implements UserDetails {
     @Column(unique = true)
     private String phone;
     
+    @JsonIgnore
     @Column(nullable = false)
     private String password;
-    
+
     @Column(nullable = false, columnDefinition = "VARCHAR(50)")
     private String role;
     
@@ -61,36 +63,43 @@ public class User implements UserDetails {
     }
     
     // UserDetails 구현
+    @JsonIgnore
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         return List.of(new SimpleGrantedAuthority("ROLE_" + role));
     }
     
+    @JsonIgnore
     @Override
     public String getPassword() {
         return password;
     }
-    
+
+    @JsonIgnore
     @Override
     public String getUsername() {
         return userId;
     }
-    
+
+    @JsonIgnore
     @Override
     public boolean isAccountNonExpired() {
         return true;
     }
-    
+
+    @JsonIgnore
     @Override
     public boolean isAccountNonLocked() {
         return true;
     }
-    
+
+    @JsonIgnore
     @Override
     public boolean isCredentialsNonExpired() {
         return true;
     }
-    
+
+    @JsonIgnore
     @Override
     public boolean isEnabled() {
         return true;

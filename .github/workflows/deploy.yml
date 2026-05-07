@@ -39,7 +39,7 @@ jobs:
           host: ${{ secrets.NAS_HOST }}
           username: ${{ secrets.NAS_USER }}
           password: ${{ secrets.NAS_SSH_PASSWORD }}
-          source: "docker-compose.yml,init.sql"
+          source: "docker-compose.yml"
           target: "/volume1/docker/my-vue-project_backend/"
           strip_components: 0
 

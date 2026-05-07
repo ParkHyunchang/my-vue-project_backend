@@ -44,9 +44,10 @@ logging:
     org.hibernate.SQL: INFO
 
 # JWT Configuration
+# expiration: 2시간 (7,200,000ms)
 jwt:
   secret: ${JWT_SECRET}
-  expiration: 86400000
+  expiration: 7200000
 
 # Admin Users Configuration
 admin:

@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.config;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -27,56 +28,83 @@ import java.util.Arrays;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthenticationFilter;
+    private final RateLimitFilter rateLimitFilter;
     private final CorsProperties corsProperties;
 
-    public SecurityConfig(@Lazy JwtAuthenticationFilter jwtAuthenticationFilter, CorsProperties corsProperties) {
+    /**
+     * 운영 환경(prod, docker, nas)에서는 Swagger / H2 콘솔 노출을 차단한다.
+     * 로컬 개발 모드에서만 true.
+     */
+    @Value("${spring.profiles.active:local}")
+    private String activeProfile;
+
+    public SecurityConfig(@Lazy JwtAuthenticationFilter jwtAuthenticationFilter,
+                          RateLimitFilter rateLimitFilter,
+                          CorsProperties corsProperties) {
         this.jwtAuthenticationFilter = jwtAuthenticationFilter;
+        this.rateLimitFilter = rateLimitFilter;
         this.corsProperties = corsProperties;
     }
-    
+
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
-    
+
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
     }
-    
+
+    private boolean isLocalProfile() {
+        return activeProfile == null || "local".equalsIgnoreCase(activeProfile);
+    }
+
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http.cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .csrf(csrf -> csrf.disable())
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .exceptionHandling(ex -> ex
-                // 인증이 없으면 403 대신 401로 명확하게 내려줌 (Swagger에서도 원인 파악 쉬움)
                 .authenticationEntryPoint(unauthorizedEntryPoint())
             )
-            .authorizeHttpRequests(authz -> authz
-                // CORS preflight는 인증과 무관하게 허용되어야 함
-                .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/auth/**").permitAll()
-                .requestMatchers("/api/public/**").permitAll()
-                .requestMatchers("/uploads/images/**").permitAll()  // 이미지 파일 접근 허용
-                .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/chat").permitAll()
-                .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/chat/history/**").permitAll()
+            .authorizeHttpRequests(authz -> {
+                authz
+                    .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                    .requestMatchers("/api/auth/**").permitAll()
+                    .requestMatchers("/api/public/**").permitAll()
+                    .requestMatchers("/uploads/images/**").permitAll()
+                    .requestMatchers(org.springframework.http.HttpMethod.POST, "/api/chat").permitAll()
+                    .requestMatchers(org.springframework.http.HttpMethod.GET, "/api/chat/history/**").permitAll();
 
-                // Swagger / OpenAPI
-                .requestMatchers(
-                    "/v3/api-docs/**",
-                    "/swagger-ui/**",
-                    "/swagger-ui.html",
-                    "/webjars/**"
-                ).permitAll()
+                // Swagger / OpenAPI / H2 콘솔: 로컬 개발 환경에서만 노출
+                if (isLocalProfile()) {
+                    authz.requestMatchers(
+                            "/v3/api-docs/**",
+                            "/swagger-ui/**",
+                            "/swagger-ui.html",
+                            "/webjars/**",
+                            "/h2-console/**"
+                    ).permitAll();
+                } else {
+                    authz.requestMatchers(
+                            "/v3/api-docs/**",
+                            "/swagger-ui/**",
+                            "/swagger-ui.html",
+                            "/webjars/**",
+                            "/h2-console/**"
+                    ).denyAll();
+                }
 
-                .requestMatchers("/api/admin/user-crud-permissions").authenticated()
-                .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                .requestMatchers("/api/premium/**").hasAnyRole("ADMIN", "PREMIUM")
-                .anyRequest().authenticated()
-            )
+                authz
+                    .requestMatchers("/api/admin/user-crud-permissions").authenticated()
+                    .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                    .requestMatchers("/api/premium/**").hasAnyRole("ADMIN", "PREMIUM")
+                    .anyRequest().authenticated();
+            })
+            .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);
-        
+
         return http.build();
     }
 
@@ -85,10 +113,11 @@ public class SecurityConfig {
         return (request, response, authException) -> {
             response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
             response.setContentType("application/json;charset=UTF-8");
+            response.setHeader("Cache-Control", "no-store");
             response.getWriter().write("{\"message\":\"Unauthorized\"}");
         };
     }
-    
+
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
@@ -98,7 +127,7 @@ public class SecurityConfig {
         configuration.setExposedHeaders(Arrays.asList("X-Total-Count"));
         configuration.setAllowCredentials(false);
         configuration.setMaxAge(3600L);
-        
+
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", configuration);
         return source;

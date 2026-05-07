@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 
@@ -31,6 +32,7 @@ public class History {
     @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지 지원을 위한 JSON 문자열 필드
     
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;

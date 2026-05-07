@@ -33,7 +33,7 @@ logging:
 
 jwt:
   secret: ${JWT_SECRET}
-  expiration: 86400000
+  expiration: 7200000
 
 # Admin Users Configuration (NAS 배포 시 수정)
 # 허용된 관리자 사용자명을 쉼표로 구분하여 입력

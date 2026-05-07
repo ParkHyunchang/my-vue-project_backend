@@ -65,7 +65,7 @@ UPLOAD_BASE_URL=
 `main` 브랜치 push 시 GitHub Actions가 자동으로 실행됩니다.
 
 1. Docker 이미지 빌드 및 GHCR 푸시 (`ghcr.io/parkhyunchang/my-vue-project_backend:latest`)
-2. `docker-compose.yml`, `init.sql` NAS 전송
+2. `docker-compose.yml` NAS 전송
 3. NAS SSH 접속 후 이미지 pull → 컨테이너 재시작
 
 ### GitHub Secrets

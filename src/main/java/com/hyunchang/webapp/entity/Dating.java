@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import java.time.LocalDate;
 
@@ -31,6 +32,7 @@ public class Dating {
     @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지를 JSON 문자열로 저장
     
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;

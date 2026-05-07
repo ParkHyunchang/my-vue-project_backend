@@ -1,7 +1,12 @@
 package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.History;
+import com.hyunchang.webapp.entity.User;
+import com.hyunchang.webapp.exception.ForbiddenException;
 import com.hyunchang.webapp.repository.HistoryRepository;
+import com.hyunchang.webapp.repository.UserRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -14,23 +19,24 @@ import java.util.List;
 
 @Service
 public class HistoryService {
+    private static final Logger log = LoggerFactory.getLogger(HistoryService.class);
     private final HistoryRepository historyRepository;
+    private final UserRepository userRepository;
     private static final String UPLOAD_DIR = getUploadDirectory();
-    
+    private static final Path UPLOAD_ROOT = Paths.get(UPLOAD_DIR).toAbsolutePath().normalize();
+
     private static String getUploadDirectory() {
-        // Docker 환경에서는 실제 NAS 경로 사용, 로컬에서는 상대 경로 사용
         String os = System.getProperty("os.name").toLowerCase();
         if (os.contains("linux") || os.contains("unix")) {
-            // Linux/Unix 환경 (Docker 컨테이너) - 실제 NAS 경로
             return "/volume1/docker/my-vue-project_backend/uploads/images/history/";
         } else {
-            // Windows 환경 (로컬 개발)
             return System.getProperty("user.dir") + "/uploads/images/history/";
         }
     }
 
-    public HistoryService(HistoryRepository historyRepository) {
+    public HistoryService(HistoryRepository historyRepository, UserRepository userRepository) {
         this.historyRepository = historyRepository;
+        this.userRepository = userRepository;
     }
 
     public List<History> findAll() {
@@ -46,14 +52,12 @@ public class HistoryService {
         if (history.getTitle() == null || history.getTitle().trim().isEmpty()) {
             throw new IllegalArgumentException("제목은 필수 입력값입니다.");
         }
-        
-        // 날짜 타입에 따른 검증
+
         if (history.getDateType() == null || history.getDateType().trim().isEmpty()) {
             throw new IllegalArgumentException("날짜 타입은 필수 입력값입니다.");
         }
-        
+
         if ("single".equals(history.getDateType())) {
-            // 단일 날짜 검증
             if (history.getDate() == null) {
                 throw new IllegalArgumentException("날짜는 필수 입력값입니다.");
             }
@@ -61,7 +65,6 @@ public class HistoryService {
                 throw new IllegalArgumentException("미래의 날짜는 입력할 수 없습니다.");
             }
         } else if ("range".equals(history.getDateType())) {
-            // 기간 날짜 검증
             if (history.getStartDate() == null) {
                 throw new IllegalArgumentException("시작일은 필수 입력값입니다.");
             }
@@ -80,22 +83,24 @@ public class HistoryService {
         } else {
             throw new IllegalArgumentException("올바른 날짜 타입을 선택해주세요.");
         }
-        
+
         if (history.getCategory() == null || history.getCategory().trim().isEmpty()) {
             throw new IllegalArgumentException("카테고리는 필수 입력값입니다.");
         }
     }
 
     @Transactional
-    public History create(History history) {
+    public History create(History history, String ownerUserId) {
         validateHistory(history);
+        userRepository.findByUserId(ownerUserId).ifPresent(history::setUser);
         return historyRepository.save(history);
     }
 
     @Transactional
-    public History update(Long id, History history) {
+    public History update(Long id, History history, String currentUserId, String roleName) {
         validateHistory(history);
         History existingHistory = findById(id);
+        verifyOwnership(existingHistory, currentUserId, roleName);
         existingHistory.setTitle(history.getTitle());
         existingHistory.setDate(history.getDate());
         existingHistory.setDateType(history.getDateType());
@@ -110,29 +115,42 @@ public class HistoryService {
     }
 
     @Transactional
-    public void delete(Long id) {
+    public void delete(Long id, String currentUserId, String roleName) {
         History existingHistory = findById(id);
-        
-        // 이미지 파일 삭제
+        verifyOwnership(existingHistory, currentUserId, roleName);
         deleteImageFile(existingHistory.getImage());
-        
-        // 데이터베이스에서 레코드 삭제
         historyRepository.deleteById(id);
     }
-    
+
+    private void verifyOwnership(History history, String currentUserId, String roleName) {
+        if ("ADMIN".equals(roleName)) {
+            return;
+        }
+        User owner = history.getUser();
+        // 레거시: 소유자 정보가 없는 기존 데이터는 권한 검사를 스킵 (메뉴 권한으로 이미 게이팅됨)
+        if (owner == null) {
+            return;
+        }
+        if (currentUserId == null || !currentUserId.equals(owner.getUserId())) {
+            throw new ForbiddenException("해당 데이터에 대한 권한이 없습니다.");
+        }
+    }
+
     public void deleteImageFile(String imagePath) {
         try {
             if (imagePath != null && !imagePath.trim().isEmpty()) {
-                // URL에서 파일명만 추출
                 String fileName = imagePath.substring(imagePath.lastIndexOf("/") + 1);
-                Path filePath = Paths.get(UPLOAD_DIR + fileName);
-                
+                Path filePath = UPLOAD_ROOT.resolve(fileName).normalize();
+                if (!filePath.startsWith(UPLOAD_ROOT)) {
+                    log.warn("히스토리 이미지 삭제 path traversal 시도 차단: {}", imagePath);
+                    return;
+                }
                 if (Files.exists(filePath)) {
                     Files.delete(filePath);
                 }
             }
         } catch (IOException e) {
-            System.err.println("히스토리 이미지 파일 삭제 실패: " + imagePath + " - " + e.getMessage());
+            log.error("히스토리 이미지 파일 삭제 실패: path={}", imagePath, e);
         }
     }
-} 
+}
