@@ -27,8 +27,9 @@ server:
     max-http-form-post-size: -1
     max-swallow-size: -1
 
-# CORS 허용 도메인 (운영 환경 - HTTPS만 허용, raw IP 차단)
+# CORS 허용 도메인 (운영 환경)
+# TODO: HTTPS 인프라 정비 후 http:// 항목과 raw IP origin 제거 예정
 # 환경변수로 재정의 가능: APP_CORS_ALLOWED_ORIGINS=도메인1,도메인2,...
 app:
   cors:
-    allowed-origins: "https://hyunchang.synology.me:3100,https://hyunchang.synology.me:3200,https://m.hyunchang.synology.me:3100,https://m.hyunchang.synology.me:3200"
+    allowed-origins: "http://hyunchang.synology.me:3100,http://hyunchang.synology.me:3200,http://m.hyunchang.synology.me:3100,http://m.hyunchang.synology.me:3200,https://hyunchang.synology.me:3100,https://hyunchang.synology.me:3200,https://m.hyunchang.synology.me:3100,https://m.hyunchang.synology.me:3200,http://125.141.20.218:3100,http://125.141.20.218:3200"
