@@ -10,7 +10,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AuthResponse {
-    private String token;
+    // token 필드는 더 이상 응답 본문에 포함하지 않음 (httpOnly 쿠키 사용)
     private String username;
     private String name;
     private String email;

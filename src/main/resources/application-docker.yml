@@ -14,8 +14,8 @@ spring:
     show-sql: false
   servlet:
     multipart:
-      max-file-size: '3GB'
-      max-request-size: '15GB'
+      max-file-size: '1GB'
+      max-request-size: '5GB'
 
 logging:
   level:
@@ -24,8 +24,13 @@ logging:
 
 server:
   tomcat:
-    max-http-form-post-size: -1
-    max-swallow-size: -1
+    # max-http-form-post-size: x-www-form-urlencoded 본문 한도. multipart에는 적용되지 않음.
+    # 기본 2MB로 두되 일부 폼 전송을 위해 10MB로 제한.
+    max-http-form-post-size: 10MB
+
+jwt:
+  cookie-secure: ${JWT_COOKIE_SECURE:false}
+  cookie-domain: ${JWT_COOKIE_DOMAIN:}
 
 # CORS 허용 도메인 (운영 환경)
 # TODO: HTTPS 인프라 정비 후 http:// 항목과 raw IP origin 제거 예정

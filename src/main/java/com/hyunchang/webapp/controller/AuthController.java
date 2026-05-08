@@ -9,8 +9,10 @@ import com.hyunchang.webapp.dto.ResetPasswordRequest;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuDefinitionService;
 import com.hyunchang.webapp.service.MenuPermissionService;
+import com.hyunchang.webapp.service.TokenService;
 import com.hyunchang.webapp.service.UserService;
 import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,9 +38,10 @@ public class AuthController {
     private final MenuPermissionService menuPermissionService;
     private final MenuDefinitionService menuDefinitionService;
     private final JwtUtil jwtUtil;
-    
+    private final TokenService tokenService;
+
     @PostMapping("/register")
-    public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request) {
+    public ResponseEntity<AuthResponse> register(@RequestBody RegisterRequest request, HttpServletResponse httpResponse) {
         try {
             User user = userService.registerUser(
                 request.getUserId(),
@@ -49,11 +52,10 @@ public class AuthController {
                 request.getRole()
             );
 
-            UserDetails userDetails = userService.loadUserByUsername(user.getUsername());
-            String token = jwtUtil.generateToken(userDetails);
+            // httpOnly 쿠키로 access/refresh 토큰 발급
+            tokenService.issueTokens(user.getUsername(), httpResponse);
 
             AuthResponse response = AuthResponse.builder()
-                .token(token)
                 .username(user.getUserId())
                 .email(user.getEmail())
                 .role(user.getRole())
@@ -77,7 +79,9 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request, HttpServletRequest httpRequest) {
+    public ResponseEntity<AuthResponse> login(@RequestBody LoginRequest request,
+                                              HttpServletRequest httpRequest,
+                                              HttpServletResponse httpResponse) {
         String ip = httpRequest.getRemoteAddr();
         // 계정 enumeration 방지: 사용자 존재/비밀번호 오류를 동일 메시지로 응답
         final String GENERIC_FAIL_MESSAGE = "로그인 실패: 아이디 또는 비밀번호가 올바르지 않습니다.";
@@ -87,14 +91,13 @@ public class AuthController {
             );
 
             UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-            String token = jwtUtil.generateToken(userDetails);
-
             User user = userService.findByUserId(userDetails.getUsername()).orElseThrow();
+
+            tokenService.issueTokens(userDetails.getUsername(), httpResponse);
 
             log.info("[LOGIN SUCCESS] user_id={}, role={}, ip={}", user.getUserId(), user.getRole(), ip);
 
             AuthResponse response = AuthResponse.builder()
-                .token(token)
                 .username(user.getUserId())
                 .email(user.getEmail())
                 .role(user.getRole())
@@ -114,6 +117,52 @@ public class AuthController {
                 AuthResponse.builder().message(GENERIC_FAIL_MESSAGE).build()
             );
         }
+    }
+
+    /**
+     * Refresh 엔드포인트: refresh_token 쿠키 검증 후 새 access_token 발급.
+     * refresh_token 자체는 회전하지 않음 (간단함 우선; 필요 시 회전 추가).
+     */
+    @PostMapping("/refresh")
+    public ResponseEntity<?> refresh(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
+        String refreshToken = tokenService.readCookie(httpRequest, TokenService.REFRESH_COOKIE);
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return ResponseEntity.status(401).body(Map.of("message", "refresh token이 없습니다."));
+        }
+
+        if (!jwtUtil.validateRefreshToken(refreshToken)) {
+            tokenService.clearTokens(httpResponse);
+            return ResponseEntity.status(401).body(Map.of("message", "refresh token이 유효하지 않습니다."));
+        }
+
+        String jti = jwtUtil.extractJti(refreshToken);
+        if (tokenService.isRevoked(jti)) {
+            tokenService.clearTokens(httpResponse);
+            return ResponseEntity.status(401).body(Map.of("message", "refresh token이 무효화되었습니다."));
+        }
+
+        String username = jwtUtil.extractUsername(refreshToken);
+        Optional<User> userOpt = userService.findByUserId(username);
+        if (userOpt.isEmpty()) {
+            tokenService.clearTokens(httpResponse);
+            return ResponseEntity.status(401).body(Map.of("message", "사용자를 찾을 수 없습니다."));
+        }
+
+        tokenService.rotateAccessToken(username, httpResponse);
+        return ResponseEntity.ok(Map.of("message", "토큰이 갱신되었습니다."));
+    }
+
+    /**
+     * Logout: access/refresh 쿠키 삭제 + 두 토큰의 jti를 블랙리스트에 등록.
+     */
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletRequest httpRequest, HttpServletResponse httpResponse) {
+        String accessToken = tokenService.readCookie(httpRequest, TokenService.ACCESS_COOKIE);
+        String refreshToken = tokenService.readCookie(httpRequest, TokenService.REFRESH_COOKIE);
+        tokenService.revoke(accessToken);
+        tokenService.revoke(refreshToken);
+        tokenService.clearTokens(httpResponse);
+        return ResponseEntity.ok(Map.of("message", "로그아웃되었습니다."));
     }
     
     @GetMapping("/me")

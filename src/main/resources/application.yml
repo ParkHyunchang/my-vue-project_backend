@@ -22,10 +22,11 @@ spring:
     active: local
 
   # File Upload Configuration
+  # 단일 파일 1GB / 요청 전체 5GB. 사진 다수 일괄 업로드 + 고해상도 영상 대응.
   servlet:
     multipart:
-      max-file-size: 3GB
-      max-request-size: 15GB
+      max-file-size: 1GB
+      max-request-size: 5GB
 
 # Server Configuration
 server:
@@ -44,10 +45,14 @@ logging:
     org.hibernate.SQL: INFO
 
 # JWT Configuration
-# expiration: 2시간 (7,200,000ms)
+# access-expiration: 15분, refresh-expiration: 7일
+# 쿠키 옵션: cookie-secure는 HTTPS 환경에서만 true
 jwt:
   secret: ${JWT_SECRET}
-  expiration: 7200000
+  access-expiration: 900000
+  refresh-expiration: 604800000
+  cookie-secure: false
+  cookie-domain: ""
 
 # Admin Users Configuration
 admin:

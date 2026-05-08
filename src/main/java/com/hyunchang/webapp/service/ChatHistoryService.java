@@ -8,6 +8,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 @Service
 public class ChatHistoryService {
@@ -23,6 +24,10 @@ public class ChatHistoryService {
     public ChatSession getOrCreateSession(String sessionKey, String username, String anonId) {
         return sessionRepository.findBySessionKey(sessionKey)
                 .orElseGet(() -> sessionRepository.save(new ChatSession(sessionKey, username, anonId)));
+    }
+
+    public Optional<ChatSession> findSession(String sessionKey) {
+        return sessionRepository.findBySessionKey(sessionKey);
     }
 
     public List<ChatRecord> getMessages(ChatSession session) {
@@ -49,25 +54,6 @@ public class ChatHistoryService {
 
     public List<SessionSummaryDto> getSessionsByUsername(String username) {
         return sessionRepository.findByUsernameOrderByUpdatedAtDesc(username).stream()
-                .map(s -> new SessionSummaryDto(
-                        s.getSessionKey(), s.getUsername(),
-                        recordRepository.countByChatSession(s),
-                        s.getUpdatedAt(), s.getTitle()))
-                .toList();
-    }
-
-    public List<SessionSummaryDto> getSessionsByKeys(List<String> keys) {
-        if (keys == null || keys.isEmpty()) return List.of();
-        return sessionRepository.findBySessionKeyInOrderByUpdatedAtDesc(keys).stream()
-                .map(s -> new SessionSummaryDto(
-                        s.getSessionKey(), s.getUsername(),
-                        recordRepository.countByChatSession(s),
-                        s.getUpdatedAt(), s.getTitle()))
-                .toList();
-    }
-
-    public List<SessionSummaryDto> getSessionsByAnonId(String anonId) {
-        return sessionRepository.findByAnonIdOrderByUpdatedAtDesc(anonId).stream()
                 .map(s -> new SessionSummaryDto(
                         s.getSessionKey(), s.getUsername(),
                         recordRepository.countByChatSession(s),
