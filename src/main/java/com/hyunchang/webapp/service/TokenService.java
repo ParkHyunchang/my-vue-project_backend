@@ -7,6 +7,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -75,14 +76,20 @@ public class TokenService {
     @Transactional
     public void revoke(String token) {
         if (token == null || token.isBlank()) return;
+        String jti;
+        Date exp;
         try {
-            String jti = jwtUtil.extractJti(token);
-            Date exp = jwtUtil.extractExpiration(token);
-            if (jti != null && exp != null && !revokedTokenRepository.existsByJti(jti)) {
-                revokedTokenRepository.save(new RevokedToken(jti, exp.toInstant()));
-            }
+            jti = jwtUtil.extractJti(token);
+            exp = jwtUtil.extractExpiration(token);
         } catch (Exception ignored) {
-            // 잘못된 토큰은 그냥 무시
+            return;
+        }
+        if (jti == null || exp == null) return;
+        if (revokedTokenRepository.existsByJti(jti)) return;
+        try {
+            revokedTokenRepository.saveAndFlush(new RevokedToken(jti, exp.toInstant()));
+        } catch (DataIntegrityViolationException duplicate) {
+            // 동시 logout 요청으로 다른 트랜잭션이 먼저 등록한 경우 멱등 처리
         }
     }
 
