@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/expenses")
+@RequestMapping("/api/expenses")
 public class ExpenseController {
     private final ExpenseService expenseService;
     private final MenuCrudPermissionService menuCrudPermissionService;

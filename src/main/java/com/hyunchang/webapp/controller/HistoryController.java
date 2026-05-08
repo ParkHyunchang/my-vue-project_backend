@@ -21,7 +21,7 @@ import java.util.Set;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/histories")
+@RequestMapping("/api/histories")
 public class HistoryController {
     private static final Logger log = LoggerFactory.getLogger(HistoryController.class);
     private final HistoryService historyService;

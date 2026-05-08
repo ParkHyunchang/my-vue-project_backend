@@ -20,7 +20,7 @@ import java.util.Set;
 import java.util.UUID;
 
 @RestController
-@RequestMapping("/dating")
+@RequestMapping("/api/dating")
 public class DatingController {
     private static final Logger log = LoggerFactory.getLogger(DatingController.class);
     private final DatingService datingService;
