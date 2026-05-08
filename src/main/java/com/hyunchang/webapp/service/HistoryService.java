@@ -5,6 +5,7 @@ import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.exception.ForbiddenException;
 import com.hyunchang.webapp.repository.HistoryRepository;
 import com.hyunchang.webapp.repository.UserRepository;
+import com.hyunchang.webapp.util.UploadPathUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -13,7 +14,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -22,17 +22,7 @@ public class HistoryService {
     private static final Logger log = LoggerFactory.getLogger(HistoryService.class);
     private final HistoryRepository historyRepository;
     private final UserRepository userRepository;
-    private static final String UPLOAD_DIR = getUploadDirectory();
-    private static final Path UPLOAD_ROOT = Paths.get(UPLOAD_DIR).toAbsolutePath().normalize();
-
-    private static String getUploadDirectory() {
-        String os = System.getProperty("os.name").toLowerCase();
-        if (os.contains("linux") || os.contains("unix")) {
-            return "/volume1/docker/my-vue-project_backend/uploads/images/history/";
-        } else {
-            return System.getProperty("user.dir") + "/uploads/images/history/";
-        }
-    }
+    private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("history");
 
     public HistoryService(HistoryRepository historyRepository, UserRepository userRepository) {
         this.historyRepository = historyRepository;

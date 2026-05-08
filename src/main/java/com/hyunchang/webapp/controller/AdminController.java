@@ -64,48 +64,55 @@ public class AdminController {
             
             return ResponseEntity.ok(userResponses);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("사용자 목록 조회 실패: " + e.getMessage());
+            log.warn("사용자 목록 조회 실패", e);
+            return ResponseEntity.badRequest().body("사용자 목록 조회에 실패했습니다.");
         }
     }
-    
+
     // 특정 사용자 조회
     @GetMapping("/users/{id}")
     public ResponseEntity<?> getUserById(@PathVariable Long id, Authentication authentication) {
         if (!isAdmin(authentication)) {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
         }
-        
+
         try {
             User user = userService.findById(id)
-                    .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
-            
+                    .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+
             return ResponseEntity.ok(UserResponse.from(user));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("사용자 조회 실패: " + e.getMessage());
+            log.warn("사용자 조회 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("사용자 조회에 실패했습니다.");
         }
     }
-    
+
     // 사용자 정보 전체 수정
     @PutMapping("/users/{id}")
     public ResponseEntity<?> updateUser(
             @PathVariable Long id,
             @RequestBody UpdateUserRequest request,
             Authentication authentication) {
-        
+
         if (!isAdmin(authentication)) {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
         }
-        
+
         try {
             User updatedUser = userService.updateUser(id, request);
             log.info("[ADMIN] admin={}, action=UPDATE_USER, target_id={}",
                     authentication.getName(), id);
             return ResponseEntity.ok(UserResponse.from(updatedUser));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("사용자 정보 수정 실패: " + e.getMessage());
+            log.warn("사용자 정보 수정 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("사용자 정보 수정에 실패했습니다.");
         }
     }
-    
+
     // 사용자 삭제
     @DeleteMapping("/users/{id}")
     public ResponseEntity<?> deleteUser(@PathVariable Long id, Authentication authentication) {
@@ -126,7 +133,8 @@ public class AdminController {
                     authentication.getName(), id, targetUserId);
             return ResponseEntity.ok("사용자가 성공적으로 삭제되었습니다.");
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("사용자 삭제 실패: " + e.getMessage());
+            log.warn("사용자 삭제 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("사용자 삭제에 실패했습니다.");
         }
     }
 
@@ -145,12 +153,15 @@ public class AdminController {
                 return ResponseEntity.badRequest().body("비밀번호는 최소 6자 이상이어야 합니다.");
             }
             User user = userService.findById(id)
-                    .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
+                    .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
             userService.updatePassword(user, newPassword);
             log.info("[ADMIN] admin={}, action=RESET_PASSWORD, target_id={}", authentication.getName(), id);
             return ResponseEntity.ok("비밀번호가 성공적으로 변경되었습니다.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("비밀번호 변경 실패: " + e.getMessage());
+            log.warn("비밀번호 변경 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("비밀번호 변경에 실패했습니다.");
         }
     }
     
@@ -176,36 +187,40 @@ public class AdminController {
             List<String> allowedAdmins = userService.getAllowedAdminUsers();
             return ResponseEntity.ok(allowedAdmins);
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("허용된 관리자 목록 조회 실패: " + e.getMessage());
+            log.warn("허용된 관리자 목록 조회 실패", e);
+            return ResponseEntity.badRequest().body("허용된 관리자 목록 조회에 실패했습니다.");
         }
     }
-    
+
     // 관리자가 새 사용자 생성 (토큰 없이)
     @PostMapping("/users")
     public ResponseEntity<?> createUser(@RequestBody CreateUserRequest request, Authentication authentication) {
         if (!isAdmin(authentication)) {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
         }
-        
+
         try {
-            if (request.getUserId() == null || request.getName() == null || request.getEmail() == null || 
+            if (request.getUserId() == null || request.getName() == null || request.getEmail() == null ||
                 request.getPassword() == null || request.getRole() == null) {
                 return ResponseEntity.badRequest().body("모든 필드를 입력해주세요.");
             }
-            
+
             User user = userService.registerUser(
                 request.getUserId(),
                 request.getName(),
-                request.getEmail(), 
+                request.getEmail(),
                 request.getPhone(),
-                request.getPassword(), 
+                request.getPassword(),
                 request.getRole()
             );
             log.info("[ADMIN] admin={}, action=CREATE_USER, new_user_id={}, role={}",
                     authentication.getName(), request.getUserId(), request.getRole());
             return ResponseEntity.ok(UserResponse.from(user));
+        } catch (IllegalArgumentException | com.hyunchang.webapp.exception.UserAlreadyExistsException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("사용자 생성 실패: " + e.getMessage());
+            log.warn("사용자 생성 실패: userId={}", request.getUserId(), e);
+            return ResponseEntity.badRequest().body("사용자 생성에 실패했습니다.");
         }
     }
     
@@ -322,7 +337,8 @@ public class AdminController {
                     authentication.getName(), role.toUpperCase());
             return ResponseEntity.ok("CRUD 권한이 저장되었습니다.");
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("CRUD 권한 저장에 실패했습니다: " + e.getMessage());
+            log.warn("CRUD 권한 저장 실패: role={}", role, e);
+            return ResponseEntity.badRequest().body("CRUD 권한 저장에 실패했습니다.");
         }
     }
     
@@ -354,8 +370,11 @@ public class AdminController {
             log.info("[ADMIN] admin={}, action=CREATE_ROLE, role_name={}",
                     authentication.getName(), request.getRoleName());
             return ResponseEntity.ok(created);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("권한 생성에 실패했습니다: " + e.getMessage());
+            log.warn("권한 생성 실패: role_name={}", request.getRoleName(), e);
+            return ResponseEntity.badRequest().body("권한 생성에 실패했습니다.");
         }
     }
 
@@ -372,8 +391,11 @@ public class AdminController {
             RoleInfoResponse updated = roleInfoService.updateRoleInfo(id, request);
             log.info("[ADMIN] admin={}, action=UPDATE_ROLE, id={}", authentication.getName(), id);
             return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("권한 정보 수정에 실패했습니다: " + e.getMessage());
+            log.warn("권한 정보 수정 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("권한 정보 수정에 실패했습니다.");
         }
     }
 
@@ -389,8 +411,11 @@ public class AdminController {
             roleInfoService.deleteRoleInfo(id);
             log.info("[ADMIN] admin={}, action=DELETE_ROLE, id={}", authentication.getName(), id);
             return ResponseEntity.ok("권한이 삭제되었습니다.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("권한 삭제에 실패했습니다: " + e.getMessage());
+            log.warn("권한 삭제 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("권한 삭제에 실패했습니다.");
         }
     }
 
@@ -456,8 +481,11 @@ public class AdminController {
             log.info("[ADMIN] admin={}, action=CREATE_MENU, path={}, name={}",
                     authentication.getName(), request.getPath(), request.getName());
             return ResponseEntity.ok(created);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("메뉴 생성에 실패했습니다: " + e.getMessage());
+            log.warn("메뉴 생성 실패: path={}", request.getPath(), e);
+            return ResponseEntity.badRequest().body("메뉴 생성에 실패했습니다.");
         }
     }
 
@@ -475,8 +503,11 @@ public class AdminController {
             log.info("[ADMIN] admin={}, action=UPDATE_MENU, id={}, name={}",
                     authentication.getName(), id, request.getName());
             return ResponseEntity.ok(updated);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("메뉴 수정에 실패했습니다: " + e.getMessage());
+            log.warn("메뉴 수정 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("메뉴 수정에 실패했습니다.");
         }
     }
 
@@ -509,8 +540,11 @@ public class AdminController {
             menuDefinitionService.deleteMenuDefinition(id);
             log.info("[ADMIN] admin={}, action=DELETE_MENU, id={}", authentication.getName(), id);
             return ResponseEntity.ok("메뉴가 삭제되었습니다.");
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(e.getMessage());
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("메뉴 삭제에 실패했습니다: " + e.getMessage());
+            log.warn("메뉴 삭제 실패: id={}", id, e);
+            return ResponseEntity.badRequest().body("메뉴 삭제에 실패했습니다.");
         }
     }
 

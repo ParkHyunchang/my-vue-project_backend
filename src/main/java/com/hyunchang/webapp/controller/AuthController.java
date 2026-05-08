@@ -70,7 +70,7 @@ public class AuthController {
                 .build();
             return ResponseEntity.badRequest().body(response);
         } catch (Exception e) {
-            log.warn("회원가입 실패: {}", e.getMessage());
+            log.warn("회원가입 실패: userId={}", request.getUserId(), e);
             AuthResponse response = AuthResponse.builder()
                 .message("회원가입에 실패했습니다.")
                 .build();
@@ -112,7 +112,7 @@ public class AuthController {
                 AuthResponse.builder().message(GENERIC_FAIL_MESSAGE).build()
             );
         } catch (Exception e) {
-            log.warn("[LOGIN FAIL] reason=ERROR, user_id={}, ip={}, error={}", request.getUsername(), ip, e.getMessage());
+            log.warn("[LOGIN FAIL] reason=ERROR, user_id={}, ip={}", request.getUsername(), ip, e);
             return ResponseEntity.badRequest().body(
                 AuthResponse.builder().message(GENERIC_FAIL_MESSAGE).build()
             );
@@ -206,9 +206,11 @@ public class AuthController {
                 .role(updated.getRole())
                 .message("정보가 수정되었습니다.")
                 .build());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         } catch (Exception e) {
-            log.warn("프로필 수정 실패: {}", e.getMessage());
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage() != null ? e.getMessage() : "정보 수정에 실패했습니다."));
+            log.warn("프로필 수정 실패", e);
+            return ResponseEntity.badRequest().body(Map.of("message", "정보 수정에 실패했습니다."));
         }
     }
 
@@ -233,7 +235,7 @@ public class AuthController {
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
         } catch (Exception e) {
-            log.warn("비밀번호 변경 실패: {}", e.getMessage());
+            log.warn("비밀번호 변경 실패", e);
             return ResponseEntity.badRequest().body(Map.of("message", "비밀번호 변경에 실패했습니다."));
         }
     }
@@ -297,7 +299,7 @@ public class AuthController {
             User user = userOptional.get();
             return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRoleName(user.getRole()));
         } catch (Exception e) {
-            log.warn("사용자 메뉴 권한 조회 실패: {}", e.getMessage());
+            log.warn("사용자 메뉴 권한 조회 실패", e);
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
         }
     }

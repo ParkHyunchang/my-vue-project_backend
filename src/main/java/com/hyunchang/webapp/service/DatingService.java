@@ -9,6 +9,7 @@ import com.hyunchang.webapp.exception.ForbiddenException;
 import com.hyunchang.webapp.exception.NotFoundException;
 import com.hyunchang.webapp.repository.DatingRepository;
 import com.hyunchang.webapp.repository.UserRepository;
+import com.hyunchang.webapp.util.UploadPathUtil;
 import jakarta.persistence.EntityNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +21,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.List;
 
@@ -30,17 +30,7 @@ public class DatingService {
     private final DatingRepository datingRepository;
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
-    private static final String UPLOAD_DIR = getUploadDirectory();
-    private static final Path UPLOAD_ROOT = Paths.get(UPLOAD_DIR).toAbsolutePath().normalize();
-
-    private static String getUploadDirectory() {
-        String os = System.getProperty("os.name").toLowerCase();
-        if (os.contains("linux") || os.contains("unix")) {
-            return "/volume1/docker/my-vue-project_backend/uploads/images/dating/";
-        } else {
-            return System.getProperty("user.dir") + "/uploads/images/dating/";
-        }
-    }
+    private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("dating");
 
     public DatingService(DatingRepository datingRepository, UserRepository userRepository) {
         this.datingRepository = datingRepository;

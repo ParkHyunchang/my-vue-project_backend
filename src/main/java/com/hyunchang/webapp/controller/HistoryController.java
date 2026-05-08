@@ -4,6 +4,7 @@ import com.hyunchang.webapp.entity.History;
 import com.hyunchang.webapp.service.HistoryService;
 import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
+import com.hyunchang.webapp.util.UploadPathUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
@@ -14,7 +15,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Set;
@@ -26,19 +26,9 @@ public class HistoryController {
     private static final Logger log = LoggerFactory.getLogger(HistoryController.class);
     private final HistoryService historyService;
     private final MenuCrudPermissionService menuCrudPermissionService;
-    private static final String UPLOAD_DIR = getUploadDirectory();
-    private static final Path UPLOAD_ROOT = Paths.get(UPLOAD_DIR).toAbsolutePath().normalize();
+    private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("history");
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
-
-    private static String getUploadDirectory() {
-        String os = System.getProperty("os.name").toLowerCase();
-        if (os.contains("linux") || os.contains("unix")) {
-            return "/volume1/docker/my-vue-project_backend/uploads/images/history/";
-        } else {
-            return System.getProperty("user.dir") + "/uploads/images/history/";
-        }
-    }
 
     public HistoryController(HistoryService historyService, MenuCrudPermissionService menuCrudPermissionService) {
         this.historyService = historyService;

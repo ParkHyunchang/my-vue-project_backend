@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.config;
 
+import com.hyunchang.webapp.util.UploadPathUtil;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
@@ -38,21 +39,9 @@ public class WebConfig implements WebMvcConfigurer {
             // UPLOAD_BASE_URL 설정 시: UploadRedirectController 가 리다이렉트 처리
             return;
         }
-        String uploadPath = getUploadDirectory();
         registry.addResourceHandler("/uploads/images/**")
-                .addResourceLocations("file:" + uploadPath)
+                .addResourceLocations("file:" + UploadPathUtil.imagesRoot())
                 .setCachePeriod(3600);
-    }
-    
-    private String getUploadDirectory() {
-        String os = System.getProperty("os.name").toLowerCase();
-        if (os.contains("linux") || os.contains("unix")) {
-            // Docker 환경에서는 실제 NAS 경로 사용
-            return "/volume1/docker/my-vue-project_backend/uploads/images/";
-        } else {
-            // Windows 환경 (로컬 개발)
-            return System.getProperty("user.dir") + "/uploads/images/";
-        }
     }
 
     @Bean
