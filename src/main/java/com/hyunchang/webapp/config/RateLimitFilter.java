@@ -26,7 +26,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitFilter.class);
     private static final long WINDOW_MILLIS = 60_000L;
-    private static final int MAX_REQUESTS_PER_WINDOW = 30;
+    private static final int MAX_REQUESTS_PER_WINDOW = 60;
     private static final String AUTH_PATH_PREFIX = "/api/auth/";
 
     private final ConcurrentHashMap<String, Deque<Long>> requestLog = new ConcurrentHashMap<>();
