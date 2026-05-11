@@ -238,28 +238,36 @@ public class StockService {
     }
 
     /**
-     * 종목 검색. 한글 포함 시 KRX 로컬 검색, 영문/코드 시 Yahoo Finance 검색.
-     * Yahoo 결과 중 KR 종목은 한글명으로 변환합니다.
+     * 종목 검색 — 입력 언어/형식 무관하게 동일하게 동작.
+     * 1) KR 로컬 (KRX OpenAPI 2500+종목) + US 로컬 (한글명/영문명/티커) 통합 검색
+     * 2) 로컬 결과가 0건이고 검색어에 한글이 없으면 Yahoo Finance API 폴백
+     *    (한글 검색어는 Yahoo가 인식하지 못하므로 호출하지 않음)
      */
     public List<StockSearchResultDto> searchStocks(String query) {
-        if (containsKorean(query)) return krxService.searchKrLocal(query.trim());
+        String q = query == null ? "" : query.trim();
+        if (q.isEmpty()) return Collections.emptyList();
 
-        List<StockSearchResultDto> raw = yahooService.searchYahoo(query.trim());
-        List<StockSearchResultDto> result = new ArrayList<>();
-        for (StockSearchResultDto r : raw) {
-            if ("KR".equals(r.getMarket())) {
-                String koName = krxService.resolveKrStockName(r.getSymbol());
-                if (koName != null && !koName.isBlank()) {
-                    result.add(StockSearchResultDto.builder()
-                        .symbol(r.getSymbol()).name(koName)
-                        .exchange(r.getExchange()).type(r.getType()).market(r.getMarket())
-                        .build());
-                    continue;
+        // symbol 기준 dedupe — KR 결과를 먼저 넣어 한국 사용자에게 익숙한 순서로 노출
+        Map<String, StockSearchResultDto> merged = new LinkedHashMap<>();
+        for (StockSearchResultDto r : krxService.searchKrLocal(q))      merged.putIfAbsent(r.getSymbol(), r);
+        for (StockSearchResultDto r : yahooService.searchUsLocal(q))    merged.putIfAbsent(r.getSymbol(), r);
+
+        // 로컬에서 잡히면 Yahoo API 호출 생략 (속도/외부 의존도↓). 비어 있고 한글이 없을 때만 폴백.
+        if (merged.isEmpty() && !containsKorean(q)) {
+            for (StockSearchResultDto r : yahooService.searchYahoo(q)) {
+                if ("KR".equals(r.getMarket())) {
+                    String koName = krxService.resolveKrStockName(r.getSymbol());
+                    if (koName != null && !koName.isBlank()) {
+                        r = StockSearchResultDto.builder()
+                            .symbol(r.getSymbol()).name(koName)
+                            .exchange(r.getExchange()).type(r.getType()).market(r.getMarket())
+                            .build();
+                    }
                 }
+                merged.putIfAbsent(r.getSymbol(), r);
             }
-            result.add(r);
         }
-        return result;
+        return new ArrayList<>(merged.values());
     }
 
     /** 국내 주식 히트맵 데이터 (30분 자동 갱신) */

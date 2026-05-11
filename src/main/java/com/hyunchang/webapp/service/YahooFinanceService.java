@@ -96,6 +96,76 @@ public class YahooFinanceService {
         return usStockNamesKo.get(symbol.toUpperCase());
     }
 
+    // ── 미국 종목 로컬 검색 인덱스 ────────────────────────────────
+    /** 검색 인덱스 1행: symbol + 표시명 + (한글명, 영문토큰, 영문 정식명) 검색 키 */
+    private record UsSearchEntry(
+        String symbol, String displayName,
+        String koName, String enTokens, String enFullName) {}
+
+    private volatile List<UsSearchEntry> usSearchIndex = null;
+
+    private void buildUsSearchIndexIfNeeded() {
+        if (usSearchIndex != null) return;
+        synchronized (this) {
+            if (usSearchIndex != null) return;
+            // us-stocks-fallback.json → symbol → 영문 정식명 룩업
+            Map<String, String> enFullMap = new HashMap<>();
+            for (String[] s : usStocksFallback) {
+                if (s.length >= 2 && s[0] != null && s[1] != null) {
+                    enFullMap.put(s[0].toUpperCase(), s[1]);
+                }
+            }
+            // 세 소스에 등장하는 모든 심볼 합집합
+            Set<String> symbols = new LinkedHashSet<>();
+            usStockNamesKo.keySet().forEach(k -> symbols.add(k.toUpperCase()));
+            usEnNames.keySet().forEach(k -> symbols.add(k.toUpperCase()));
+            symbols.addAll(enFullMap.keySet());
+
+            List<UsSearchEntry> list = new ArrayList<>(symbols.size());
+            for (String sym : symbols) {
+                String ko       = usStockNamesKo.get(sym);
+                String enTokens = usEnNames.get(sym);
+                String enFull   = enFullMap.get(sym);
+                String display  = (ko != null && !ko.isBlank()) ? ko
+                                : (enFull != null && !enFull.isBlank()) ? enFull
+                                : sym;
+                list.add(new UsSearchEntry(sym, display, ko, enTokens, enFull));
+            }
+            usSearchIndex = list;
+            log.info("US 종목 검색 인덱스 빌드 완료: {}개 (KR한글명+영문토큰+영문정식명)", list.size());
+        }
+    }
+
+    /**
+     * 미국 종목 로컬 검색 — 한글명("테슬라"), 영문명("Tesla"/"tesla"), 티커("TSLA") 모두 매칭.
+     * us-names-ko.json + us-en-names.json + us-stocks-fallback.json 의 합집합 인덱스에서
+     * 부분일치(contains) 검색을 수행합니다. Yahoo API에 의존하지 않아 빠르고 안정적입니다.
+     */
+    public List<StockSearchResultDto> searchUsLocal(String query) {
+        buildUsSearchIndexIfNeeded();
+        if (usSearchIndex == null || usSearchIndex.isEmpty()) return Collections.emptyList();
+
+        String q     = query.trim();
+        String lower = q.toLowerCase();
+        if (q.isEmpty()) return Collections.emptyList();
+
+        List<StockSearchResultDto> results = new ArrayList<>();
+        for (UsSearchEntry e : usSearchIndex) {
+            boolean hit =
+                   e.symbol.toLowerCase().contains(lower)
+                || (e.koName     != null && e.koName.contains(q))
+                || (e.enTokens   != null && e.enTokens.toLowerCase().contains(lower))
+                || (e.enFullName != null && e.enFullName.toLowerCase().contains(lower));
+            if (hit) {
+                results.add(StockSearchResultDto.builder()
+                    .symbol(e.symbol).name(e.displayName)
+                    .exchange("").type("EQUITY").market("US").build());
+            }
+        }
+        log.info("US 로컬 검색 [{}] → {}건", q, results.size());
+        return results;
+    }
+
     // ─────────────────────────────────────────────────────────────
     // 동적 시총 상위 조회 (Yahoo Finance screener API)
     // ─────────────────────────────────────────────────────────────
