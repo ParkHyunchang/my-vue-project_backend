@@ -432,10 +432,12 @@ public class YahooFinanceService {
 
             if (price == 0) return null;
 
+            // 한국 종목은 Yahoo v8/chart가 marketCap을 비워 보내는 경우가 흔합니다.
+            // 0을 그대로 반환하면 호출자(StockService)가 KRX Open API 캐시로 보강합니다.
             return StockHeatmapItemDto.builder()
                 .symbol(symbol).name(name).price(price)
                 .changePercent(Math.round(changePct * 100.0) / 100.0)
-                .marketCap(mktCap > 0 ? mktCap : 1)
+                .marketCap(mktCap)
                 .build();
 
         } catch (Exception e) {

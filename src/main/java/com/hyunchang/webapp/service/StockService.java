@@ -365,6 +365,7 @@ public class StockService {
 
     /** KRX 시총 순 종목을 Yahoo Finance v8/chart로 병렬 조회 (v7/quote 실패 시 폴백) */
     private List<StockQuoteDto> fetchAll(String cacheKey, List<String[]> stocks, String currency) {
+        boolean isKr = "KRW".equals(currency);
         ExecutorService exec = Executors.newFixedThreadPool(10);
         List<Future<YahooFinanceService.RawQuote>> futures = stocks.stream()
             .map(s -> exec.submit(() -> yahooService.fetchSingle(
@@ -375,7 +376,22 @@ public class StockService {
         for (int i = 0; i < futures.size(); i++) {
             try {
                 YahooFinanceService.RawQuote raw = futures.get(i).get(12, TimeUnit.SECONDS);
-                if (raw != null) raws.add(raw);
+                if (raw == null) continue;
+                // KR 종목은 Yahoo v8/chart가 marketCap을 비워 보내는 일이 흔하고
+                // fallback JSON의 shares도 0이라 0이 그대로 흘러가면 정렬이 깨집니다.
+                // 마지막 성공한 KRX Open API 캐시에서 시총을 보강합니다.
+                if (isKr && raw.marketCap() == 0) {
+                    long krxCap = krxApiService.getKrMarketCap(raw.symbol());
+                    if (krxCap > 0) {
+                        log.info("KR 시총 KRX 캐시 보강 [{}]: {}원 (Yahoo v8/chart 0 → KRX)", raw.symbol(), krxCap);
+                        raw = new YahooFinanceService.RawQuote(
+                            raw.symbol(), raw.name(),
+                            raw.price(), raw.change(), raw.changePercent(),
+                            krxCap, raw.volume()
+                        );
+                    }
+                }
+                raws.add(raw);
             } catch (InterruptedException | ExecutionException | TimeoutException e) {
                 log.warn("Top10 종목 조회 실패 [{}]: {}", stocks.get(i)[0], e.getMessage());
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
@@ -469,7 +485,15 @@ public class StockService {
         for (int i = 0; i < futures.size(); i++) {
             try {
                 StockHeatmapItemDto item = futures.get(i).get(10, TimeUnit.SECONDS);
-                if (item != null) resultMap.put(krStocks.get(i)[0], item);
+                if (item == null) continue;
+                // Yahoo v8/chart는 한국 종목 marketCap을 거의 안 채워줌 → KRX 캐시로 보강.
+                // 보강 후에도 0이면 트리맵 면적 계산이 불가능하므로 최후 1로 강제.
+                if (item.getMarketCap() <= 0) {
+                    long krxCap = krxApiService.getKrMarketCap(item.getSymbol());
+                    if (krxCap > 0) log.info("히트맵 시총 KRX 캐시 보강 [{}]: {}원", item.getSymbol(), krxCap);
+                    item.setMarketCap(krxCap > 0 ? krxCap : 1);
+                }
+                resultMap.put(krStocks.get(i)[0], item);
             } catch (InterruptedException | ExecutionException | TimeoutException e) {
                 log.warn("히트맵 종목 조회 실패 [{}]: {}", krStocks.get(i)[0], e.getMessage());
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();

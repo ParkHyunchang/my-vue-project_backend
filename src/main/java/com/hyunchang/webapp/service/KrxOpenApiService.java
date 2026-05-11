@@ -78,6 +78,16 @@ public class KrxOpenApiService {
     }
 
     /**
+     * KR 종목 시가총액 직접 조회 (원 단위). 캐시 미스 시 0.
+     * 가격 0 우선주에도 시총은 존재할 수 있으므로 price 필터링을 하지 않습니다.
+     * Yahoo v8/chart 폴백이 한국 종목 marketCap을 비워 보내는 경우의 보강용.
+     */
+    public long getKrMarketCap(String symbol) {
+        NaverFinanceService.NaverStockData data = lookup(symbol);
+        return data != null ? data.marketCap() : 0;
+    }
+
+    /**
      * KR 종목 한글명 직접 조회 (가격 무관).
      * 거래 없는 날 우선주도 이름은 반환되도록 price 필터링을 하지 않습니다.
      */
