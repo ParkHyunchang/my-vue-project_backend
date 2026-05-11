@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -193,7 +194,7 @@ public class KrxService {
                     m.getOrDefault("shares", "0")
                 })
                 .collect(Collectors.toList());
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
             return Collections.emptyList();
         }
@@ -207,7 +208,7 @@ public class KrxService {
             }
             Map<String, String> map = objectMapper.readValue(is, new TypeReference<>() {});
             return Collections.unmodifiableMap(map);
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
             return Collections.emptyMap();
         }

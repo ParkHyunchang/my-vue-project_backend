@@ -11,8 +11,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -146,7 +148,7 @@ public class YahooFinanceService {
             log.info("Yahoo Finance v7/quote 일괄 조회 완료: {}개 종목", quotes.size());
             return quotes;
 
-        } catch (Exception e) {
+        } catch (RestClientException | IOException | NumberFormatException e) {
             log.warn("Yahoo Finance v7/quote 일괄 조회 실패: {}", e.getMessage());
             return Collections.emptyList();
         }
@@ -296,7 +298,7 @@ public class YahooFinanceService {
             log.info("Yahoo Finance 검색 [{}] → {}건", query, results.size());
             return results;
 
-        } catch (Exception e) {
+        } catch (RestClientException | IOException e) {
             log.warn("Yahoo Finance 종목 검색 실패 [{}]: {}", query, e.getMessage());
             return Collections.emptyList();
         }
@@ -321,7 +323,7 @@ public class YahooFinanceService {
                     m.getOrDefault("shares", "0")
                 })
                 .collect(Collectors.toList());
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
             return Collections.emptyList();
         }
@@ -339,7 +341,7 @@ public class YahooFinanceService {
             Map<String, String> normalized = new HashMap<>();
             raw.forEach((k, v) -> normalized.put(k.toUpperCase(), v));
             return Collections.unmodifiableMap(normalized);
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
             return Collections.emptyMap();
         }

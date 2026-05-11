@@ -1,8 +1,8 @@
 package com.hyunchang.webapp.config;
 
 import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
-import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -63,11 +63,11 @@ public class JwtUtil {
     }
 
     private Claims extractAllClaims(String token) {
-        return Jwts.parserBuilder()
-                .setSigningKey(getSigningKey())
+        return Jwts.parser()
+                .verifyWith(getSigningKey())
                 .build()
-                .parseClaimsJws(token)
-                .getBody();
+                .parseSignedClaims(token)
+                .getPayload();
     }
 
     private Boolean isTokenExpired(String token) {
@@ -103,12 +103,12 @@ public class JwtUtil {
         claims.put(CLAIM_TYPE, type);
         long now = System.currentTimeMillis();
         return Jwts.builder()
-                .setClaims(claims)
-                .setSubject(subject)
-                .setId(jti)
-                .setIssuedAt(new Date(now))
-                .setExpiration(new Date(now + expirationMillis))
-                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
+                .claims(claims)
+                .subject(subject)
+                .id(jti)
+                .issuedAt(new Date(now))
+                .expiration(new Date(now + expirationMillis))
+                .signWith(getSigningKey(), Jwts.SIG.HS256)
                 .compact();
     }
 
@@ -118,7 +118,7 @@ public class JwtUtil {
             return TYPE_ACCESS.equals(extractType(token))
                     && username.equals(userDetails.getUsername())
                     && !isTokenExpired(token);
-        } catch (Exception e) {
+        } catch (JwtException | IllegalArgumentException e) {
             return false;
         }
     }
@@ -126,7 +126,7 @@ public class JwtUtil {
     public Boolean validateRefreshToken(String token) {
         try {
             return TYPE_REFRESH.equals(extractType(token)) && !isTokenExpired(token);
-        } catch (Exception e) {
+        } catch (JwtException | IllegalArgumentException e) {
             return false;
         }
     }

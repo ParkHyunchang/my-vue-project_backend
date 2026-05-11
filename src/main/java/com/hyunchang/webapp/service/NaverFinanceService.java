@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -158,7 +159,7 @@ public class NaverFinanceService {
             }
             log.debug("Naver 개별 종목 한글명 미발견 [{}]", code);
             return null;
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.warn("Naver 개별 종목 한글명 조회 실패 [{}]: {}", code, e.getMessage());
             return null;
         }
@@ -230,7 +231,7 @@ public class NaverFinanceService {
             log.info("Naver Finance {} HTML 파싱 완료: {}개 종목", marketName, result.size());
             return result;
 
-        } catch (Exception e) {
+        } catch (IOException e) {
             String marketName = "0".equals(market) ? "KOSPI" : "KOSDAQ";
             log.warn("Naver Finance {} HTML 파싱 실패: {}", marketName, e.getMessage());
             return Collections.emptyList();

@@ -16,14 +16,17 @@ import org.xml.sax.InputSource;
 import jakarta.annotation.PreDestroy;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.IOException;
 import java.io.StringReader;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeParseException;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
+import org.springframework.web.client.RestClientException;
 
 /**
  * 주식 뉴스 서비스.
@@ -184,7 +187,11 @@ public class StockNewsService {
                 ).toList();
                 List<StockNewsDto> translated = futures.stream().map(f -> {
                     try { return f.get(30, TimeUnit.SECONDS); }
-                    catch (Exception e) { log.warn("번역 타임아웃: {}", e.getMessage()); return null; }
+                    catch (InterruptedException | ExecutionException | TimeoutException e) {
+                        log.warn("번역 타임아웃: {}", e.getMessage());
+                        if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                        return null;
+                    }
                 }).filter(Objects::nonNull).toList();
                 usNewsCache     = translated;
                 usNewsCacheTime = System.currentTimeMillis();
@@ -221,7 +228,10 @@ public class StockNewsService {
         List<StockNewsDto> all = new ArrayList<>();
         for (Future<List<StockNewsDto>> f : futures) {
             try { all.addAll(f.get(FETCH_TIMEOUT_SEC, TimeUnit.SECONDS)); }
-            catch (Exception e) { log.warn("RSS 소스 타임아웃 또는 오류: {}", e.getMessage()); }
+            catch (InterruptedException | ExecutionException | TimeoutException e) {
+                log.warn("RSS 소스 타임아웃 또는 오류: {}", e.getMessage());
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            }
         }
 
         // 최신 기사 우선 정렬
@@ -234,7 +244,7 @@ public class StockNewsService {
         if (pubDate == null || pubDate.isBlank()) return 0L;
         try {
             return ZonedDateTime.parse(pubDate.trim(), RSS_DATE_FMT).toEpochSecond();
-        } catch (Exception e) {
+        } catch (DateTimeParseException e) {
             return 0L;
         }
     }
@@ -284,7 +294,7 @@ public class StockNewsService {
                         log.debug("오래된 기사 제외 [{}]: {}", sourceName, title);
                         continue;
                     }
-                } catch (Exception ignore) {}
+                } catch (DateTimeParseException ignore) {}
             }
 
             if (!isStockRelated(title, desc, market)) {
@@ -347,9 +357,9 @@ public class StockNewsService {
             String result = sb.toString().trim();
             if (result.isEmpty()) return text;
             try { result = URLDecoder.decode(result, StandardCharsets.UTF_8); }
-            catch (Exception ignore) {}
+            catch (IllegalArgumentException ignore) {}
             return result;
-        } catch (Exception e) {
+        } catch (RestClientException | IOException e) {
             log.warn("번역 실패: {}", e.getMessage());
             return text;
         }

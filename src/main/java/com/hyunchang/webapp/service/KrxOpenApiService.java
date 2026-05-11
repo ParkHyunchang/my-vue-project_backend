@@ -7,6 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -179,8 +180,11 @@ public class KrxOpenApiService {
                     log.info("KRX API {} 조회 성공 (기준일 {}): {}개 종목", suffix, date, result.size());
                     return result;
                 }
-            } catch (Exception e) {
+            } catch (IOException | InterruptedException e) {
                 log.debug("KRX API 조회 실패 (기준일 {}): {}", date, e.getMessage());
+                if (e instanceof InterruptedException) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
         log.warn("KRX API {} 최근 7 영업일 모두 빈 결과", suffix);
@@ -188,7 +192,7 @@ public class KrxOpenApiService {
     }
 
     private List<NaverFinanceService.NaverStockData> callKrxApi(String url, String basDd, String suffix)
-            throws Exception {
+            throws IOException, InterruptedException {
         String body = "{\"basDd\":\"" + basDd + "\"}";
 
         HttpRequest request = HttpRequest.newBuilder()
@@ -215,7 +219,7 @@ public class KrxOpenApiService {
      * MKTCAP 단위: 백만원 → 원 변환 (× 1,000,000).
      * FLUC_TP_CD: "1"=상승, "2"=하락, "3"=보합.
      */
-    private List<NaverFinanceService.NaverStockData> parseResponse(String json, String suffix) throws Exception {
+    private List<NaverFinanceService.NaverStockData> parseResponse(String json, String suffix) throws IOException {
         JsonNode root  = objectMapper.readTree(json);
         JsonNode items = root.path("OutBlock_1");
 

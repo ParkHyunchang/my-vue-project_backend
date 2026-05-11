@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.ChatMessage;
@@ -67,7 +68,7 @@ public class ClaudeService {
             JsonNode root = objectMapper.readTree(responseBody);
             JsonNode typeNode = root.path("error").path("type");
             return typeNode.isMissingNode() ? "unknown" : typeNode.asText();
-        } catch (Exception e) {
+        } catch (JsonProcessingException e) {
             return "unknown";
         }
     }

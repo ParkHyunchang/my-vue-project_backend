@@ -17,6 +17,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.io.IOException;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -356,8 +357,9 @@ public class StockService {
             try {
                 YahooFinanceService.RawQuote raw = futures.get(i).get(12, TimeUnit.SECONDS);
                 if (raw != null) raws.add(raw);
-            } catch (Exception e) {
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
                 log.warn("Top10 종목 조회 실패 [{}]: {}", stocks.get(i)[0], e.getMessage());
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             }
         }
         exec.shutdown();
@@ -449,8 +451,9 @@ public class StockService {
             try {
                 StockHeatmapItemDto item = futures.get(i).get(10, TimeUnit.SECONDS);
                 if (item != null) resultMap.put(krStocks.get(i)[0], item);
-            } catch (Exception e) {
+            } catch (InterruptedException | ExecutionException | TimeoutException e) {
                 log.warn("히트맵 종목 조회 실패 [{}]: {}", krStocks.get(i)[0], e.getMessage());
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             }
         }
         exec.shutdown();
@@ -482,7 +485,7 @@ public class StockService {
                 baseRanks.putAll(loaded);
                 log.info("[순위 기준점 로드] 파일에서 {}개 마켓 복원 ({})", loaded.size(), BASE_RANKS_FILE);
                 return;
-            } catch (Exception e) {
+            } catch (IOException e) {
                 log.warn("[순위 기준점 로드] 파일 읽기 실패, 초기 데이터로 기준점 생성: {}", e.getMessage());
             }
         }
@@ -515,7 +518,7 @@ public class StockService {
             file.getParentFile().mkdirs();
             objectMapper.writeValue(file, baseRanks);
             log.info("[순위 기준점 파일 저장] {}", BASE_RANKS_FILE);
-        } catch (Exception e) {
+        } catch (IOException e) {
             log.warn("[순위 기준점 파일 저장] 실패: {}", e.getMessage());
         }
     }
