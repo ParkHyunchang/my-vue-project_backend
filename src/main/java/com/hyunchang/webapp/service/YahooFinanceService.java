@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestTemplate;
 
@@ -35,9 +36,10 @@ public class YahooFinanceService {
     private static final Logger log = LoggerFactory.getLogger(YahooFinanceService.class);
 
     /**
-     * 미국 시총 Top10 후보 심볼 목록 — src/main/resources/stock/us-stocks-fallback.json 에서 로드.
-     * fetchAll()이 Yahoo Finance v8/chart로 각 종목의 실시간 시총을 조회한 뒤
-     * 시총 내림차순으로 정렬하므로, 실제 표시되는 순위는 완전히 동적입니다.
+     * 미국 시총 Top10 폴백용 후보 심볼 목록 — src/main/resources/stock/us-stocks-fallback.json 에서 로드.
+     * 1순위 screener API (fetchTopMarketCapUs)가 차단/실패하는 경우에만 사용되는 안전망이며,
+     * v7/quote 또는 v8/chart로 시총을 조회한 뒤 내림차순 정렬해 상위를 추출합니다.
+     * shares 값은 Yahoo가 marketCap=0을 반환할 때만 가격×주식수 계산용 폴백으로 사용됩니다.
      */
     private List<String[]> usStocksFallback = Collections.emptyList();
 
@@ -55,6 +57,13 @@ public class YahooFinanceService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+
+    // ── Yahoo Finance screener API 인증 토큰 캐시 (30분 TTL) ─────────
+    private static final long CRUMB_TTL_MS = 30 * 60 * 1000L;
+    private volatile String cachedCrumb        = null;
+    private volatile String cachedCookieHeader = null;
+    private volatile long   crumbCachedAt      = 0;
+    private final Object crumbLock = new Object();
 
     public YahooFinanceService(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
@@ -88,15 +97,183 @@ public class YahooFinanceService {
     }
 
     // ─────────────────────────────────────────────────────────────
+    // 동적 시총 상위 조회 (Yahoo Finance screener API)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * Yahoo Finance screener API로 미국 상장 시총 상위 종목을 동적으로 조회합니다.
+     * region=us 필터로 NYSE/NASDAQ 상장 종목(ADR 포함)을 시가총액 내림차순 정렬해 반환합니다.
+     * 하드코딩 후보 풀이 없으므로 시총 변동/신규 상위 진입 종목까지 그대로 반영됩니다.
+     * 실패 시 빈 리스트 반환 — 호출자가 폴백을 처리합니다.
+     */
+    public List<RawQuote> fetchTopMarketCapUs(int count) {
+        if (!refreshYahooAuth()) return Collections.emptyList();
+        try {
+            String body = String.format(java.util.Locale.US, """
+                {
+                  "size": %d,
+                  "offset": 0,
+                  "sortField": "intradaymarketcap",
+                  "sortType": "desc",
+                  "quoteType": "EQUITY",
+                  "topOperator": "AND",
+                  "query": {
+                    "operator": "AND",
+                    "operands": [
+                      {"operator": "EQ", "operands": ["region", "us"]}
+                    ]
+                  },
+                  "userId": "",
+                  "userIdType": "guid"
+                }""", count);
+
+            String url = "https://query2.finance.yahoo.com/v1/finance/screener?crumb="
+                + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8)
+                + "&lang=en-US&region=US";
+
+            HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.set("Accept-Language", "en-US,en;q=0.9");
+            headers.set(HttpHeaders.COOKIE, cachedCookieHeader);
+
+            // String을 body로 넘기면 MappingJackson2HttpMessageConverter가 JSON 문자열로 다시 감싸
+            // ("\"{...}\"") 전송해서 Yahoo가 401로 거부함. byte[]로 넘기면 ByteArrayHttpMessageConverter가
+            // 원본 그대로 송신.
+            byte[] bodyBytes = body.getBytes(StandardCharsets.UTF_8);
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.POST, new HttpEntity<>(bodyBytes, headers), String.class);
+
+            JsonNode quotes = objectMapper.readTree(resp.getBody())
+                .path("finance").path("result").path(0).path("quotes");
+
+            List<RawQuote> raws = new ArrayList<>();
+            for (JsonNode q : quotes) {
+                String symbol = q.path("symbol").asText("").trim();
+                if (symbol.isEmpty()) continue;
+
+                String longName  = q.path("longName").asText("").trim();
+                String shortName = q.path("shortName").asText("").trim();
+                String name = !longName.isEmpty() ? longName
+                            : !shortName.isEmpty() ? shortName : symbol;
+                String koName = resolveUsStockName(symbol);
+                if (koName != null && !koName.isBlank()) name = koName;
+
+                double price     = readNumber(q.path("regularMarketPrice"));
+                double change    = readNumber(q.path("regularMarketChange"));
+                double changePct = readNumber(q.path("regularMarketChangePercent"));
+                long   mktCap    = (long) readNumber(q.path("marketCap"));
+                long   volume    = (long) readNumber(q.path("regularMarketVolume"));
+
+                if (price == 0 || mktCap == 0) continue;
+
+                raws.add(new RawQuote(symbol, name, price,
+                    Math.round(change * 100.0) / 100.0,
+                    Math.round(changePct * 100.0) / 100.0,
+                    mktCap, volume));
+            }
+            log.info("Yahoo screener 동적 조회 완료: {}개 종목 (시총 내림차순, ADR 포함)", raws.size());
+            return raws;
+
+        } catch (RestClientException | IOException e) {
+            log.warn("Yahoo screener 조회 실패: {}", e.getMessage());
+            if (e instanceof HttpStatusCodeException hsce
+                    && hsce.getStatusCode().value() == 401) {
+                synchronized (crumbLock) { cachedCrumb = null; } // crumb 만료 — 재발급 유도
+            }
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Yahoo Finance screener API 호출에 필요한 cookie + crumb 토큰을 갱신합니다.
+     * 30분 TTL 캐싱으로 매 요청마다 토큰 재발급 비용을 피합니다.
+     */
+    private boolean refreshYahooAuth() {
+        synchronized (crumbLock) {
+            long now = System.currentTimeMillis();
+            if (cachedCrumb != null && (now - crumbCachedAt) < CRUMB_TTL_MS) return true;
+
+            try {
+                // 1) 세션 쿠키 획득.
+                //    fc.yahoo.com이 A3 쿠키를 가장 빠르게 발급해주지만 응답이 404로 떨어지므로
+                //    HttpStatusCodeException에서도 응답 헤더에서 Set-Cookie를 추출해야 함.
+                HttpHeaders cookieHeaders = buildBrowserHeaders("https://finance.yahoo.com/");
+                List<String> setCookies = null;
+                try {
+                    ResponseEntity<String> fcResp = restTemplate.exchange(
+                        "https://fc.yahoo.com/", HttpMethod.GET,
+                        new HttpEntity<>(cookieHeaders), String.class);
+                    setCookies = fcResp.getHeaders().get(HttpHeaders.SET_COOKIE);
+                } catch (HttpStatusCodeException e) {
+                    HttpHeaders errHeaders = e.getResponseHeaders();
+                    setCookies = (errHeaders != null) ? errHeaders.get(HttpHeaders.SET_COOKIE) : null;
+                } catch (RestClientException ignored) {
+                    // 네트워크 차단 등으로 fc.yahoo.com 자체가 실패한 경우 — finance.yahoo.com 폴백
+                }
+                if (setCookies == null || setCookies.isEmpty()) {
+                    try {
+                        ResponseEntity<String> mainResp = restTemplate.exchange(
+                            "https://finance.yahoo.com/", HttpMethod.GET,
+                            new HttpEntity<>(cookieHeaders), String.class);
+                        setCookies = mainResp.getHeaders().get(HttpHeaders.SET_COOKIE);
+                    } catch (HttpStatusCodeException e) {
+                        setCookies = e.getResponseHeaders() != null
+                            ? e.getResponseHeaders().get(HttpHeaders.SET_COOKIE) : null;
+                    }
+                }
+                if (setCookies == null || setCookies.isEmpty()) {
+                    log.warn("Yahoo 인증 쿠키 획득 실패");
+                    return false;
+                }
+                String cookieHeader = setCookies.stream()
+                    .map(c -> c.split(";", 2)[0])
+                    .collect(Collectors.joining("; "));
+
+                // 2) crumb 토큰 발급 — query2 호스트만 A3 쿠키 기반 발급을 받아주고,
+                //    query1은 "Invalid Cookie"로 거부함. (Yahoo 내부 정책 변경)
+                HttpHeaders crumbHeaders = buildBrowserHeaders("https://finance.yahoo.com/");
+                crumbHeaders.set(HttpHeaders.COOKIE, cookieHeader);
+                ResponseEntity<String> crumbResp = restTemplate.exchange(
+                    "https://query2.finance.yahoo.com/v1/test/getcrumb",
+                    HttpMethod.GET, new HttpEntity<>(crumbHeaders), String.class);
+                String crumb = crumbResp.getBody();
+                if (crumb == null || crumb.isBlank()) {
+                    log.warn("Yahoo crumb 응답 비어있음");
+                    return false;
+                }
+                cachedCrumb        = crumb.trim();
+                cachedCookieHeader = cookieHeader;
+                crumbCachedAt      = now;
+                log.info("Yahoo 인증 토큰 갱신 완료");
+                return true;
+
+            } catch (RestClientException e) {
+                log.warn("Yahoo 인증 토큰 갱신 실패: {}", e.getMessage());
+                return false;
+            }
+        }
+    }
+
+    /** Yahoo 응답의 숫자 필드 — formatted=true(객체 {raw, fmt}) / false(스칼라) 모두 처리. */
+    private double readNumber(JsonNode node) {
+        if (node.isMissingNode() || node.isNull()) return 0;
+        if (node.isObject()) return node.path("raw").asDouble(0);
+        return node.asDouble(0);
+    }
+
+    // ─────────────────────────────────────────────────────────────
     // 여러 종목 일괄 시세 조회 (v7/quote — 시총 정확도 높음)
     // ─────────────────────────────────────────────────────────────
 
     /**
      * Yahoo Finance v7/quote API로 여러 종목을 한 번에 조회합니다.
      * v8/chart 개별 호출 대비 시가총액 데이터가 정확하며 API 호출 횟수가 1회로 줄어듭니다.
+     * 2025년부터 Yahoo가 v7/quote에도 cookie + crumb 인증을 요구하기 시작하여 인증 토큰을 갱신해 사용합니다.
      * 실패 시 빈 리스트를 반환하고 호출자가 폴백을 처리합니다.
      */
     public List<RawQuote> fetchBulkQuotes(List<String[]> stocks) {
+        if (!refreshYahooAuth()) return Collections.emptyList();
+
         StringJoiner sj = new StringJoiner(",");
         Map<String, String[]> stockMap = new HashMap<>();
         for (String[] s : stocks) {
@@ -105,12 +282,14 @@ public class YahooFinanceService {
         }
 
         try {
-            String url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols="
+            String url = "https://query2.finance.yahoo.com/v7/finance/quote?symbols="
                 + sj
-                + "&lang=en-US&region=US";
+                + "&lang=en-US&region=US&crumb="
+                + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8);
 
             HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
             headers.set("Accept-Language", "en-US,en;q=0.9");
+            headers.set(HttpHeaders.COOKIE, cachedCookieHeader);
             ResponseEntity<String> resp = restTemplate.exchange(
                 url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
@@ -150,6 +329,10 @@ public class YahooFinanceService {
 
         } catch (RestClientException | IOException | NumberFormatException e) {
             log.warn("Yahoo Finance v7/quote 일괄 조회 실패: {}", e.getMessage());
+            if (e instanceof HttpStatusCodeException hsce
+                    && hsce.getStatusCode().value() == 401) {
+                synchronized (crumbLock) { cachedCrumb = null; } // crumb 만료 — 재발급 유도
+            }
             return Collections.emptyList();
         }
     }

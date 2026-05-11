@@ -128,27 +128,46 @@ public class StockService {
         return result;
     }
 
-    /** 미국 시총 Top 10 (Yahoo Finance v7/quote 일괄 조회 → 실패 시 v8/chart 개별 폴백) */
+    /**
+     * 미국 시총 Top 10.
+     * 1순위: Yahoo Finance screener API — 미국 상장 전체에서 시총 상위 동적 조회 (ADR 포함, 하드코딩 없음)
+     * 2순위: 정적 후보 풀 + v7/quote 일괄 조회 (screener crumb 인증 실패 대비 폴백)
+     * 3순위: v8/chart 개별 조회 (v7/quote마저 차단된 경우 최후 폴백)
+     */
     public List<StockQuoteDto> getTop10US() {
         Long cachedAt = cacheTimes.get("US");
         if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < TOP10_CACHE_TTL_MS) {
             log.info("Stock 캐시 히트 [US]");
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
-        List<String[]> stocks = yahooService.getUsStocksFallback();
 
-        List<YahooFinanceService.RawQuote> raws = yahooService.fetchBulkQuotes(stocks);
+        // 1순위: screener API (Top 15 정도 받아둬야 ADR 포함 시 안정적으로 10개 채워짐)
+        List<YahooFinanceService.RawQuote> raws = yahooService.fetchTopMarketCapUs(15);
+        String source = "screener API";
+
+        // 2순위: screener 실패 시 — 정적 후보 풀 + v7/quote
+        if (raws.isEmpty()) {
+            log.warn("Yahoo screener 실패 — 정적 후보 풀 + v7/quote로 폴백");
+            raws = yahooService.fetchBulkQuotes(yahooService.getUsStocksFallback());
+            source = "v7/quote 폴백";
+        }
+
+        // 3순위: v7/quote도 실패 시 — v8/chart 개별 호출
         List<StockQuoteDto> result;
         if (!raws.isEmpty()) {
             result = buildQuoteDtos("US", raws, "USD");
         } else {
             log.warn("v7/quote 일괄 조회 실패 — v8/chart 개별 조회로 폴백");
-            result = fetchAll("US", stocks, "USD");
+            result = fetchAll("US", yahooService.getUsStocksFallback(), "USD");
+            source = "v8/chart 폴백";
         }
 
+        // 시총 순위 표시는 Top10까지만
+        if (result.size() > 10) result = new ArrayList<>(result.subList(0, 10));
+
         if (!result.isEmpty()) {
-            log.info("미국 시총 Top10 조회 완료: 후보 {}개 중 상위 {}개 선별 (실시간 시총 정렬)",
-                stocks.size(), result.size());
+            log.info("미국 시총 Top10 조회 완료 [{}]: {}개 종목 (실시간 시총 정렬)",
+                source, result.size());
             quoteCache.put("US", result);
             cacheTimes.put("US", System.currentTimeMillis());
         }
