@@ -226,8 +226,9 @@ public class KrxOpenApiService {
     /**
      * KRX API 응답 파싱.
      * OutBlock_1 배열의 모든 종목을 반환 (정렬 없음 — 호출자가 필요 시 정렬).
-     * MKTCAP 단위: 백만원 → 원 변환 (× 1,000,000).
-     * FLUC_TP_CD: "1"=상승, "2"=하락, "3"=보합.
+     * 응답 필드: ISU_CD(6자리 단축코드), ISU_NM(종목명), TDD_CLSPRC(종가),
+     * CMPPREVDD_PRC(전일대비, 부호 포함), FLUC_RT(등락률, 부호 포함),
+     * ACC_TRDVOL(누적거래량), MKTCAP(시가총액, 원 단위).
      */
     private List<NaverFinanceService.NaverStockData> parseResponse(String json, String suffix) throws IOException {
         JsonNode root  = objectMapper.readTree(json);
@@ -238,25 +239,19 @@ public class KrxOpenApiService {
         List<NaverFinanceService.NaverStockData> result = new ArrayList<>(items.size());
 
         for (JsonNode item : items) {
-            String shortCode = item.path("ISU_SRT_CD").asText("").trim();
+            String shortCode = item.path("ISU_CD").asText("").trim();
             if (shortCode.length() != 6) continue;
 
-            String name = item.path("ISU_ABBRV").asText("").trim();
+            String name = item.path("ISU_NM").asText("").trim();
             if (name.isEmpty()) continue;
 
             // 거래 없는 날의 우선주 등은 price==0 일 수 있으나, 이름 룩업용으로
             // 캐시에는 포함시킵니다. 시세 조회는 getKrPrice() 쪽에서 price==0 을 걸러냅니다.
-            double price = parseDouble(item.path("TDD_CLSPRC").asText("0"));
-
-            double changeAbs  = parseDouble(item.path("CMPPREVDD_PRC").asText("0"));
+            double price      = parseDouble(item.path("TDD_CLSPRC").asText("0"));
+            double change     = parseDouble(item.path("CMPPREVDD_PRC").asText("0"));
             double changeRate = parseDouble(item.path("FLUC_RT").asText("0"));
-            String flucTp     = item.path("FLUC_TP_CD").asText("3");
-
-            double change = "2".equals(flucTp) ? -Math.abs(changeAbs) : Math.abs(changeAbs);
-            if ("2".equals(flucTp) && changeRate > 0) changeRate = -changeRate;
-
-            long volume = parseLong(item.path("ACC_TRDVOL").asText("0"));
-            long mktcap = parseLong(item.path("MKTCAP").asText("0")) * 1_000_000L;
+            long   volume     = parseLong(item.path("ACC_TRDVOL").asText("0"));
+            long   mktcap     = parseLong(item.path("MKTCAP").asText("0"));
 
             result.add(new NaverFinanceService.NaverStockData(
                 shortCode + suffix, name, price,
