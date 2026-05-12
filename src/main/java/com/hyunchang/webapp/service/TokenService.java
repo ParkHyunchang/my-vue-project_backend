@@ -1,13 +1,11 @@
 package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.config.JwtUtil;
-import com.hyunchang.webapp.entity.RevokedToken;
 import com.hyunchang.webapp.repository.RevokedTokenRepository;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -85,12 +83,9 @@ public class TokenService {
             return;
         }
         if (jti == null || exp == null) return;
-        if (revokedTokenRepository.existsByJti(jti)) return;
-        try {
-            revokedTokenRepository.saveAndFlush(new RevokedToken(jti, exp.toInstant()));
-        } catch (DataIntegrityViolationException duplicate) {
-            // 동시 logout 요청으로 다른 트랜잭션이 먼저 등록한 경우 멱등 처리
-        }
+        // INSERT IGNORE 로 DB 레벨 멱등 보장 — 동시 logout 요청이 같은 jti 를 두 번 등록해도
+        // 두 번째는 영향 행 0으로 조용히 무시되어 트랜잭션이 rollback-only 로 표시되지 않는다.
+        revokedTokenRepository.insertIgnore(jti, exp.toInstant());
     }
 
     public boolean isRevoked(String jti) {
