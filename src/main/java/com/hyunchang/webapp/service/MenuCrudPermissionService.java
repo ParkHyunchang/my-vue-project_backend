@@ -84,7 +84,7 @@ public class MenuCrudPermissionService {
 
         defaults.put("USER", Arrays.asList(
             perm("/", false, true, false, false),
-            perm("/portfolio", false, true, false, false),
+            perm("/portfolio", true, true, true, true),
             perm("/projects", false, true, false, false),
             perm("/todos", false, true, false, false),
             perm("/todos/create", false, true, false, false)
