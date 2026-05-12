@@ -63,20 +63,14 @@ public class HistoryController {
     @PostMapping
     public ResponseEntity<?> create(@RequestBody History history) {
         if (!hasAccess()) return forbidden();
-        History created = historyService.create(history, SecurityUtils.getCurrentUserId());
-        log.info("[HISTORY] user={}, action=CREATE, id={}, title={}",
-                SecurityUtils.getCurrentUserId(), created.getId(), created.getTitle());
-        return ResponseEntity.ok(created);
+        return ResponseEntity.ok(historyService.create(history, SecurityUtils.getCurrentUserId()));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody History history) {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        History updated = historyService.update(id, history, SecurityUtils.getCurrentUserId(), roleName);
-        log.info("[HISTORY] user={}, action=UPDATE, id={}, title={}",
-                SecurityUtils.getCurrentUserId(), id, updated.getTitle());
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(historyService.update(id, history, SecurityUtils.getCurrentUserId(), roleName));
     }
 
     @DeleteMapping("/{id}")
@@ -84,8 +78,6 @@ public class HistoryController {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
         historyService.delete(id, SecurityUtils.getCurrentUserId(), roleName);
-        log.info("[HISTORY] user={}, action=DELETE, id={}",
-                SecurityUtils.getCurrentUserId(), id);
         return ResponseEntity.ok().body("삭제되었습니다.");
     }
 

@@ -63,33 +63,21 @@ public class DatingController {
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Dating dating) {
         if (!hasAccess()) return forbidden();
-        Dating created = datingService.create(dating, SecurityUtils.getCurrentUserId());
-        log.info("[DATING] user={}, action=CREATE, id={}, title={}, date={}, category={}",
-                SecurityUtils.getCurrentUserId(), created.getId(),
-                created.getTitle(), created.getDate() != null ? created.getDate() : created.getStartDate(),
-                created.getCategory());
-        return ResponseEntity.ok(created);
+        return ResponseEntity.ok(datingService.create(dating, SecurityUtils.getCurrentUserId()));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Dating dating) {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        Dating updated = datingService.update(id, dating, SecurityUtils.getCurrentUserId(), roleName);
-        log.info("[DATING] user={}, action=UPDATE, id={}, title={}",
-                SecurityUtils.getCurrentUserId(), id, updated.getTitle());
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(datingService.update(id, dating, SecurityUtils.getCurrentUserId(), roleName));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        Dating target = datingService.findById(id);
-        String title = target != null ? target.getTitle() : "id=" + id;
         datingService.delete(id, SecurityUtils.getCurrentUserId(), roleName);
-        log.info("[DATING] user={}, action=DELETE, id={}, title={}",
-                SecurityUtils.getCurrentUserId(), id, title);
         return ResponseEntity.ok().body("삭제되었습니다.");
     }
 

@@ -2,16 +2,23 @@ package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.Expense;
 import com.hyunchang.webapp.repository.ExpenseRepository;
+import com.hyunchang.webapp.util.SecurityUtils;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 
 @Service
 public class ExpenseService {
+    private static final Logger log = LoggerFactory.getLogger(ExpenseService.class);
+
     private final ExpenseRepository expenseRepository;
 
     public ExpenseService(ExpenseRepository expenseRepository) {
@@ -35,22 +42,64 @@ public class ExpenseService {
         if (expense.getCreatedAt() == null) {
             expense.setCreatedAt(LocalDateTime.now());
         }
-        return expenseRepository.save(expense);
+        Expense saved = expenseRepository.save(expense);
+        log.info("[EXPENSE] user={}({}), CREATE id={} title={} type={} amount={} category={} fixed={}",
+            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
+            saved.getId(), saved.getTitle(), saved.getType(), saved.getAmount(), saved.getCategory(), saved.isFixed());
+        return saved;
     }
 
     public Expense update(Long id, Expense expense) {
         Expense existingExpense = findById(id);
+
+        String oldTitle = existingExpense.getTitle();
+        String oldDescription = existingExpense.getDescription();
+        Long oldAmount = existingExpense.getAmount();
+        String oldCategory = existingExpense.getCategory();
+        String oldType = existingExpense.getType();
+        boolean oldFixed = existingExpense.isFixed();
+
         existingExpense.setTitle(expense.getTitle());
         existingExpense.setDescription(expense.getDescription());
         existingExpense.setAmount(expense.getAmount());
         existingExpense.setCategory(expense.getCategory());
         existingExpense.setType(expense.getType());
         existingExpense.setFixed(expense.isFixed());
-        return expenseRepository.save(existingExpense);
+        Expense saved = expenseRepository.save(existingExpense);
+
+        List<String> diffs = new ArrayList<>();
+        if (!Objects.equals(oldTitle, saved.getTitle())) {
+            diffs.add(String.format("title '%s'→'%s'", oldTitle, saved.getTitle()));
+        }
+        if (!Objects.equals(oldAmount, saved.getAmount())) {
+            diffs.add(String.format("amount %s→%s", oldAmount, saved.getAmount()));
+        }
+        if (!Objects.equals(oldCategory, saved.getCategory())) {
+            diffs.add(String.format("category %s→%s", oldCategory, saved.getCategory()));
+        }
+        if (!Objects.equals(oldType, saved.getType())) {
+            diffs.add(String.format("type %s→%s", oldType, saved.getType()));
+        }
+        if (oldFixed != saved.isFixed()) {
+            diffs.add(String.format("fixed %s→%s", oldFixed, saved.isFixed()));
+        }
+        if (!Objects.equals(oldDescription, saved.getDescription())) {
+            diffs.add("description (변경됨)");
+        }
+
+        log.info("[EXPENSE] user={}({}), UPDATE id={} {}",
+            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
+            saved.getId(),
+            diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
+        return saved;
     }
 
     public void delete(Long id) {
+        Expense expense = findById(id);
         expenseRepository.deleteById(id);
+        log.info("[EXPENSE] user={}({}), DELETE id={} title={} type={} amount={}",
+            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
+            expense.getId(), expense.getTitle(), expense.getType(), expense.getAmount());
     }
 
     public List<Expense> findByType(String type) {
