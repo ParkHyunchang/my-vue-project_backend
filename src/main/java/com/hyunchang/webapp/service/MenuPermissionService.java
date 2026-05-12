@@ -28,6 +28,12 @@ public class MenuPermissionService {
             .collect(Collectors.toList());
     }
 
+    public boolean hasMenuAccess(String roleName, String menuPath) {
+        if ("ADMIN".equals(roleName)) return true;
+        return menuPermissionRepository.findByRoleName(roleName).stream()
+            .anyMatch(p -> p.getMenuPath().equals(menuPath));
+    }
+
     public Map<String, List<String>> getAllMenuPermissions() {
         return menuPermissionRepository.findAll().stream()
             .collect(Collectors.groupingBy(

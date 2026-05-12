@@ -8,7 +8,6 @@ import com.hyunchang.webapp.exception.DuplicateException;
 import com.hyunchang.webapp.exception.ForbiddenException;
 import com.hyunchang.webapp.exception.NotFoundException;
 import com.hyunchang.webapp.exception.ValidationException;
-import com.hyunchang.webapp.repository.MenuCrudPermissionRepository;
 import com.hyunchang.webapp.repository.MenuDefinitionRepository;
 import com.hyunchang.webapp.repository.MenuPermissionRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +23,6 @@ public class MenuDefinitionService {
 
     private final MenuDefinitionRepository menuDefinitionRepository;
     private final MenuPermissionRepository menuPermissionRepository;
-    private final MenuCrudPermissionRepository menuCrudPermissionRepository;
 
     @Transactional(readOnly = true)
     public List<MenuDefinitionResponse> getAllMenuDefinitions() {
@@ -117,7 +115,6 @@ public class MenuDefinitionService {
 
         // 연관된 권한 데이터를 먼저 삭제 (트랜잭션 보장)
         menuPermissionRepository.deleteByMenuPath(menu.getPath());
-        menuCrudPermissionRepository.deleteByMenuPath(menu.getPath());
 
         menuDefinitionRepository.deleteById(id);
     }
@@ -171,7 +168,6 @@ public class MenuDefinitionService {
         // /dating_sys 메뉴 삭제 (dating_sys 기능 제거) // 추후 삭제 예정
         menuDefinitionRepository.findByPath("/dating_sys").ifPresent(menu -> {
             menuPermissionRepository.deleteByMenuPath("/dating_sys");
-            menuCrudPermissionRepository.deleteByMenuPath("/dating_sys");
             menuDefinitionRepository.delete(menu);
         });
 

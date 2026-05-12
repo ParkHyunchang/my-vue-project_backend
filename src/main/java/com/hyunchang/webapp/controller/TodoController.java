@@ -2,7 +2,7 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.service.TodoService;
-import com.hyunchang.webapp.service.MenuCrudPermissionService;
+import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -14,26 +14,33 @@ import org.springframework.web.bind.annotation.*;
 @RestController
 @RequestMapping("/api/todos")
 public class TodoController {
-    private final TodoService todoService;
-    private final MenuCrudPermissionService menuCrudPermissionService;
+    private static final String MENU_PATH = "/todos";
 
-    public TodoController(TodoService todoService, MenuCrudPermissionService menuCrudPermissionService) {
+    private final TodoService todoService;
+    private final MenuPermissionService menuPermissionService;
+
+    public TodoController(TodoService todoService, MenuPermissionService menuPermissionService) {
         this.todoService = todoService;
-        this.menuCrudPermissionService = menuCrudPermissionService;
+        this.menuPermissionService = menuPermissionService;
+    }
+
+    private boolean hasAccess() {
+        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+    }
+
+    private ResponseEntity<?> forbidden() {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
     }
 
     @GetMapping
     public ResponseEntity<?> findAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "5") int size) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/todos")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
-        
+        if (!hasAccess()) return forbidden();
+
         Pageable pageable = PageRequest.of(page, size);
         Page<Todo> todoPage = todoService.findAll(pageable);
-        
+
         return ResponseEntity
             .ok()
             .header("X-Total-Count", String.valueOf(todoPage.getTotalElements()))
@@ -42,39 +49,27 @@ public class TodoController {
 
     @GetMapping("/{id}")
     public ResponseEntity<?> findById(@PathVariable Long id) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/todos")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(todoService.findById(id));
     }
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Todo todo) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canCreate(roleName, "/todos")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(todoService.create(todo));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Todo todo) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canUpdate(roleName, "/todos")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(todoService.update(id, todo));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canDelete(roleName, "/todos")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         todoService.delete(id);
         return ResponseEntity.ok().body("삭제되었습니다.");
     }
-    
-} 
+
+}

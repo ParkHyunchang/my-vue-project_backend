@@ -2,7 +2,7 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.Dating;
 import com.hyunchang.webapp.service.DatingService;
-import com.hyunchang.webapp.service.MenuCrudPermissionService;
+import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.UploadPathUtil;
 import org.slf4j.Logger;
@@ -23,15 +23,16 @@ import java.util.UUID;
 @RequestMapping("/api/dating")
 public class DatingController {
     private static final Logger log = LoggerFactory.getLogger(DatingController.class);
+    private static final String MENU_PATH = "/dating";
     private final DatingService datingService;
-    private final MenuCrudPermissionService menuCrudPermissionService;
+    private final MenuPermissionService menuPermissionService;
     private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("dating");
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
 
-    public DatingController(DatingService datingService, MenuCrudPermissionService menuCrudPermissionService) {
+    public DatingController(DatingService datingService, MenuPermissionService menuPermissionService) {
         this.datingService = datingService;
-        this.menuCrudPermissionService = menuCrudPermissionService;
+        this.menuPermissionService = menuPermissionService;
         try {
             Files.createDirectories(UPLOAD_ROOT);
         } catch (IOException e) {
@@ -39,30 +40,29 @@ public class DatingController {
         }
     }
 
+    private boolean hasAccess() {
+        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+    }
+
+    private ResponseEntity<?> forbidden() {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+    }
+
     @GetMapping
     public ResponseEntity<?> findAll() {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(datingService.findAll());
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<?> findById(@PathVariable Long id) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(datingService.findById(id));
     }
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Dating dating) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canCreate(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         Dating created = datingService.create(dating, SecurityUtils.getCurrentUserId());
         log.info("[DATING] user={}, action=CREATE, id={}, title={}, date={}, category={}",
                 SecurityUtils.getCurrentUserId(), created.getId(),
@@ -73,10 +73,8 @@ public class DatingController {
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Dating dating) {
+        if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
-        }
         Dating updated = datingService.update(id, dating, SecurityUtils.getCurrentUserId(), roleName);
         log.info("[DATING] user={}, action=UPDATE, id={}, title={}",
                 SecurityUtils.getCurrentUserId(), id, updated.getTitle());
@@ -85,10 +83,8 @@ public class DatingController {
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
+        if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canDelete(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
-        }
         Dating target = datingService.findById(id);
         String title = target != null ? target.getTitle() : "id=" + id;
         datingService.delete(id, SecurityUtils.getCurrentUserId(), roleName);
@@ -99,10 +95,7 @@ public class DatingController {
 
     @DeleteMapping("/image")
     public ResponseEntity<?> deleteImage(@RequestParam("imagePath") String imagePath) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canDelete(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 삭제 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
 
         try {
             datingService.deleteImageFile(imagePath);
@@ -117,10 +110,7 @@ public class DatingController {
 
     @PostMapping("/upload")
     public ResponseEntity<?> uploadImage(@RequestParam("file") MultipartFile file) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canUpdate(roleName, "/dating")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("미디어 업로드 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
 
         try {
             if (file.isEmpty()) {

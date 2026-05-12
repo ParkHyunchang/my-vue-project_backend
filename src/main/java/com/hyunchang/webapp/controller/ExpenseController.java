@@ -2,7 +2,7 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.entity.Expense;
 import com.hyunchang.webapp.service.ExpenseService;
-import com.hyunchang.webapp.service.MenuCrudPermissionService;
+import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -22,26 +22,33 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/expenses")
 public class ExpenseController {
-    private final ExpenseService expenseService;
-    private final MenuCrudPermissionService menuCrudPermissionService;
+    private static final String MENU_PATH = "/expense";
 
-    public ExpenseController(ExpenseService expenseService, MenuCrudPermissionService menuCrudPermissionService) {
+    private final ExpenseService expenseService;
+    private final MenuPermissionService menuPermissionService;
+
+    public ExpenseController(ExpenseService expenseService, MenuPermissionService menuPermissionService) {
         this.expenseService = expenseService;
-        this.menuCrudPermissionService = menuCrudPermissionService;
+        this.menuPermissionService = menuPermissionService;
+    }
+
+    private boolean hasAccess() {
+        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+    }
+
+    private ResponseEntity<?> forbidden() {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
     }
 
     @GetMapping
     public ResponseEntity<?> findAll(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "100") int size) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
-        
+        if (!hasAccess()) return forbidden();
+
         Pageable pageable = PageRequest.of(page, size);
         Page<Expense> expensePage = expenseService.findAll(pageable);
-        
+
         return ResponseEntity
             .ok()
             .header("X-Total-Count", String.valueOf(expensePage.getTotalElements()))
@@ -50,47 +57,32 @@ public class ExpenseController {
 
     @GetMapping("/{id}")
     public ResponseEntity<?> findById(@PathVariable Long id) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(expenseService.findById(id));
     }
 
     @PostMapping
     public ResponseEntity<?> create(@RequestBody Expense expense) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canCreate(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("생성 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(expenseService.create(expense));
     }
 
     @PutMapping("/{id}")
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Expense expense) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canUpdate(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("수정 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(expenseService.update(id, expense));
     }
 
     @DeleteMapping("/{id}")
     public ResponseEntity<?> delete(@PathVariable Long id) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canDelete(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("삭제 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         expenseService.delete(id);
         return ResponseEntity.ok().body("삭제되었습니다.");
     }
 
     @GetMapping("/fixed")
     public ResponseEntity<?> findFixedExpenses() {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
         return ResponseEntity.ok(expenseService.findFixedExpenses());
     }
 
@@ -99,10 +91,7 @@ public class ExpenseController {
             @RequestParam String startDate,
             @RequestParam String endDate,
             @RequestParam(required = false) Boolean fixed) {
-        String roleName = SecurityUtils.getCurrentUserRoleName();
-        if (!menuCrudPermissionService.canRead(roleName, "/expense")) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("조회 권한이 없습니다.");
-        }
+        if (!hasAccess()) return forbidden();
 
         LocalDateTime start = parseStartDate(startDate);
         LocalDateTime end = parseEndDate(endDate);
@@ -136,7 +125,7 @@ public class ExpenseController {
             @RequestParam String endDate) {
         LocalDateTime start = LocalDateTime.parse(startDate);
         LocalDateTime end = LocalDateTime.parse(endDate);
-        
+
         Map<String, Object> summary = new HashMap<>();
         summary.put("totalIncome", expenseService.getTotalIncomeByDateRange(start, end));
         summary.put("totalExpense", expenseService.getTotalExpenseByDateRange(start, end));
@@ -163,4 +152,4 @@ public class ExpenseController {
         }
     }
 
-} 
+}

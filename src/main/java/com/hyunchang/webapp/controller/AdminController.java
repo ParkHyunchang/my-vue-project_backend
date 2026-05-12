@@ -12,7 +12,6 @@ import com.hyunchang.webapp.dto.UserResponse;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.service.MenuDefinitionService;
 import com.hyunchang.webapp.service.MenuPermissionService;
-import com.hyunchang.webapp.service.MenuCrudPermissionService;
 import com.hyunchang.webapp.service.RoleInfoService;
 import com.hyunchang.webapp.service.UserService;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +35,6 @@ public class AdminController {
 
     private final UserService userService;
     private final MenuPermissionService menuPermissionService;
-    private final MenuCrudPermissionService menuCrudPermissionService;
     private final RoleInfoService roleInfoService;
     private final MenuDefinitionService menuDefinitionService;
     
@@ -273,72 +271,6 @@ public class AdminController {
             return ResponseEntity.ok(menuPermissionService.getMenuPermissionsByRoleName(role.toUpperCase()));
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 권한 조회에 실패했습니다.");
-        }
-    }
-    
-    // CRUD 권한 초기화
-    @PostMapping("/crud-permissions/initialize")
-    public ResponseEntity<?> initializeCrudPermissions(Authentication authentication) {
-        if (!isAdmin(authentication)) {
-            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
-        }
-        try {
-            menuCrudPermissionService.initializeDefaultCrudPermissions();
-            log.info("[ADMIN] admin={}, action=INIT_CRUD_PERMISSIONS", authentication.getName());
-            return ResponseEntity.ok("기본 CRUD 권한이 초기화되었습니다.");
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("CRUD 권한 초기화에 실패했습니다.");
-        }
-    }
-
-    // 사용자 본인의 CRUD 권한 조회 (로그인된 사용자 권한 기반)
-    @GetMapping("/user-crud-permissions")
-    public ResponseEntity<?> getUserCrudPermissions(Authentication authentication) {
-        if (authentication == null || !authentication.isAuthenticated()) {
-            return ResponseEntity.status(401).body("인증이 필요합니다.");
-        }
-        try {
-            UserDetails userDetails = (UserDetails) authentication.getPrincipal();
-            User user = userService.findByUserId(userDetails.getUsername())
-                .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
-            return ResponseEntity.ok(menuCrudPermissionService.getPermissionsByRoleName(user.getRole()));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("CRUD 권한 조회에 실패했습니다.");
-        }
-    }
-
-    // 특정 권한의 CRUD 권한 조회
-    @GetMapping("/crud-permissions/{role}")
-    public ResponseEntity<?> getCrudPermissionsByRole(
-            @PathVariable String role,
-            Authentication authentication) {
-        if (!isAdmin(authentication)) {
-            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
-        }
-        try {
-            return ResponseEntity.ok(menuCrudPermissionService.getPermissionsByRoleName(role.toUpperCase()));
-        } catch (Exception e) {
-            return ResponseEntity.badRequest().body("CRUD 권한 조회에 실패했습니다.");
-        }
-    }
-
-    // 특정 권한의 CRUD 권한 저장 (권한별 전체 교체)
-    @PostMapping("/crud-permissions/{role}")
-    public ResponseEntity<?> saveCrudPermissionsByRole(
-            @PathVariable String role,
-            @RequestBody Map<String, Map<String, Boolean>> permissionsData,
-            Authentication authentication) {
-        if (!isAdmin(authentication)) {
-            return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
-        }
-        try {
-            menuCrudPermissionService.saveRoleCrudPermissions(role.toUpperCase(), permissionsData);
-            log.info("[ADMIN] admin={}, action=SAVE_CRUD_PERMISSIONS, role={}",
-                    authentication.getName(), role.toUpperCase());
-            return ResponseEntity.ok("CRUD 권한이 저장되었습니다.");
-        } catch (Exception e) {
-            log.warn("CRUD 권한 저장 실패: role={}", role, e);
-            return ResponseEntity.badRequest().body("CRUD 권한 저장에 실패했습니다.");
         }
     }
     
