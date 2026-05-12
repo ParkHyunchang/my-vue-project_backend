@@ -48,7 +48,7 @@ public class StockHoldingService {
         holding.setAvgPrice(avgPrice);
 
         StockHolding saved = stockHoldingRepository.save(holding);
-        log.info("[PORTFOLIO] user={}({}), CREATE id={} symbol={} market={} quantity={} avgPrice={}",
+        log.info("[STOCK/HOLDING] user={}({}), CREATE id={} symbol={} market={} quantity={} avgPrice={}",
             userId, SecurityUtils.getCurrentUserRoleName(),
             saved.getId(), saved.getSymbol(), saved.getMarket(), saved.getQuantity(), saved.getAvgPrice());
         return saved;
@@ -70,7 +70,7 @@ public class StockHoldingService {
         holding.setAvgPrice(avgPrice);
         StockHolding saved = stockHoldingRepository.save(holding);
 
-        log.info("[PORTFOLIO] user={}({}), UPDATE id={} symbol={} {}",
+        log.info("[STOCK/HOLDING] user={}({}), UPDATE id={} symbol={} {}",
             userId, SecurityUtils.getCurrentUserRoleName(),
             saved.getId(), saved.getSymbol(),
             diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
@@ -81,7 +81,7 @@ public class StockHoldingService {
         StockHolding holding = stockHoldingRepository.findByIdAndUserUserId(id, userId)
             .orElseThrow(() -> new IllegalArgumentException("보유 종목을 찾을 수 없습니다."));
         stockHoldingRepository.delete(holding);
-        log.info("[PORTFOLIO] user={}({}), DELETE id={} symbol={} quantity={} avgPrice={}",
+        log.info("[STOCK/HOLDING] user={}({}), DELETE id={} symbol={} quantity={} avgPrice={}",
             userId, SecurityUtils.getCurrentUserRoleName(),
             holding.getId(), holding.getSymbol(), holding.getQuantity(), holding.getAvgPrice());
     }

@@ -57,6 +57,9 @@ public class ActivityLogInterceptor implements HandlerInterceptor {
         String method = request.getMethod();
         String path = request.getRequestURI();
 
+        // 감사 전용 엔드포인트는 자체적으로 [CATEGORY] VIEW 로그를 남기므로 [ACTION] 중복 기록 생략
+        if (path.startsWith("/api/audit/")) return;
+
         if ("GET".equalsIgnoreCase(method) && isNoisyPath(path)) return;
 
         Long start = (Long) request.getAttribute(START_TIME_ATTR);

@@ -94,15 +94,12 @@ public class StockNewsService {
     );
 
     // 뉴스 RSS 소스 — {출처명, URL, 시장(KR|US)}
+    // 제거됨(2026-05-12): 머니투데이/이데일리/서울경제/아시아경제 — RSS URL 만료·TLS·DNS 문제로 응답 불가
     private static final List<String[]> RSS_SOURCES = List.of(
         // ── 국내 (KR) ────────────────────────────────────────────────
         new String[]{"한국경제",   "https://www.hankyung.com/feed/finance",                                              "KR"},
-        new String[]{"머니투데이", "https://news.mt.co.kr/newsRSS.php?cast=1&SECTION_CD=SC1",                            "KR"},
         new String[]{"연합뉴스",   "https://www.yna.co.kr/rss/economy.xml",                                              "KR"},
         new String[]{"매일경제",   "https://www.mk.co.kr/rss/40300001/",                                                 "KR"},
-        new String[]{"이데일리",   "https://rss.edaily.co.kr/edaily_finance.xml",                                        "KR"},
-        new String[]{"서울경제",   "https://www.sedaily.com/RSS/S1.xml",                                                 "KR"},
-        new String[]{"아시아경제", "https://rss.asiae.co.kr/stockmarket.htm",                                            "KR"},
         // ── 해외 (US) ────────────────────────────────────────────────
         new String[]{"Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories",                                     "US"},
         new String[]{"MarketWatch",   "https://feeds.marketwatch.com/marketwatch/topstories/",                          "US"},
@@ -219,7 +216,7 @@ public class StockNewsService {
             .map(src -> SHARED_POOL.submit(() -> {
                 try { return parseRss(src[1], src[0], src[2]); }
                 catch (Exception e) {
-                    log.warn("RSS 파싱 실패 [{}]: {}", src[0], e.getMessage());
+                    log.warn("RSS 파싱 실패 [{}]: {}", src[0], summarize(e));
                     return Collections.<StockNewsDto>emptyList();
                 }
             }))
@@ -229,7 +226,7 @@ public class StockNewsService {
         for (Future<List<StockNewsDto>> f : futures) {
             try { all.addAll(f.get(FETCH_TIMEOUT_SEC, TimeUnit.SECONDS)); }
             catch (InterruptedException | ExecutionException | TimeoutException e) {
-                log.warn("RSS 소스 타임아웃 또는 오류: {}", e.getMessage());
+                log.warn("RSS 소스 타임아웃 또는 오류: {}", summarize(e));
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
             }
         }
@@ -360,9 +357,21 @@ public class StockNewsService {
             catch (IllegalArgumentException ignore) {}
             return result;
         } catch (RestClientException | IOException e) {
-            log.warn("번역 실패: {}", e.getMessage());
+            log.warn("번역 실패: {}", summarize(e));
             return text;
         }
+    }
+
+    // HTTP 4xx/5xx 응답이 HTML 본문 전체를 메시지에 담는 경우(특히 RestTemplate)
+    // 로그 한 줄이 수십 KB로 폭주하는 것을 막기 위해 200자로 절단.
+    private static String summarize(Throwable t) {
+        if (t == null) return "(null)";
+        String msg = t.getMessage();
+        String type = t.getClass().getSimpleName();
+        if (msg == null || msg.isBlank()) return type;
+        msg = msg.replaceAll("\\s+", " ").trim();
+        if (msg.length() > 200) msg = msg.substring(0, 200) + "…";
+        return type + ": " + msg;
     }
 
     // 곱슬 따옴표·HTML 엔티티 → 표준 문자 정규화 (구글 번역 "aa" 아티팩트 방지)

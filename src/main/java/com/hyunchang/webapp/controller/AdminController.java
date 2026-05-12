@@ -100,7 +100,7 @@ public class AdminController {
 
         try {
             User updatedUser = userService.updateUser(id, request);
-            log.info("[ADMIN] admin={}, action=UPDATE_USER, target_id={}",
+            log.info("[ADMIN/USERS] user={}(ADMIN), UPDATE id={}",
                     authentication.getName(), id);
             return ResponseEntity.ok(UserResponse.from(updatedUser));
         } catch (IllegalArgumentException e) {
@@ -127,7 +127,7 @@ public class AdminController {
             }
 
             userService.deleteUser(id);
-            log.info("[ADMIN] admin={}, action=DELETE_USER, target_id={}, target_user_id={}",
+            log.info("[ADMIN/USERS] user={}(ADMIN), DELETE id={} user_id={}",
                     authentication.getName(), id, targetUserId);
             return ResponseEntity.ok("사용자가 성공적으로 삭제되었습니다.");
         } catch (Exception e) {
@@ -153,7 +153,7 @@ public class AdminController {
             User user = userService.findById(id)
                     .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
             userService.updatePassword(user, newPassword);
-            log.info("[ADMIN] admin={}, action=RESET_PASSWORD, target_id={}", authentication.getName(), id);
+            log.info("[ADMIN/USERS] user={}(ADMIN), RESET_PASSWORD id={}", authentication.getName(), id);
             return ResponseEntity.ok("비밀번호가 성공적으로 변경되었습니다.");
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -211,8 +211,8 @@ public class AdminController {
                 request.getPassword(),
                 request.getRole()
             );
-            log.info("[ADMIN] admin={}, action=CREATE_USER, new_user_id={}, role={}",
-                    authentication.getName(), request.getUserId(), request.getRole());
+            log.info("[ADMIN/USERS] user={}(ADMIN), CREATE id={} user_id={} role={}",
+                    authentication.getName(), user.getId(), request.getUserId(), request.getRole());
             return ResponseEntity.ok(UserResponse.from(user));
         } catch (IllegalArgumentException | com.hyunchang.webapp.exception.UserAlreadyExistsException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -252,7 +252,7 @@ public class AdminController {
             }
             
             menuPermissionService.saveMenuPermissions(request.getPermissions());
-            log.info("[ADMIN] admin={}, action=SAVE_MENU_PERMISSIONS", authentication.getName());
+            log.info("[ADMIN/MENU-PERMS] user={}(ADMIN), SAVE", authentication.getName());
             return ResponseEntity.ok("메뉴 권한이 성공적으로 저장되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 권한 저장에 실패했습니다.");
@@ -299,8 +299,8 @@ public class AdminController {
         }
         try {
             RoleInfoResponse created = roleInfoService.createRoleInfo(request);
-            log.info("[ADMIN] admin={}, action=CREATE_ROLE, role_name={}",
-                    authentication.getName(), request.getRoleName());
+            log.info("[ADMIN/ROLES] user={}(ADMIN), CREATE id={} role_name={}",
+                    authentication.getName(), created.getId(), request.getRoleName());
             return ResponseEntity.ok(created);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -321,7 +321,7 @@ public class AdminController {
         }
         try {
             RoleInfoResponse updated = roleInfoService.updateRoleInfo(id, request);
-            log.info("[ADMIN] admin={}, action=UPDATE_ROLE, id={}", authentication.getName(), id);
+            log.info("[ADMIN/ROLES] user={}(ADMIN), UPDATE id={}", authentication.getName(), id);
             return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -341,7 +341,7 @@ public class AdminController {
         }
         try {
             roleInfoService.deleteRoleInfo(id);
-            log.info("[ADMIN] admin={}, action=DELETE_ROLE, id={}", authentication.getName(), id);
+            log.info("[ADMIN/ROLES] user={}(ADMIN), DELETE id={}", authentication.getName(), id);
             return ResponseEntity.ok("권한이 삭제되었습니다.");
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -378,7 +378,7 @@ public class AdminController {
         }
         try {
             roleInfoService.initializeDefaultRoles();
-            log.info("[ADMIN] admin={}, action=INIT_ROLE_INFOS", authentication.getName());
+            log.info("[ADMIN/ROLES] user={}(ADMIN), INIT", authentication.getName());
             return ResponseEntity.ok("권한 정보가 초기화되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("권한 초기화에 실패했습니다.");
@@ -410,8 +410,8 @@ public class AdminController {
         }
         try {
             MenuDefinitionResponse created = menuDefinitionService.createMenuDefinition(request);
-            log.info("[ADMIN] admin={}, action=CREATE_MENU, path={}, name={}",
-                    authentication.getName(), request.getPath(), request.getName());
+            log.info("[ADMIN/MENUS] user={}(ADMIN), CREATE id={} path={} name={}",
+                    authentication.getName(), created.getId(), request.getPath(), request.getName());
             return ResponseEntity.ok(created);
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());
@@ -432,7 +432,7 @@ public class AdminController {
         }
         try {
             MenuDefinitionResponse updated = menuDefinitionService.updateMenuDefinition(id, request);
-            log.info("[ADMIN] admin={}, action=UPDATE_MENU, id={}, name={}",
+            log.info("[ADMIN/MENUS] user={}(ADMIN), UPDATE id={} name={}",
                     authentication.getName(), id, request.getName());
             return ResponseEntity.ok(updated);
         } catch (IllegalArgumentException e) {
@@ -453,7 +453,7 @@ public class AdminController {
         }
         try {
             menuDefinitionService.updateSortOrders(requests);
-            log.info("[ADMIN] admin={}, action=UPDATE_SORT_ORDERS, count={}", authentication.getName(), requests.size());
+            log.info("[ADMIN/MENUS] user={}(ADMIN), UPDATE_SORT_ORDERS count={}", authentication.getName(), requests.size());
             return ResponseEntity.ok("메뉴 순서가 업데이트되었습니다.");
         } catch (Exception e) {
             return ResponseEntity.badRequest().body("메뉴 순서 업데이트에 실패했습니다.");
@@ -470,7 +470,7 @@ public class AdminController {
         }
         try {
             menuDefinitionService.deleteMenuDefinition(id);
-            log.info("[ADMIN] admin={}, action=DELETE_MENU, id={}", authentication.getName(), id);
+            log.info("[ADMIN/MENUS] user={}(ADMIN), DELETE id={}", authentication.getName(), id);
             return ResponseEntity.ok("메뉴가 삭제되었습니다.");
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(e.getMessage());

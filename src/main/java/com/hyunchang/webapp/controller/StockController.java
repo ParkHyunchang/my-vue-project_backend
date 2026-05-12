@@ -33,6 +33,9 @@ public class StockController {
         this.stockService = stockService;
     }
 
+    // ※ [STOCK/TOP10|HEATMAP|NEWS] VIEW 로그는 폴링에도 같이 찍히는 문제가 있어 제거.
+    //   프론트엔드에서 logAudit('STOCK/...') 으로 "사용자가 진짜로 탭을 클릭한 순간"만 기록한다.
+
     @Operation(summary = "국내 시총 Top 10 (KOSPI)")
     @GetMapping("/top10/kr")
     public ResponseEntity<List<StockQuoteDto>> getTop10KR() {

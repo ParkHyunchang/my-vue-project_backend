@@ -52,6 +52,7 @@ public class StockHoldingController {
             String kor = stockService.resolveStockName(h.getSymbol());
             if (kor != null && !kor.isBlank()) h.setName(kor);
         });
+        // ※ [STOCK/HOLDING] VIEW 로그는 프론트엔드의 logAudit 호출로 이관 (탭 클릭 시점 1회만 기록)
         return ResponseEntity.ok(holdings);
     }
 
