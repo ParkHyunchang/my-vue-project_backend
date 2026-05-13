@@ -33,8 +33,10 @@ jwt:
   cookie-domain: ${JWT_COOKIE_DOMAIN:}
 
 # CORS 허용 도메인 (운영 환경)
-# TODO: HTTPS 인프라 정비 후 http:// 항목과 raw IP origin 제거 예정
+# Synology 역방향 프록시로 HTTPS 종료(3101=Vue, 3201=API). 평문/raw IP origin 제거.
+# 프론트엔드는 nginx /api/ 프록시로 same-origin 호출이라 CORS 자체가 불필요하지만,
+# 직접 호출/모바일/리프레시 경로 대비 HTTPS origin 만 명시적으로 허용.
 # 환경변수로 재정의 가능: APP_CORS_ALLOWED_ORIGINS=도메인1,도메인2,...
 app:
   cors:
-    allowed-origins: "http://hyunchang.synology.me,https://hyunchang.synology.me,http://m.hyunchang.synology.me,https://m.hyunchang.synology.me,http://hyunchang.synology.me:3100,http://hyunchang.synology.me:3200,http://m.hyunchang.synology.me:3100,http://m.hyunchang.synology.me:3200,https://hyunchang.synology.me:3100,https://hyunchang.synology.me:3200,https://m.hyunchang.synology.me:3100,https://m.hyunchang.synology.me:3200,http://125.141.20.218:3100,http://125.141.20.218:3200"
+    allowed-origins: "https://hyunchang.synology.me:3101,https://hyunchang.synology.me:3201,https://m.hyunchang.synology.me:3101,https://m.hyunchang.synology.me:3201"
