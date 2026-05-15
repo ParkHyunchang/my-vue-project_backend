@@ -95,6 +95,7 @@ public class StockNewsService {
 
     // 뉴스 RSS 소스 — {출처명, URL, 시장(KR|US)}
     // 제거됨(2026-05-12): 머니투데이/이데일리/서울경제/아시아경제 — RSS URL 만료·TLS·DNS 문제로 응답 불가
+    // 제거됨(2026-05-15): AP News(DNS 해석 불가)·Investopedia(Cloudflare 403 차단) — 다른 소스로 충분히 보충됨
     private static final List<String[]> RSS_SOURCES = List.of(
         // ── 국내 (KR) ────────────────────────────────────────────────
         new String[]{"한국경제",   "https://www.hankyung.com/feed/finance",                                              "KR"},
@@ -104,9 +105,7 @@ public class StockNewsService {
         new String[]{"Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories",                                     "US"},
         new String[]{"MarketWatch",   "https://feeds.marketwatch.com/marketwatch/topstories/",                          "US"},
         new String[]{"CNBC",          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069", "US"},
-        new String[]{"AP News",       "https://feeds.apnews.com/rss/apf-business",                                     "US"},
-        new String[]{"Motley Fool",   "https://www.fool.com/feeds/index.aspx",                                           "US"},
-        new String[]{"Investopedia",  "https://www.investopedia.com/feedbuilder/feed/getfeed/?feedName=rss_articles",    "US"}
+        new String[]{"Motley Fool",   "https://www.fool.com/feeds/index.aspx",                                           "US"}
     );
 
     // #4 뉴스 캐시 + 동시성 보호 락
