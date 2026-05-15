@@ -1,0 +1,128 @@
+package com.hyunchang.webapp.service.ai;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * AI Provider 체인.
+ *
+ * 등록 순서대로 시도:
+ *   1. GeminiProvider
+ *   2. GroqProvider
+ *   3. CloudflareProvider
+ *
+ * 각 단계에서:
+ *   - 키 미설정 → skip
+ *   - rate-limit 메모리에 기록된 차단 시각 이전 → skip
+ *   - 429 응답 → 차단 시각 등록 후 다음 단계로
+ *   - 5xx/네트워크 실패 → 다음 단계로 (차단 등록은 안 함)
+ *   - 성공 → return Success
+ *
+ * 모두 실패하면 AllBlocked 반환. UI 가 다음 가능 시각을 사용자에게 표시.
+ */
+@Service
+public class AiProviderChain {
+    private static final Logger log = LoggerFactory.getLogger(AiProviderChain.class);
+
+    private final List<AiProvider> providers;
+    private final RateLimitTracker rateLimitTracker;
+
+    public AiProviderChain(GeminiProvider gemini, GroqProvider groq, CloudflareProvider cloudflare,
+                           RateLimitTracker rateLimitTracker) {
+        // 체인 순서 (Gemini → Groq → Cloudflare)
+        this.providers = List.of(gemini, groq, cloudflare);
+        this.rateLimitTracker = rateLimitTracker;
+    }
+
+    public ChainResult analyze(String prompt) {
+        for (AiProvider p : providers) {
+            if (!p.isEnabled()) {
+                log.debug("[AI/Chain] {} skip (disabled)", p.getName());
+                continue;
+            }
+            if (rateLimitTracker.isBlocked(p.getName())) {
+                log.debug("[AI/Chain] {} skip (rate-limited until {})", p.getName(),
+                        rateLimitTracker.getBlockedUntil(p.getName()));
+                continue;
+            }
+
+            log.info("[AI/Chain] {} 호출 시도", p.getName());
+            AiProviderResult r = p.generate(prompt);
+            if (r.success()) {
+                log.info("[AI/Chain] {} 응답 성공 ({}자)", p.getName(), r.text().length());
+                return new ChainResult(true, p.getName(), p.getModel(), r.text(), null, currentStatus());
+            }
+            if (r.rateLimited()) {
+                rateLimitTracker.block(p.getName(), r.retryAt());
+                continue;
+            }
+            // 일반 실패 → 다음 provider
+        }
+
+        log.warn("[AI/Chain] 모든 provider 차단 또는 실패");
+        return new ChainResult(false, null, null, null,
+                earliestRetryAt(), currentStatus());
+    }
+
+    private Instant earliestRetryAt() {
+        Instant earliest = null;
+        for (AiProvider p : providers) {
+            if (!p.isEnabled()) continue;
+            Instant until = rateLimitTracker.getBlockedUntil(p.getName());
+            if (until == null) continue;
+            if (earliest == null || until.isBefore(earliest)) earliest = until;
+        }
+        return earliest;
+    }
+
+    /** 현재 각 provider 의 활성/차단 상태 (UI 표시용). */
+    private List<ProviderStatus> currentStatus() {
+        List<ProviderStatus> result = new ArrayList<>();
+        for (AiProvider p : providers) {
+            Instant blockedUntil = p.isEnabled() ? rateLimitTracker.getBlockedUntil(p.getName()) : null;
+            result.add(new ProviderStatus(
+                    p.getName(),
+                    p.getModel(),
+                    p.isEnabled(),
+                    blockedUntil != null,
+                    blockedUntil
+            ));
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    public record ChainResult(
+            boolean success,
+            String providerName,    // 성공 시 응답한 provider 이름
+            String model,           // 성공 시 모델명
+            String text,            // 성공 시 응답 본문
+            Instant retryAt,        // 실패 시 다음 가능 시각 (모든 provider 중 가장 이른 것)
+            List<ProviderStatus> providersStatus
+    ) {
+        public Map<String, Object> toMap() {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("success", success);
+            if (providerName != null) m.put("providerName", providerName);
+            if (model != null) m.put("model", model);
+            if (retryAt != null) m.put("retryAt", retryAt.toString());
+            m.put("providersStatus", providersStatus);
+            return m;
+        }
+    }
+
+    public record ProviderStatus(
+            String name,
+            String model,
+            boolean enabled,
+            boolean blocked,
+            Instant blockedUntil
+    ) {}
+}

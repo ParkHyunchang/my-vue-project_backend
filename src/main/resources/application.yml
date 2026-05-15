@@ -68,6 +68,16 @@ alphavantage:
 anthropic:
   api-key: ${ANTHROPIC_API_KEY}
 
+# AI 종목 분석용 무료 AI Provider 체인 (Gemini → Groq → Cloudflare)
+# 1차 Gemini만 필수, 나머지는 비워두면 자동으로 chain에서 skip
+gemini:
+  api-key: ${GEMINI_API_KEY:}
+groq:
+  api-key: ${GROQ_API_KEY:}
+cloudflare:
+  api-token: ${CLOUDFLARE_API_TOKEN:}
+  account-id: ${CLOUDFLARE_ACCOUNT_ID:}
+
 # CORS 허용 도메인 (로컬 개발 기본값, 배포 환경에서는 각 프로파일 yml에서 재정의)
 # 환경변수로 재정의 가능: APP_CORS_ALLOWED_ORIGINS=도메인1,도메인2,...
 app:
