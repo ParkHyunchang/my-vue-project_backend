@@ -24,7 +24,8 @@ public class GeminiProvider implements AiProvider {
     private static final Logger log = LoggerFactory.getLogger(GeminiProvider.class);
 
     private static final String BASE_URL = "https://generativelanguage.googleapis.com";
-    private static final String MODEL = "gemini-2.0-flash";
+    // 2026-05 변경: gemini-2.0-flash 가 키 한도 이슈로 매번 429 — 최신 + 더 안정적인 모델로 교체
+    private static final String MODEL = "gemini-2.5-flash";
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -70,17 +71,34 @@ public class GeminiProvider implements AiProvider {
 
         } catch (RestClientResponseException e) {
             int status = e.getStatusCode().value();
+            String errSummary = formatErrorBody(e.getResponseBodyAsString());
             if (status == 429) {
                 Instant retryAt = parseRetryAfter(e, Duration.ofMinutes(1));
-                log.warn("[AI/Gemini] 429 rate limited, retryAt={}", retryAt);
+                // 본문에 RESOURCE_EXHAUSTED / quota / billing 같은 reason 이 들어있어 진단에 결정적
+                log.warn("[AI/Gemini] 429 rate limited, retryAt={}, reason={}", retryAt, errSummary);
                 return AiProviderResult.rateLimited(retryAt);
             }
-            log.warn("[AI/Gemini] HTTP {} {}", status, truncate(e.getResponseBodyAsString(), 200));
+            log.warn("[AI/Gemini] HTTP {} — {}", status, errSummary);
             return AiProviderResult.error("Gemini HTTP " + status);
         } catch (Exception e) {
             log.warn("[AI/Gemini] 호출 실패: {}", e.getMessage());
             return AiProviderResult.error(e.getMessage());
         }
+    }
+
+    /** Gemini 에러 응답 body 의 JSON 에서 status·message 만 추출 (로그 가독성↑). */
+    private String formatErrorBody(String body) {
+        if (body == null || body.isBlank()) return "(no body)";
+        try {
+            JsonNode root = objectMapper.readTree(body);
+            JsonNode err = root.path("error");
+            String status = err.path("status").asText("");
+            String message = err.path("message").asText("");
+            if (!status.isBlank() || !message.isBlank()) {
+                return (status.isBlank() ? "" : status + " — ") + truncate(message, 300);
+            }
+        } catch (Exception ignore) { /* fallthrough */ }
+        return truncate(body, 300);
     }
 
     private Instant parseRetryAfter(RestClientResponseException e, Duration fallback) {
