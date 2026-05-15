@@ -144,7 +144,7 @@ public class MenuDefinitionService {
             new DefaultMenu("/dating", "데이팅", "💕", "데이팅 관련 기능", "personal", false, true, "DATING", false, "PREMIUM,ADMIN", 5, null),
             new DefaultMenu("/todos", "할일 목록", "📝", "할일 관리", "productivity", false, true, "TODOS", false, "USER,PREMIUM,ADMIN", 7, null),
             new DefaultMenu("/todos/create", "할일 생성", "➕", "새로운 할일 추가", "productivity", false, false, "할일 생성", false, "USER,PREMIUM,ADMIN", 8, null),
-            new DefaultMenu("/expense", "지출 관리", "💰", "지출 내역 관리", "finance", false, true, "가계부", false, "ADMIN", 9, null),
+            new DefaultMenu("/subscription", "구독 관리", "💳", "정기 결제 서비스 관리", "finance", false, true, "구독", false, "ADMIN", 9, null),
             new DefaultMenu("/stock", "주식 대시보드", "📈", "실시간 주식 시장 데이터 및 포트폴리오", "finance", false, true, "주식", false, "ADMIN", 10, null),
             new DefaultMenu("/admin", "관리자 대시보드", "🎛️", "관리자 메인 대시보드", "admin", false, false, "관리자 대시보드", false, "ADMIN", 11, null),
             new DefaultMenu("/admin/users", "사용자 관리", "👥", "사용자 계정 관리", "admin", false, false, "사용자 관리", true, "ADMIN", 11, null),
@@ -168,6 +168,12 @@ public class MenuDefinitionService {
         // /dating_sys 메뉴 삭제 (dating_sys 기능 제거) // 추후 삭제 예정
         menuDefinitionRepository.findByPath("/dating_sys").ifPresent(menu -> {
             menuPermissionRepository.deleteByMenuPath("/dating_sys");
+            menuDefinitionRepository.delete(menu);
+        });
+
+        // /expense 메뉴 삭제 (가계부 → 구독 관리로 대체) // 추후 삭제 예정
+        menuDefinitionRepository.findByPath("/expense").ifPresent(menu -> {
+            menuPermissionRepository.deleteByMenuPath("/expense");
             menuDefinitionRepository.delete(menu);
         });
 
