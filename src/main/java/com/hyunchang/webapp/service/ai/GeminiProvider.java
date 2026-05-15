@@ -48,7 +48,11 @@ public class GeminiProvider implements AiProvider {
                 )),
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
-                        "temperature", 0.4
+                        "temperature", 0.4,
+                        // 2.5 Flash 의 thinking 모드 — dynamic(-1)은 12~17초로 너무 느려서
+                        // 512 토큰으로 제한해 응답 시간을 절반 수준(6~9초)으로 단축. 품질 손실 거의 없음.
+                        // ※ dynamic thinking 모드로 되돌리려면 아래 한 줄만 주석 처리하면 된다.
+                        "thinkingConfig", Map.of("thinkingBudget", 512)
                 )
         );
 
