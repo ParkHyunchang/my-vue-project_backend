@@ -19,10 +19,14 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -48,14 +52,17 @@ public class PortfolioAnalysisService {
 
     private final StockHoldingService stockHoldingService;
     private final StockService stockService;
+    private final StockSymbolNewsService stockSymbolNewsService;
     private final AiProviderChain aiProviderChain;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PortfolioAnalysisService(StockHoldingService stockHoldingService,
                                     StockService stockService,
+                                    StockSymbolNewsService stockSymbolNewsService,
                                     AiProviderChain aiProviderChain) {
         this.stockHoldingService = stockHoldingService;
         this.stockService = stockService;
+        this.stockSymbolNewsService = stockSymbolNewsService;
         this.aiProviderChain = aiProviderChain;
     }
 
@@ -77,20 +84,25 @@ public class PortfolioAnalysisService {
         // 1. 보유 종목 시세 + 평가손익 계산 (서버에서 정확하게)
         List<HoldingSnapshot> snapshots = buildSnapshots(holdings);
 
+        // 1-1. 보유 종목별 뉴스 헤드라인 1~2건씩 병렬 수집
+        //      (시세만 주면 "추세 양호" 같은 균일 답변이 나와서 종목별 차별화 컨텍스트 추가)
+        Map<String, List<String>> perSymbolNews = fetchPerSymbolNewsParallel(snapshots);
+
         // 2. 시총 Top10 (KR + US) 중 보유 안 한 종목
         Set<String> heldSymbols = new HashSet<>();
         for (StockHolding h : holdings) heldSymbols.add(h.getSymbol().toUpperCase(Locale.ROOT));
         List<StockQuoteDto> top10Pool = pickTop10Candidates(heldSymbols);
 
-        // 3. 시장 뉴스 헤드라인
+        // 3. 시장 뉴스 헤드라인 (거시 보충용)
         List<String> marketHeadlines = collectMarketHeadlines();
 
         // 4. 프롬프트 + chain 호출
-        String prompt = buildPrompt(snapshots, top10Pool, marketHeadlines);
+        String prompt = buildPrompt(snapshots, perSymbolNews, top10Pool, marketHeadlines);
         AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt);
 
-        log.info("[Portfolio/Analysis] user={} 보유 {}개, Top10 후보 {}개, 시장 뉴스 {}건",
-                userId, holdings.size(), top10Pool.size(), marketHeadlines.size());
+        int perSymbolTotal = perSymbolNews.values().stream().mapToInt(List::size).sum();
+        log.info("[Portfolio/Analysis] user={} 보유 {}개, 종목별 뉴스 합 {}건, Top10 후보 {}개, 시장 뉴스 {}건",
+                userId, holdings.size(), perSymbolTotal, top10Pool.size(), marketHeadlines.size());
 
         if (!chainResult.success()) {
             return PortfolioAnalysisResponse.builder()
@@ -174,6 +186,45 @@ public class PortfolioAnalysisService {
                 .toList();
     }
 
+    /**
+     * 보유 종목 각각에 대해 종목별 뉴스 1~2건씩 병렬 수집.
+     * StockSymbolNewsService 가 Google News + Yahoo Finance + AlphaVantage 합산해서 돌려준 결과 중 상위만 채택.
+     * 종목별 컨텍스트를 차별화해서 LLM 응답이 "추세 양호" 같은 균일 문구로 수렴하는 것을 방지한다.
+     */
+    private Map<String, List<String>> fetchPerSymbolNewsParallel(List<HoldingSnapshot> snapshots) {
+        List<CompletableFuture<Map.Entry<String, List<String>>>> futures = new ArrayList<>();
+        for (HoldingSnapshot s : snapshots) {
+            futures.add(CompletableFuture.supplyAsync(() -> {
+                try {
+                    String enName = "US".equalsIgnoreCase(s.market)
+                            ? stockService.getUsEnNames().get(s.symbol.toUpperCase(Locale.ROOT))
+                            : null;
+                    List<StockNewsDto> news = stockSymbolNewsService.fetchForSymbol(s.symbol, s.market, s.name, enName);
+                    List<String> headlines = new ArrayList<>();
+                    for (StockNewsDto n : news) {
+                        if (notBlank(n.getTitle())) headlines.add(n.getTitle().trim());
+                        if (headlines.size() >= 2) break;
+                    }
+                    return Map.entry(s.symbol, headlines);
+                } catch (Exception e) {
+                    log.warn("[Portfolio/Analysis] 종목별 뉴스 fetch 실패 {}: {}", s.symbol, e.getMessage());
+                    return Map.entry(s.symbol, List.<String>of());
+                }
+            }));
+        }
+        Map<String, List<String>> result = new HashMap<>();
+        for (CompletableFuture<Map.Entry<String, List<String>>> f : futures) {
+            try {
+                Map.Entry<String, List<String>> entry = f.get(8, TimeUnit.SECONDS);
+                result.put(entry.getKey(), entry.getValue());
+            } catch (Exception e) {
+                log.warn("[Portfolio/Analysis] 종목별 뉴스 future 실패: {}", e.getMessage());
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            }
+        }
+        return result;
+    }
+
     private List<String> collectMarketHeadlines() {
         List<String> headlines = new ArrayList<>();
         try {
@@ -203,6 +254,7 @@ public class PortfolioAnalysisService {
     // 프롬프트 조립
 
     private String buildPrompt(List<HoldingSnapshot> snapshots,
+                               Map<String, List<String>> perSymbolNews,
                                List<StockQuoteDto> top10Pool,
                                List<String> marketHeadlines) {
         StringBuilder holdingsBlock = new StringBuilder();
@@ -214,6 +266,16 @@ public class PortfolioAnalysisService {
                     .append(s.avgPrice == null ? "미입력" : fmtNum(s.avgPrice, s.market))
                     .append(", 평가손익률: ").append(fmtPnlPct(s.pnlPct))
                     .append(", 일변동률: ").append(fmtPct(s.changePercent)).append("\n");
+            // 종목별 뉴스 헤드라인 1~2건 — 각 종목 분석을 차별화하는 결정적 단서
+            List<String> hl = perSymbolNews == null ? null : perSymbolNews.get(s.symbol);
+            if (hl != null && !hl.isEmpty()) {
+                holdingsBlock.append("   관련 뉴스:\n");
+                for (String title : hl) {
+                    holdingsBlock.append("     - ").append(title).append("\n");
+                }
+            } else {
+                holdingsBlock.append("   관련 뉴스: (수집된 종목별 뉴스 없음)\n");
+            }
         }
 
         StringBuilder top10Block = new StringBuilder();
@@ -259,8 +321,20 @@ public class PortfolioAnalysisService {
                     * HOLD (보유 유지: 추세·펀더멘털 양호)
                     * CUT_LOSS (손절 검토: 손실이 크고 회복 가능성 낮음)
                     * WATCH (관망: 판단 보류, 추가 정보 필요)
-                  - reason 은 2문장 이내, 시세·뉴스 근거 명시.
-                  - newsHint 는 관련 뉴스 한 줄 (없으면 빈 문자열).
+                  - reason 은 2문장 이내. ★★ 반드시 그 종목 고유의 정보를 직접 인용해야 함:
+                    (a) 그 종목의 평가손익률 수치 (예: "+5.13%%") 또는
+                    (b) 그 종목의 일변동률 수치 또는
+                    (c) 그 종목의 '관련 뉴스' 헤드라인에서 따온 고유 키워드(상품명·계약·실적·이슈 등)
+                    셋 중 최소 하나는 reason 본문에 명시적으로 등장해야 함.
+                  - ★★ 모든 holdings 의 reason 을 다 작성한 후 서로 비교 검토할 것.
+                    동일하거나 의미상 거의 같은 표현(핵심 단어가 똑같거나 한두 글자만 다른 경우)이
+                    두 종목 이상에서 발견되면 반드시 처음부터 다시 작성해
+                    모든 reason 이 서로 명확히 구별되도록 할 것.
+                    각 종목마다 서로 다른 뉴스 헤드라인 또는 서로 다른 수치를 인용해서 차별화.
+                  - "추세 양호", "보유 권장", "안정적 성장", "AI 모멘텀", "성장 지속" 같은
+                    여러 종목에 두루 통하는 공통 표현은 금지. 같은 의미의 영어 표현도 금지(예: "strong growth").
+                  - newsHint 는 그 종목의 '관련 뉴스' 중 가장 임팩트 있는 1건의 헤드라인 그대로
+                    (관련 뉴스가 없으면 빈 문자열). 이게 reason 의 핵심 근거여야 함.
                 recommendations: 정확히 2개.
                   - 첫 번째 source="TOP10": 위 시총 Top10 풀에 있는 종목 중에서만 1개 선정.
                   - 두 번째 source="FREE": Top10 풀 밖에서 자유 추천 1개. 실재하는 상장 종목이어야 함.

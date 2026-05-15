@@ -23,6 +23,8 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.StringReader;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
@@ -65,6 +67,14 @@ public class StockSymbolNewsService {
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
     private final String alphaVantageKey;
+
+    // AlphaVantage 무료 한도(25/일, 초당 1회 burst) 메시지를 한 번 받으면 6시간 동안 호출 자체를 skip.
+    // 4종목 동시 호출 시 모든 요청이 한도 메시지를 받고 25/일 카운터만 까먹는 문제를 방지.
+    // 6시간 = 하루 최대 4번 시도(0/6/12/18시 분산) → 25/일 한도 안에서 자연스럽게 갱신.
+    // alphaVantageLock 으로 진짜 HTTP 호출을 직렬화해서 동시 4개 thread 가 모두 한도 메시지 받는 것 방지.
+    private static final Duration ALPHAVANTAGE_BACKOFF = Duration.ofHours(6);
+    private volatile Instant alphaVantageBlockedUntil = null;
+    private final Object alphaVantageLock = new Object();
 
     public StockSymbolNewsService(
             RestTemplate restTemplate,
@@ -152,6 +162,24 @@ public class StockSymbolNewsService {
             log.debug("[SymbolNews/AV] api-key 없음 — skip");
             return List.of();
         }
+        // 빠른 경로: 직전 호출에서 한도 메시지를 받았다면 backoff 동안 호출 자체를 skip (lock 진입 없이 즉시 반환)
+        Instant blockedUntil = alphaVantageBlockedUntil;
+        if (blockedUntil != null && Instant.now().isBefore(blockedUntil)) {
+            log.debug("[SymbolNews/AV] 한도 메시지로 일시 차단 중 (until {}) — skip", blockedUntil);
+            return List.of();
+        }
+        // 실제 HTTP 호출은 직렬화 — 동시 진입한 thread 들이 모두 한도 메시지 받는 race 방지
+        synchronized (alphaVantageLock) {
+            // double-check: 다른 thread 가 먼저 backoff 를 등록했을 수 있음
+            Instant b = alphaVantageBlockedUntil;
+            if (b != null && Instant.now().isBefore(b)) {
+                return List.of();
+            }
+            return doFetchAlphaVantage(ticker);
+        }
+    }
+
+    private List<StockNewsDto> doFetchAlphaVantage(String ticker) {
         String url = "https://www.alphavantage.co/query"
                 + "?function=NEWS_SENTIMENT"
                 + "&tickers=" + URLEncoder.encode(ticker, StandardCharsets.UTF_8)
@@ -166,10 +194,12 @@ public class StockSymbolNewsService {
             if (body == null || body.isBlank()) return List.of();
 
             JsonNode root = objectMapper.readTree(body);
-            // 한도 초과 또는 정보 메시지면 feed 가 비어있음
+            // 한도 초과 또는 정보 메시지면 feed 가 비어있음 — 이후 호출은 backoff 동안 skip
             if (root.has("Note") || root.has("Information")) {
-                log.info("[SymbolNews/AV] {}",
-                        root.has("Note") ? root.path("Note").asText() : root.path("Information").asText());
+                String msg = root.has("Note") ? root.path("Note").asText() : root.path("Information").asText();
+                alphaVantageBlockedUntil = Instant.now().plus(ALPHAVANTAGE_BACKOFF);
+                log.info("[SymbolNews/AV] {} — {}분 동안 차단 (until {})",
+                        msg, ALPHAVANTAGE_BACKOFF.toMinutes(), alphaVantageBlockedUntil);
                 return List.of();
             }
             JsonNode feed = root.path("feed");

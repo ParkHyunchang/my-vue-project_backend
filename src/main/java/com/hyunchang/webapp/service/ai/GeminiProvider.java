@@ -49,10 +49,11 @@ public class GeminiProvider implements AiProvider {
                 "generationConfig", Map.of(
                         "responseMimeType", "application/json",
                         "temperature", 0.4,
-                        // 2.5 Flash 의 thinking 모드 — dynamic(-1)은 12~17초로 너무 느려서
-                        // 512 토큰으로 제한해 응답 시간을 절반 수준(6~9초)으로 단축. 품질 손실 거의 없음.
+                        // 2.5 Flash 의 thinking 모드 — dynamic(-1)은 12~17초로 너무 느려서 제한.
+                        // 256: 4~6초 (살짝 떨어지지만 빠름), 512: 6~9초 (절충), -1: dynamic(원본).
+                        // 포트폴리오 진단 같은 큰 컨텍스트에서 응답 시간을 더 줄이려고 256으로 축소.
                         // ※ dynamic thinking 모드로 되돌리려면 아래 한 줄만 주석 처리하면 된다.
-                        "thinkingConfig", Map.of("thinkingBudget", 512)
+                        "thinkingConfig", Map.of("thinkingBudget", 256)
                 )
         );
 
@@ -80,6 +81,13 @@ public class GeminiProvider implements AiProvider {
                 Instant retryAt = parseRetryAfter(e, Duration.ofMinutes(1));
                 // 본문에 RESOURCE_EXHAUSTED / quota / billing 같은 reason 이 들어있어 진단에 결정적
                 log.warn("[AI/Gemini] 429 rate limited, retryAt={}, reason={}", retryAt, errSummary);
+                return AiProviderResult.rateLimited(retryAt);
+            }
+            if (status >= 500 && status < 600) {
+                // 503(UNAVAILABLE)·502 등 일시적 서버 과부하 — 60초 backoff 등록해서 잠시 다른 provider 우선
+                // (Retry-After 헤더가 있으면 그 값 우선, 없으면 기본 60초)
+                Instant retryAt = parseRetryAfter(e, Duration.ofSeconds(60));
+                log.warn("[AI/Gemini] HTTP {} (일시 장애) — backoff until {}: {}", status, retryAt, errSummary);
                 return AiProviderResult.rateLimited(retryAt);
             }
             log.warn("[AI/Gemini] HTTP {} — {}", status, errSummary);
