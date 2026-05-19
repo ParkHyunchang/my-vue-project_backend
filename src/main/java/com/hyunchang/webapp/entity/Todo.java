@@ -5,6 +5,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 import lombok.AllArgsConstructor;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -18,14 +19,22 @@ public class Todo {
     private String title;
     private String description;
     private Boolean done;
-    
+
+    // 1=낮음, 2=보통(기본), 3=높음. null은 보통으로 취급.
+    private Integer priority;
+
+    @Column(name = "due_date")
+    private LocalDate dueDate;
+
+    private String category;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
-    
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
-    
+
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
     

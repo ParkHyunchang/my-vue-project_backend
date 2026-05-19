@@ -8,7 +8,9 @@ import com.hyunchang.webapp.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,6 +39,26 @@ public class TodoService {
         return todoRepository.findAll(pageable);
     }
 
+    public Page<Todo> search(String q, String status, Integer priority, String category,
+                             String sort, String dir, int page, int size) {
+        String trimmedQ = (q == null || q.isBlank()) ? null : q.trim();
+        String normalizedStatus = (status == null || status.isBlank() || "all".equalsIgnoreCase(status)) ? null : status;
+        String normalizedCategory = (category == null || category.isBlank()) ? null : category;
+        Sort.Direction direction = "asc".equalsIgnoreCase(dir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        Sort sortObj = switch (sort == null ? "" : sort.toLowerCase()) {
+            case "due", "duedate" -> Sort.by(direction, "dueDate").and(Sort.by(Sort.Direction.DESC, "id"));
+            case "priority" -> Sort.by(direction, "priority").and(Sort.by(Sort.Direction.DESC, "id"));
+            case "title" -> Sort.by(direction, "title").and(Sort.by(Sort.Direction.DESC, "id"));
+            default -> Sort.by(direction, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"));
+        };
+        Pageable pageable = PageRequest.of(page, size, sortObj);
+        return todoRepository.search(trimmedQ, normalizedStatus, priority, normalizedCategory, pageable);
+    }
+
+    public List<String> findCategories() {
+        return todoRepository.findDistinctCategories();
+    }
+
     public Todo findById(Long id) {
         return todoRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("Todo not found"));
@@ -47,6 +69,10 @@ public class TodoService {
         if (todo.getDone() == null) {
             todo.setDone(false);
         }
+        if (todo.getPriority() == null) {
+            todo.setPriority(2); // 보통
+        }
+        normalizeCategory(todo);
 
         Todo savedTodo = todoRepository.save(todo);
 
@@ -57,9 +83,10 @@ public class TodoService {
         history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
 
-        log.info("[TODO] user={}({}), CREATE id={} title={} done={}",
+        log.info("[TODO] user={}({}), CREATE id={} title={} done={} priority={} due={} category={}",
             SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            savedTodo.getId(), savedTodo.getTitle(), savedTodo.getDone());
+            savedTodo.getId(), savedTodo.getTitle(), savedTodo.getDone(),
+            savedTodo.getPriority(), savedTodo.getDueDate(), savedTodo.getCategory());
         return savedTodo;
     }
 
@@ -70,11 +97,19 @@ public class TodoService {
         String oldTitle = existingTodo.getTitle();
         Boolean oldDone = existingTodo.getDone();
         String oldDescription = existingTodo.getDescription();
+        Integer oldPriority = existingTodo.getPriority();
+        Object oldDue = existingTodo.getDueDate();
+        String oldCategory = existingTodo.getCategory();
 
         Boolean newDone = todo.getDone() != null ? todo.getDone() : false;
+        Integer newPriority = todo.getPriority() != null ? todo.getPriority() : 2;
         existingTodo.setTitle(todo.getTitle());
         existingTodo.setDone(newDone);
         existingTodo.setDescription(todo.getDescription());
+        existingTodo.setPriority(newPriority);
+        existingTodo.setDueDate(todo.getDueDate());
+        existingTodo.setCategory(todo.getCategory());
+        normalizeCategory(existingTodo);
 
         Todo updatedTodo = todoRepository.save(existingTodo);
 
@@ -87,6 +122,15 @@ public class TodoService {
         }
         if (!Objects.equals(oldDescription, updatedTodo.getDescription())) {
             diffs.add("description (변경됨)");
+        }
+        if (!Objects.equals(oldPriority, updatedTodo.getPriority())) {
+            diffs.add(String.format("priority %s→%s", oldPriority, updatedTodo.getPriority()));
+        }
+        if (!Objects.equals(oldDue, updatedTodo.getDueDate())) {
+            diffs.add(String.format("due %s→%s", oldDue, updatedTodo.getDueDate()));
+        }
+        if (!Objects.equals(oldCategory, updatedTodo.getCategory())) {
+            diffs.add(String.format("category '%s'→'%s'", oldCategory, updatedTodo.getCategory()));
         }
 
         TodoHistory history = new TodoHistory();
@@ -101,6 +145,28 @@ public class TodoService {
             updatedTodo.getId(),
             diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
         return updatedTodo;
+    }
+
+    @Transactional
+    public int deleteAllCompleted() {
+        long count = todoRepository.countByDoneTrue();
+        if (count == 0) {
+            log.info("[TODO] user={}({}), BULK_DELETE_COMPLETED count=0 (no-op)",
+                SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName());
+            return 0;
+        }
+
+        int deleted = todoRepository.deleteAllByDoneTrue();
+
+        TodoHistory history = new TodoHistory();
+        history.setAction("BULK_DELETE_COMPLETED");
+        history.setTodoTitle(String.format("완료 항목 %d개 일괄 삭제", deleted));
+        history.setCreatedDt(LocalDateTime.now());
+        todoHistoryRepository.save(history);
+
+        log.info("[TODO] user={}({}), BULK_DELETE_COMPLETED count={}",
+            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(), deleted);
+        return deleted;
     }
 
     @Transactional
@@ -119,5 +185,12 @@ public class TodoService {
         log.info("[TODO] user={}({}), DELETE id={} title={} done={}",
             SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
             todo.getId(), todo.getTitle(), todo.getDone());
+    }
+
+    private void normalizeCategory(Todo todo) {
+        if (todo.getCategory() != null) {
+            String trimmed = todo.getCategory().trim();
+            todo.setCategory(trimmed.isEmpty() ? null : trimmed);
+        }
     }
 }
