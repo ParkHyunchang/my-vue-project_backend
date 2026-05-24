@@ -15,7 +15,7 @@ RUN mvn clean package -DskipTests
 # Runtime stage: 빌드된 JAR만 포함한 가벼운 이미지
 # ────────────────────────────────────────────────────────────────
 FROM eclipse-temurin:21-jre
-RUN apt-get update && apt-get install -y --no-install-recommends libheif-examples && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=build /app/target/todo-api-0.0.1-SNAPSHOT.jar app.jar
 RUN mkdir -p /app/logs

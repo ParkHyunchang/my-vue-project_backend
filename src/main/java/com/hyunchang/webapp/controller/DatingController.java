@@ -126,7 +126,8 @@ public class DatingController {
             if (fileExtension.equals(".heic") || fileExtension.equals(".heif")) {
                 String jpegFilename = uniqueFilename.replace(fileExtension, ".jpg");
                 Path jpegPath = UPLOAD_ROOT.resolve(jpegFilename);
-                Process proc = new ProcessBuilder("heif-convert", targetPath.toString(), jpegPath.toString())
+                Process proc = new ProcessBuilder(
+                        "ffmpeg", "-y", "-i", targetPath.toString(), "-q:v", "2", jpegPath.toString())
                         .redirectErrorStream(true)
                         .start();
                 String procOutput;
