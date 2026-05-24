@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/dating")
@@ -119,6 +120,22 @@ public class DatingController {
                 return ResponseEntity.badRequest().body("잘못된 파일 경로입니다.");
             }
             Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
+
+            if (fileExtension.equals(".heic") || fileExtension.equals(".heif")) {
+                String jpegFilename = uniqueFilename.replace(fileExtension, ".jpg");
+                Path jpegPath = UPLOAD_ROOT.resolve(jpegFilename);
+                Process proc = new ProcessBuilder("heif-convert", targetPath.toString(), jpegPath.toString())
+                        .redirectErrorStream(true)
+                        .start();
+                boolean finished = proc.waitFor(30, TimeUnit.SECONDS);
+                Files.deleteIfExists(targetPath);
+                if (!finished || proc.exitValue() != 0) {
+                    log.warn("[DATING] heif-convert 실패, HEIC 원본 유지: {}", uniqueFilename);
+                    Files.deleteIfExists(jpegPath);
+                    return ResponseEntity.internalServerError().body("HEIC 변환에 실패했습니다.");
+                }
+                uniqueFilename = jpegFilename;
+            }
 
             String fileUrl = "/uploads/images/dating/" + uniqueFilename;
             log.info("[DATING] user={}, action=UPLOAD_IMAGE, filename={}",
