@@ -27,7 +27,7 @@ public class DatingController {
     private final DatingService datingService;
     private final MenuPermissionService menuPermissionService;
     private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("dating");
-    private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
+    private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif");
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
 
     public DatingController(DatingService datingService, MenuPermissionService menuPermissionService) {
