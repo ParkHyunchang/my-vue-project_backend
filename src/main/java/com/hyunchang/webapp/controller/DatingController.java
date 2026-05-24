@@ -13,6 +13,8 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
@@ -127,13 +129,17 @@ public class DatingController {
                 Process proc = new ProcessBuilder("heif-convert", targetPath.toString(), jpegPath.toString())
                         .redirectErrorStream(true)
                         .start();
-                boolean finished = proc.waitFor(30, TimeUnit.SECONDS);
-                Files.deleteIfExists(targetPath);
-                if (!finished || proc.exitValue() != 0) {
-                    log.warn("[DATING] heif-convert 실패, HEIC 원본 유지: {}", uniqueFilename);
-                    Files.deleteIfExists(jpegPath);
-                    return ResponseEntity.internalServerError().body("HEIC 변환에 실패했습니다.");
+                String procOutput;
+                try (InputStream is = proc.getInputStream()) {
+                    procOutput = new String(is.readAllBytes(), StandardCharsets.UTF_8).strip();
                 }
+                boolean finished = proc.waitFor(30, TimeUnit.SECONDS);
+                if (!finished || proc.exitValue() != 0) {
+                    log.warn("[DATING] heif-convert 실패 (exit={}) output: {}", proc.exitValue(), procOutput);
+                    Files.deleteIfExists(jpegPath);
+                    return ResponseEntity.internalServerError().body("HEIC 변환에 실패했습니다. (output: " + procOutput + ")");
+                }
+                Files.deleteIfExists(targetPath);
                 uniqueFilename = jpegFilename;
             }
 
