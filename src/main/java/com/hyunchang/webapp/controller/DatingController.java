@@ -13,14 +13,11 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.TimeUnit;
 
 @RestController
 @RequestMapping("/api/dating")
@@ -122,28 +119,6 @@ public class DatingController {
                 return ResponseEntity.badRequest().body("잘못된 파일 경로입니다.");
             }
             Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
-
-            if (fileExtension.equals(".heic") || fileExtension.equals(".heif")) {
-                String jpegFilename = uniqueFilename.replace(fileExtension, ".jpg");
-                Path jpegPath = UPLOAD_ROOT.resolve(jpegFilename);
-                Process proc = new ProcessBuilder(
-                        "ffmpeg", "-y", "-i", targetPath.toString(),
-                        "-map", "0:v:0", "-frames:v", "1", "-q:v", "2", jpegPath.toString())
-                        .redirectErrorStream(true)
-                        .start();
-                String procOutput;
-                try (InputStream is = proc.getInputStream()) {
-                    procOutput = new String(is.readAllBytes(), StandardCharsets.UTF_8).strip();
-                }
-                boolean finished = proc.waitFor(30, TimeUnit.SECONDS);
-                if (!finished || proc.exitValue() != 0) {
-                    log.warn("[DATING] heif-convert 실패 (exit={}) output: {}", proc.exitValue(), procOutput);
-                    Files.deleteIfExists(jpegPath);
-                    return ResponseEntity.internalServerError().body("HEIC 변환에 실패했습니다. (output: " + procOutput + ")");
-                }
-                Files.deleteIfExists(targetPath);
-                uniqueFilename = jpegFilename;
-            }
 
             String fileUrl = "/uploads/images/dating/" + uniqueFilename;
             log.info("[DATING] user={}, action=UPLOAD_IMAGE, filename={}",
