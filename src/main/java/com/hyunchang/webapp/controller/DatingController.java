@@ -127,7 +127,8 @@ public class DatingController {
                 String jpegFilename = uniqueFilename.replace(fileExtension, ".jpg");
                 Path jpegPath = UPLOAD_ROOT.resolve(jpegFilename);
                 Process proc = new ProcessBuilder(
-                        "ffmpeg", "-y", "-i", targetPath.toString(), "-q:v", "2", jpegPath.toString())
+                        "ffmpeg", "-y", "-i", targetPath.toString(),
+                        "-map", "0:v:0", "-frames:v", "1", "-q:v", "2", jpegPath.toString())
                         .redirectErrorStream(true)
                         .start();
                 String procOutput;
