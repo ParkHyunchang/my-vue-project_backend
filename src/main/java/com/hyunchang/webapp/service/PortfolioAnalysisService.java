@@ -8,7 +8,6 @@ import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.HoldingAction;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Recommendation;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
-import com.hyunchang.webapp.dto.StockQuoteDto;
 import com.hyunchang.webapp.entity.StockHolding;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.util.SecurityUtils;
@@ -35,8 +34,8 @@ import java.util.regex.Pattern;
  *
  * 흐름:
  *   1. 보유 종목 + 시세 + 평가손익률 조립
- *   2. 시총 Top10 (KR + US) 에서 보유 안 한 종목 추출
- *   3. 시장 뉴스 헤드라인 풀 구성
+ *   2. 보유 종목별 뉴스 + 최근 시장 뉴스 헤드라인 풀 구성
+ *   3. 최근 뉴스 기반 추천 종목 2~3개를 AI 가 선정 (보유 종목은 추천 제외)
  *   4. AI provider chain 호출 → JSON 응답 파싱
  *   5. holdings 의 currentPnlPct 는 서버 계산값으로 덮어써서 신뢰도 확보
  *
@@ -88,21 +87,20 @@ public class PortfolioAnalysisService {
         //      (시세만 주면 "추세 양호" 같은 균일 답변이 나와서 종목별 차별화 컨텍스트 추가)
         Map<String, List<String>> perSymbolNews = fetchPerSymbolNewsParallel(snapshots);
 
-        // 2. 시총 Top10 (KR + US) 중 보유 안 한 종목
-        Set<String> heldSymbols = new HashSet<>();
-        for (StockHolding h : holdings) heldSymbols.add(h.getSymbol().toUpperCase(Locale.ROOT));
-        List<StockQuoteDto> top10Pool = pickTop10Candidates(heldSymbols);
+        // 2. 추천에서 제외할 보유 종목 (이미 가진 종목은 추천하지 않음)
+        List<String> heldLabels = new ArrayList<>();
+        for (StockHolding h : holdings) heldLabels.add(h.getName() + " (" + h.getSymbol() + ")");
 
-        // 3. 시장 뉴스 헤드라인 (거시 보충용)
+        // 3. 최근 시장 뉴스 헤드라인 — 추천의 핵심 근거
         List<String> marketHeadlines = collectMarketHeadlines();
 
         // 4. 프롬프트 + chain 호출
-        String prompt = buildPrompt(snapshots, perSymbolNews, top10Pool, marketHeadlines);
+        String prompt = buildPrompt(snapshots, perSymbolNews, marketHeadlines, heldLabels);
         AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt);
 
         int perSymbolTotal = perSymbolNews.values().stream().mapToInt(List::size).sum();
-        log.info("[Portfolio/Analysis] user={} 보유 {}개, 종목별 뉴스 합 {}건, Top10 후보 {}개, 시장 뉴스 {}건",
-                userId, holdings.size(), perSymbolTotal, top10Pool.size(), marketHeadlines.size());
+        log.info("[Portfolio/Analysis] user={} 보유 {}개, 종목별 뉴스 합 {}건, 시장 뉴스 {}건",
+                userId, holdings.size(), perSymbolTotal, marketHeadlines.size());
 
         if (!chainResult.success()) {
             return PortfolioAnalysisResponse.builder()
@@ -128,6 +126,16 @@ public class PortfolioAnalysisService {
                 if (!ALLOWED_ACTIONS.contains(ha.getAction())) {
                     ha.setAction("HOLD");
                 }
+            }
+        }
+
+        // 6-1. 추천의 held 플래그는 실제 보유 종목과 대조해 서버가 확정 (LLM 자기신고 무시)
+        if (parsed.getRecommendations() != null) {
+            Set<String> heldSet = new HashSet<>();
+            for (StockHolding h : holdings) heldSet.add(h.getSymbol().toUpperCase(Locale.ROOT));
+            for (Recommendation r : parsed.getRecommendations()) {
+                r.setHeld(r.getSymbol() != null
+                        && heldSet.contains(r.getSymbol().toUpperCase(Locale.ROOT)));
             }
         }
 
@@ -176,16 +184,6 @@ public class PortfolioAnalysisService {
         return out;
     }
 
-    private List<StockQuoteDto> pickTop10Candidates(Set<String> heldSymbols) {
-        List<StockQuoteDto> all = new ArrayList<>();
-        try { all.addAll(stockService.getTop10KR()); } catch (Exception ignore) {}
-        try { all.addAll(stockService.getTop10US()); } catch (Exception ignore) {}
-        return all.stream()
-                .filter(q -> q != null && q.getSymbol() != null)
-                .filter(q -> !heldSymbols.contains(q.getSymbol().toUpperCase(Locale.ROOT)))
-                .toList();
-    }
-
     /**
      * 보유 종목 각각에 대해 종목별 뉴스 1~2건씩 병렬 수집.
      * StockSymbolNewsService 가 Google News + Yahoo Finance + AlphaVantage 합산해서 돌려준 결과 중 상위만 채택.
@@ -230,13 +228,13 @@ public class PortfolioAnalysisService {
         try {
             for (StockNewsDto n : stockService.getNews("KR", false)) {
                 if (notBlank(n.getTitle())) headlines.add("[KR] " + n.getTitle());
-                if (headlines.size() >= 7) break;
+                if (headlines.size() >= 10) break;
             }
         } catch (Exception ignore) {}
         try {
             for (StockNewsDto n : stockService.getNews("US", false)) {
                 if (notBlank(n.getTitle())) headlines.add("[US] " + n.getTitle());
-                if (headlines.size() >= 14) break;
+                if (headlines.size() >= 20) break;
             }
         } catch (Exception ignore) {}
         return headlines;
@@ -255,8 +253,8 @@ public class PortfolioAnalysisService {
 
     private String buildPrompt(List<HoldingSnapshot> snapshots,
                                Map<String, List<String>> perSymbolNews,
-                               List<StockQuoteDto> top10Pool,
-                               List<String> marketHeadlines) {
+                               List<String> marketHeadlines,
+                               List<String> heldLabels) {
         StringBuilder holdingsBlock = new StringBuilder();
         int i = 1;
         for (HoldingSnapshot s : snapshots) {
@@ -278,18 +276,11 @@ public class PortfolioAnalysisService {
             }
         }
 
-        StringBuilder top10Block = new StringBuilder();
-        if (top10Pool.isEmpty()) {
-            top10Block.append("(보유 안 한 시총 Top10 종목 없음)");
+        StringBuilder heldBlock = new StringBuilder();
+        if (heldLabels.isEmpty()) {
+            heldBlock.append("(없음)");
         } else {
-            int j = 1;
-            for (StockQuoteDto q : top10Pool) {
-                top10Block.append(j++).append(". ")
-                        .append(q.getName()).append(" (").append(q.getSymbol()).append(")")
-                        .append(" 시총 ").append(q.getMarketCap())
-                        .append(", 일변동률 ").append(fmtPct(q.getChangePercent())).append("\n");
-                if (j > 20) break;
-            }
+            heldBlock.append(String.join(", ", heldLabels));
         }
 
         StringBuilder newsBlock = new StringBuilder();
@@ -303,16 +294,16 @@ public class PortfolioAnalysisService {
         }
 
         return """
-                당신은 한국 주식 시장 분석가입니다. 아래 사용자의 보유 포트폴리오 정보와 시장 상황을
-                근거로 (1) 보유 종목별 시그널과 (2) 추천 종목 2개를 제시하세요.
+                당신은 한국 주식 시장 분석가입니다. 아래 사용자의 보유 포트폴리오 정보와
+                최근 시장 뉴스를 근거로 (1) 보유 종목별 시그널과 (2) 최근 뉴스 기반 추천 종목을 제시하세요.
                 추측이나 일반론은 금지. 응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요.
                 코드블록·해설·다른 텍스트는 절대 포함하지 마세요.
 
                 ── 보유 종목 ──
                 %s
-                ── 시총 Top10 풀 (보유 안 한 종목만 — 아래 리스트에서만 TOP10 추천을 골라야 함) ──
+                ── 최근 시장 뉴스 헤드라인 (추천의 핵심 근거) ──
                 %s
-                ── 최근 시장 뉴스 헤드라인 ──
+                ── 현재 보유 중인 종목 (참고) ──
                 %s
                 ── 작성 지침 ──
                 holdings:
@@ -335,9 +326,16 @@ public class PortfolioAnalysisService {
                     여러 종목에 두루 통하는 공통 표현은 금지. 같은 의미의 영어 표현도 금지(예: "strong growth").
                   - newsHint 는 그 종목의 '관련 뉴스' 중 가장 임팩트 있는 1건의 헤드라인 그대로
                     (관련 뉴스가 없으면 빈 문자열). 이게 reason 의 핵심 근거여야 함.
-                recommendations: 정확히 2개.
-                  - 첫 번째 source="TOP10": 위 시총 Top10 풀에 있는 종목 중에서만 1개 선정.
-                  - 두 번째 source="FREE": Top10 풀 밖에서 자유 추천 1개. 실재하는 상장 종목이어야 함.
+                recommendations: 2개 또는 3개. ★★ 반드시 위 '최근 시장 뉴스 헤드라인' 에서 출발해서 추천할 것.
+                  - 각 추천 종목은 위 헤드라인 중 하나에서 직접 언급되었거나 명백히 수혜/연관되는 실재 상장 종목이어야 함.
+                    (예: "엔비디아 실적 호조" 헤드라인 → 엔비디아 또는 명확한 공급망 수혜주)
+                  - newsBasis 필드에 그 추천의 근거가 된 헤드라인을 위 목록에서 그대로 1건 복사해 넣을 것 (꾸며내지 말 것).
+                  - reason 은 그 헤드라인이 왜 해당 종목에 호재인지 1~2문장으로 구체적으로 설명.
+                  - '현재 보유 중인 종목' 에 강한 호재 뉴스가 있으면 그 종목을 '비중 확대(추가 매수)' 관점으로 추천해도 됨.
+                    이 경우 held=true 로 표시하고 reason 에 추가 매수(비중 확대) 권유임을 명시할 것.
+                    보유하지 않은 신규 종목 추천은 held=false.
+                  - 뚜렷한 뉴스 근거가 2개뿐이면 2개만, 3개 이상이면 강한 순으로 3개까지.
+                    근거 없이 개수를 채우지 말 것. source 는 모두 "NEWS".
                   - 각 추천에 reason·risks·fitForPortfolio 작성.
 
                 ── 응답 스키마 ──
@@ -356,19 +354,12 @@ public class PortfolioAnalysisService {
                   ],
                   "recommendations": [
                     {
-                      "source": "TOP10",
+                      "source": "NEWS",
                       "symbol": "...",
                       "name": "...",
                       "market": "KR" | "US",
-                      "reason": "...",
-                      "risks": "...",
-                      "fitForPortfolio": "..."
-                    },
-                    {
-                      "source": "FREE",
-                      "symbol": "...",
-                      "name": "...",
-                      "market": "KR" | "US",
+                      "held": true | false,
+                      "newsBasis": "추천 근거가 된 뉴스 헤드라인 원문 그대로",
                       "reason": "...",
                       "risks": "...",
                       "fitForPortfolio": "..."
@@ -376,7 +367,7 @@ public class PortfolioAnalysisService {
                   ],
                   "disclaimer": "이 분석은 정보 제공 목적이며 투자 자문이 아닙니다."
                 }
-                """.formatted(holdingsBlock, top10Block, newsBlock);
+                """.formatted(holdingsBlock, newsBlock, heldBlock);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -408,15 +399,16 @@ public class PortfolioAnalysisService {
             List<Recommendation> recs = new ArrayList<>();
             for (JsonNode n : root.path("recommendations")) {
                 recs.add(Recommendation.builder()
-                        .source(text(n, "source", "FREE"))
+                        .source(text(n, "source", "NEWS"))
                         .symbol(text(n, "symbol", ""))
                         .name(text(n, "name", ""))
                         .market(text(n, "market", ""))
+                        .newsBasis(text(n, "newsBasis", ""))
                         .reason(text(n, "reason", ""))
                         .risks(text(n, "risks", ""))
                         .fitForPortfolio(text(n, "fitForPortfolio", ""))
                         .build());
-                if (recs.size() >= 2) break;
+                if (recs.size() >= 3) break;
             }
             out.setRecommendations(recs);
             return out;

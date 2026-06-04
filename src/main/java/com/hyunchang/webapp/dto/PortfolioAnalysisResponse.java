@@ -49,11 +49,15 @@ public class PortfolioAnalysisResponse {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Recommendation {
-        /** "TOP10" — 시총 Top10 풀에서 선정, "FREE" — LLM 자유 추천 */
+        /** "NEWS" — 최근 시장 뉴스 헤드라인에 근거해 선정 */
         private String source;
         private String symbol;
         private String name;
         private String market;       // "KR" | "US"
+        /** 이미 보유 중인 종목인지 (추가 매수 관점 추천) — 서버가 실제 보유 종목과 대조해 채움 */
+        private boolean held;
+        /** 추천 근거가 된 뉴스 헤드라인 원문 */
+        private String newsBasis;
         private String reason;
         private String risks;
         private String fitForPortfolio;
