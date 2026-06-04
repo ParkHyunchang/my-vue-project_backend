@@ -32,6 +32,8 @@ public class KrxOpenApiService {
 
     private static final String KOSPI_URL  = "https://data-dbg.krx.co.kr/svc/apis/sto/stk_bydd_trd";
     private static final String KOSDAQ_URL = "https://data-dbg.krx.co.kr/svc/apis/sto/ksq_bydd_trd";
+    private static final String ETF_URL    = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd";
+    private static final String ETN_URL    = "https://data-dbg.krx.co.kr/svc/apis/etp/etn_bydd_trd";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final long CACHE_TTL_MS      = 6 * 60 * 60 * 1000L;
     private static final long FAIL_COOLDOWN_MS  = 10 * 60 * 1000L; // 연속 실패 시 재시도 쿨다운
@@ -52,6 +54,12 @@ public class KrxOpenApiService {
     private volatile long kosdaqMapTime     = 0;
     private volatile long kosdaqMapFailTime = 0;
 
+    // ── ETF+ETN(ETP) 통합 캐시 (검색·이름·시세 룩업용) ──
+    private volatile Map<String, NaverFinanceService.NaverStockData> etpMap = Collections.emptyMap();
+    private volatile Set<String> etnSymbols = Collections.emptySet(); // ETP 중 ETN 심볼(타입 구분용)
+    private volatile long etpMapTime     = 0;
+    private volatile long etpMapFailTime = 0;
+
     // ─────────────────────────────────────────────────────────────
     // 공개 메서드
     // ─────────────────────────────────────────────────────────────
@@ -64,6 +72,22 @@ public class KrxOpenApiService {
     /** KOSDAQ 시가총액 상위 count개 (캐시 기반, 시총 내림차순) */
     public List<NaverFinanceService.NaverStockData> getTopKosdaqStocks(int count) {
         return topN(getOrLoadKosdaqMap(), count);
+    }
+
+    /**
+     * 상장 ETF+ETN 전체 목록 (정렬 없음).
+     * 검색 풀(이름 룩업)용 — 시총 순위가 필요 없으므로 전량 반환합니다.
+     * 신규 상장 레버리지/단일종목 ETN 등도 KRX가 제공하는 즉시 포함됩니다.
+     */
+    public List<NaverFinanceService.NaverStockData> getAllEtp() {
+        return new ArrayList<>(getOrLoadEtpMap().values());
+    }
+
+    /** 해당 심볼이 ETN인지 여부 (검색 결과 타입 라벨 구분용). ETP 캐시 로드 후 판정. */
+    public boolean isEtn(String symbol) {
+        if (symbol == null) return false;
+        getOrLoadEtpMap();
+        return etnSymbols.contains(symbol.toUpperCase());
     }
 
     /**
@@ -101,9 +125,12 @@ public class KrxOpenApiService {
     private NaverFinanceService.NaverStockData lookup(String symbol) {
         if (symbol == null) return null;
         String upper = symbol.toUpperCase();
-        if (upper.endsWith(".KS")) return getOrLoadKospiMap().get(upper);
-        if (upper.endsWith(".KQ")) return getOrLoadKosdaqMap().get(upper);
-        return null;
+        NaverFinanceService.NaverStockData data = null;
+        if (upper.endsWith(".KS"))      data = getOrLoadKospiMap().get(upper);
+        else if (upper.endsWith(".KQ")) data = getOrLoadKosdaqMap().get(upper);
+        // 주식 캐시에 없으면 ETF/ETN(ETP) 캐시에서 보강 — ETF/ETN도 .KS/.KQ 접미사를 씁니다.
+        if (data == null) data = getOrLoadEtpMap().get(upper);
+        return data;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -148,6 +175,37 @@ public class KrxOpenApiService {
             }
         }
         return kosdaqMap;
+    }
+
+    /**
+     * ETF+ETN 통합 캐시 로드. 두 ETP 엔드포인트를 각각 호출해 병합합니다.
+     * ETF/ETN은 모두 유가증권시장 상장이라 Yahoo 접미사로 .KS를 부여합니다.
+     */
+    private Map<String, NaverFinanceService.NaverStockData> getOrLoadEtpMap() {
+        if (!isStale(etpMapTime)) return etpMap;
+        if (inFailCooldown(etpMapFailTime)) return etpMap;
+        synchronized (this) {
+            if (!isStale(etpMapTime)) return etpMap;
+            if (inFailCooldown(etpMapFailTime)) return etpMap;
+            List<NaverFinanceService.NaverStockData> etf = fetchAllFromKrx(ETF_URL, ".KS");
+            List<NaverFinanceService.NaverStockData> etn = fetchAllFromKrx(ETN_URL, ".KS");
+            List<NaverFinanceService.NaverStockData> all = new ArrayList<>(etf.size() + etn.size());
+            all.addAll(etf);
+            all.addAll(etn);
+            if (!all.isEmpty()) {
+                etpMap         = toMap(all);
+                etnSymbols     = etn.stream()
+                    .map(s -> s.symbol().toUpperCase())
+                    .collect(Collectors.toUnmodifiableSet());
+                etpMapTime     = System.currentTimeMillis();
+                etpMapFailTime = 0;
+                log.info("KRX ETF/ETN 캐시 갱신: ETF {}개 + ETN {}개 = {}개", etf.size(), etn.size(), etpMap.size());
+            } else {
+                etpMapFailTime = System.currentTimeMillis();
+                log.warn("KRX ETF/ETN 로드 실패 — {}분 쿨다운 적용", FAIL_COOLDOWN_MS / 60_000);
+            }
+        }
+        return etpMap;
     }
 
     private boolean inFailCooldown(long failTime) {

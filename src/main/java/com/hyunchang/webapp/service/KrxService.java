@@ -37,6 +37,7 @@ public class KrxService {
     private volatile long                 krxStocksCacheTime = 0;
     private volatile Map<String, String>  krNameLookup      = null;
     private volatile long                 krNameLookupTime  = 0;
+    private volatile Set<String>          krEtpSymbols      = Collections.emptySet(); // 검색 결과 ETF/ETN 타입 구분용
 
     private final NaverFinanceService naverService;
     private final KrxOpenApiService   krxApiService;
@@ -116,8 +117,11 @@ public class KrxService {
             String name = entry.getValue(); // e.g., "삼성전자"
             if (name.contains(query) || sym.toLowerCase().contains(lower)) {
                 String exchange = sym.endsWith(".KQ") ? "KOE" : "KSC";
+                String type = krEtpSymbols.contains(sym)
+                    ? (krxApiService.isEtn(sym) ? "ETN" : "ETF")
+                    : "EQUITY";
                 results.add(StockSearchResultDto.builder()
-                    .symbol(sym).name(name).exchange(exchange).type("EQUITY").market("KR").build());
+                    .symbol(sym).name(name).exchange(exchange).type(type).market("KR").build());
             }
         }
         log.info("KRX 검색 [{}] → {}건", query, results.size());
@@ -167,6 +171,14 @@ public class KrxService {
             .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
         krxApiService.getTopKosdaqStocks(Integer.MAX_VALUE)
             .forEach(s -> map.put(s.symbol().toUpperCase(), s.name()));
+        // 상장 ETF/ETN(ETP) 전체 — 레버리지/단일종목 ETN 등 신규 상품 포함
+        Set<String> etp = new HashSet<>();
+        krxApiService.getAllEtp().forEach(s -> {
+            String sym = s.symbol().toUpperCase();
+            map.put(sym, s.name());
+            etp.add(sym);
+        });
+        krEtpSymbols = Collections.unmodifiableSet(etp);
         // 네이버 금융에서 KOSPI/KOSDAQ 상위 50개씩 (KRX API 미동작 시 폴백 경로)
         naverService.getTopStocksKospiCached(50)
             .forEach(s -> map.putIfAbsent(s.symbol().toUpperCase(), s.name()));
@@ -176,7 +188,8 @@ public class KrxService {
         krHeatmapNameFallback.forEach((k, v) -> map.putIfAbsent(k.toUpperCase(), v));
         krNameLookup     = map;
         krNameLookupTime = System.currentTimeMillis();
-        log.info("KR 종목명 룩업 맵 빌드 완료 (KRX+Naver+폴백): 총 {}개", map.size());
+        log.info("KR 종목명 룩업 맵 빌드 완료 (KRX주식+ETF/ETN+Naver+폴백): 총 {}개 (ETP {}개)",
+            map.size(), krEtpSymbols.size());
     }
 
     private List<String[]> loadFallbackList(String resourcePath) {

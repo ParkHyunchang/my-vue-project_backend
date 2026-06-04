@@ -46,6 +46,9 @@ public class YahooFinanceService {
     /** 미국 주요 종목 한글명 매핑 — src/main/resources/stock/us-names-ko.json 에서 로드 */
     private Map<String, String> usStockNamesKo = Collections.emptyMap();
 
+    /** 미국 주요 ETF 목록 (검색 풀용) — src/main/resources/stock/us-etf.json 에서 로드. [symbol, 한글표시명, 영문검색어] */
+    private List<String[]> usEtfList = Collections.emptyList();
+
     /** 미국 주요 종목 영문 검색어 매핑 (뉴스 필터링용) — src/main/resources/stock/us-en-names.json 에서 로드 */
     private Map<String, String> usEnNames = Collections.emptyMap();
 
@@ -78,6 +81,9 @@ public class YahooFinanceService {
         usStockNamesKo = loadStringMap("stock/us-names-ko.json");
         log.info("us-names-ko.json 로드 완료: {}개 항목", usStockNamesKo.size());
 
+        usEtfList = loadEtfList("stock/us-etf.json");
+        log.info("us-etf.json 로드 완료: {}개 ETF", usEtfList.size());
+
         usEnNames = loadStringMap("stock/us-en-names.json");
         log.info("us-en-names.json 로드 완료: {}개 항목", usEnNames.size());
     }
@@ -97,10 +103,10 @@ public class YahooFinanceService {
     }
 
     // ── 미국 종목 로컬 검색 인덱스 ────────────────────────────────
-    /** 검색 인덱스 1행: symbol + 표시명 + (한글명, 영문토큰, 영문 정식명) 검색 키 */
+    /** 검색 인덱스 1행: symbol + 표시명 + (한글명, 영문토큰, 영문 정식명) 검색 키 + 타입(EQUITY/ETF) */
     private record UsSearchEntry(
         String symbol, String displayName,
-        String koName, String enTokens, String enFullName) {}
+        String koName, String enTokens, String enFullName, String type) {}
 
     private volatile List<UsSearchEntry> usSearchIndex = null;
 
@@ -129,10 +135,22 @@ public class YahooFinanceService {
                 String display  = (ko != null && !ko.isBlank()) ? ko
                                 : (enFull != null && !enFull.isBlank()) ? enFull
                                 : sym;
-                list.add(new UsSearchEntry(sym, display, ko, enTokens, enFull));
+                list.add(new UsSearchEntry(sym, display, ko, enTokens, enFull, "EQUITY"));
+            }
+            // 주요 미국 ETF 추가 (us-etf.json) — 주식 인덱스와 동일하게 한글/영문/티커 검색 지원
+            int etfCount = 0;
+            for (String[] etf : usEtfList) {
+                String sym = etf[0].toUpperCase();
+                if (symbols.contains(sym)) continue; // 주식 소스와 심볼 중복 시 스킵
+                String ko = (etf[1] == null || etf[1].isBlank()) ? null : etf[1];
+                String en = (etf[2] == null || etf[2].isBlank()) ? null : etf[2];
+                String display = ko != null ? ko : sym;
+                list.add(new UsSearchEntry(sym, display, ko, en, null, "ETF"));
+                etfCount++;
             }
             usSearchIndex = list;
-            log.info("US 종목 검색 인덱스 빌드 완료: {}개 (KR한글명+영문토큰+영문정식명)", list.size());
+            log.info("US 종목 검색 인덱스 빌드 완료: {}개 (주식 {} + ETF {})",
+                list.size(), list.size() - etfCount, etfCount);
         }
     }
 
@@ -159,7 +177,7 @@ public class YahooFinanceService {
             if (hit) {
                 results.add(StockSearchResultDto.builder()
                     .symbol(e.symbol).name(e.displayName)
-                    .exchange("").type("EQUITY").market("US").build());
+                    .exchange("").type(e.type).market("US").build());
             }
         }
         log.info("US 로컬 검색 [{}] → {}건", q, results.size());
@@ -577,6 +595,29 @@ public class YahooFinanceService {
                     m.getOrDefault("name", m.get("symbol")),
                     m.getOrDefault("shares", "0")
                 })
+                .collect(Collectors.toList());
+        } catch (IOException e) {
+            log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    /** us-etf.json 로드: [{symbol, ko, en}, ...] → String[]{symbol, ko, en} */
+    private List<String[]> loadEtfList(String resourcePath) {
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream(resourcePath)) {
+            if (is == null) {
+                log.warn("리소스 파일 없음: {}", resourcePath);
+                return Collections.emptyList();
+            }
+            List<Map<String, String>> list = objectMapper.readValue(is,
+                new TypeReference<>() {});
+            return list.stream()
+                .map(m -> new String[]{
+                    m.get("symbol"),
+                    m.getOrDefault("ko", ""),
+                    m.getOrDefault("en", "")
+                })
+                .filter(a -> a[0] != null && !a[0].isBlank())
                 .collect(Collectors.toList());
         } catch (IOException e) {
             log.error("JSON 로드 실패 [{}]: {}", resourcePath, e.getMessage());
