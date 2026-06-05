@@ -17,7 +17,12 @@ public class Todo {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
     private String title;
+
+    // 긴 본문(수백~수천 자) 및 이모지 지원을 위해 TEXT + utf8mb4 사용.
+    // 기본 String 매핑(VARCHAR 255)으로는 긴 내용 저장 시 "Data too long" 오류 발생.
+    @Column(columnDefinition = "TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
     private String description;
+
     private Boolean done;
 
     // 1=낮음, 2=보통(기본), 3=높음. null은 보통으로 취급.
