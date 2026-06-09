@@ -4,8 +4,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse;
+import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.GradeItem;
+import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Grades;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.HoldingAction;
+import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.KeyHolding;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Recommendation;
+import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Scenario;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.entity.StockHolding;
@@ -47,7 +51,7 @@ public class PortfolioAnalysisService {
 
     private static final Pattern JSON_FENCE = Pattern.compile("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```");
     private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
-    private static final Set<String> ALLOWED_ACTIONS = Set.of("TAKE_PROFIT", "HOLD", "CUT_LOSS", "WATCH");
+    private static final Set<String> ALLOWED_ACTIONS = Set.of("ADD", "TAKE_PROFIT", "HOLD", "CUT_LOSS", "WATCH");
 
     private final StockHoldingService stockHoldingService;
     private final StockService stockService;
@@ -146,8 +150,16 @@ public class PortfolioAnalysisService {
                 .analyzedAt(Instant.now())
                 .summary(parsed.getSummary())
                 .sentiment(parsed.getSentiment() == null ? "중립" : parsed.getSentiment())
+                .macroFit(parsed.getMacroFit())
+                .grades(parsed.getGrades())
                 .holdings(parsed.getHoldings() == null ? List.of() : parsed.getHoldings())
+                .coreHolding(parsed.getCoreHolding())
+                .weakestLink(parsed.getWeakestLink())
                 .recommendations(parsed.getRecommendations() == null ? List.of() : parsed.getRecommendations())
+                .priorityActions(parsed.getPriorityActions() == null ? List.of() : parsed.getPriorityActions())
+                .bullScenario(parsed.getBullScenario())
+                .bearScenario(parsed.getBearScenario())
+                .selfRebuttal(parsed.getSelfRebuttal())
                 .disclaimer(parsed.getDisclaimer() == null || parsed.getDisclaimer().isBlank()
                         ? "이 분석은 AI가 생성한 정보 정리이며 투자 자문이 아닙니다."
                         : parsed.getDisclaimer())
@@ -294,10 +306,22 @@ public class PortfolioAnalysisService {
         }
 
         return """
-                당신은 한국 주식 시장 분석가입니다. 아래 사용자의 보유 포트폴리오 정보와
-                최근 시장 뉴스를 근거로 (1) 보유 종목별 시그널과 (2) 최근 뉴스 기반 추천 종목을 제시하세요.
-                추측이나 일반론은 금지. 응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요.
-                코드블록·해설·다른 텍스트는 절대 포함하지 마세요.
+                당신은 블랙록·피델리티급 글로벌 자산운용사에서 수십 년간 포트폴리오를 운용해 온
+                기관 투자자이자 거시경제 분석가입니다. 개인에게 조언하는 것이 아니라
+                투자위원회(Investment Committee)에 제출하는 포트폴리오 진단 보고서를 쓴다는 관점으로 작성하세요.
+                추상적 서술·모호한 낙관론·감정적 표현은 배제하고, 수치·근거·논리 연결을 우선합니다.
+                강세/약세 시나리오를 모두 제시하고, 단순 낙관론은 금지합니다.
+                틀릴 가능성이 있는 부분은 불확실성을 분명히 밝히고, 확신 없는 내용을 추정으로 포장하지 마세요.
+
+                ── 가용 데이터의 한계 (반드시 준수) ──
+                - 당신에게 주어진 근거는 아래 '보유 종목'의 현재가·평단가·평가손익률·일변동률,
+                  그리고 종목별/시장 뉴스 헤드라인뿐입니다.
+                - PER·PBR·ROE·매출성장률·영업이익률·컨센서스·목표주가 같은 재무/밸류에이션 수치는 제공되지 않았습니다.
+                  이런 구체적 숫자는 절대 지어내지 마세요. 꼭 언급이 필요하면 "미확인" 또는 "추정"이라고 명시하고,
+                  기억에 의존한 정밀 수치는 쓰지 마세요. 모르면 모른다고 하세요.
+                - 모든 판단은 제공된 손익률·일변동률·뉴스 흐름과 포트폴리오의 분산·집중 구조에 근거해 내리세요.
+
+                응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설·다른 텍스트는 절대 포함하지 마세요.
 
                 ── 보유 종목 ──
                 %s
@@ -306,12 +330,20 @@ public class PortfolioAnalysisService {
                 ── 현재 보유 중인 종목 (참고) ──
                 %s
                 ── 작성 지침 ──
-                holdings:
-                  - 보유 종목 전부에 대해 action 4단계 중 하나를 선택:
-                    * TAKE_PROFIT (이익실현 권장: 현재 이익이 크고 추가 상승 여력 제한적)
-                    * HOLD (보유 유지: 추세·펀더멘털 양호)
-                    * CUT_LOSS (손절 검토: 손실이 크고 회복 가능성 낮음)
-                    * WATCH (관망: 판단 보류, 추가 정보 필요)
+                summary: 포트폴리오 전체를 투자위원회 보고 톤으로 2~3문장 평가.
+                  포트폴리오 성격(공격형/방어형/혼합형)과 가장 중요한 시사점 한 가지를 반드시 포함.
+                sentiment: "긍정" | "중립" | "부정" 중 하나.
+                macroFit: 현재 금리·환율·경기 국면에서 이 포트폴리오가 유리한지/불리한지 1~2문장.
+                  일반론 금지 — 실제 보유 구성(섹터·국가·종목)과 연결해 설명.
+                grades: diversification(분산)·risk(리스크)·growth(성장성) 세 항목.
+                  각 항목은 grade("A"~"F")와 comment(1문장). comment 는 보유 종목 구성을 직접 근거로 들 것
+                  (예: "상위 2종목이 비중 대부분을 차지", "전 종목이 반도체 섹터에 집중").
+                holdings: 보유 종목 전부에 대해 action 5단계 중 하나를 선택:
+                  * ADD (비중 확대·추가 매수: 강한 호재·실적·뉴스로 추가 매수 매력이 큼)
+                  * TAKE_PROFIT (이익실현: 현재 이익이 크고 추가 상승 여력 제한적)
+                  * HOLD (보유 유지: 추세·펀더멘털 양호)
+                  * CUT_LOSS (손절 검토: 손실이 크고 회복 가능성 낮음)
+                  * WATCH (관망: 판단 보류, 추가 정보 필요)
                   - reason 은 2문장 이내. ★★ 반드시 그 종목 고유의 정보를 직접 인용해야 함:
                     (a) 그 종목의 평가손익률 수치 (예: "+5.13%%") 또는
                     (b) 그 종목의 일변동률 수치 또는
@@ -326,6 +358,11 @@ public class PortfolioAnalysisService {
                     여러 종목에 두루 통하는 공통 표현은 금지. 같은 의미의 영어 표현도 금지(예: "strong growth").
                   - newsHint 는 그 종목의 '관련 뉴스' 중 가장 임팩트 있는 1건의 헤드라인 그대로
                     (관련 뉴스가 없으면 빈 문자열). 이게 reason 의 핵심 근거여야 함.
+                coreHolding: 포트폴리오에서 가장 강한 핵심 종목 1개 {symbol, name, reason}.
+                  reason 은 왜 이 종목이 핵심인지(수익 기여·추세·뉴스 근거) 1~2문장.
+                weakestLink: 가장 취약한 고리 1개 {symbol, name, reason}.
+                  reason 은 무엇이 위험인지(손실폭·악재 뉴스·집중) 1~2문장. coreHolding 과 반드시 다른 관점으로 작성.
+                  (보유가 1종목뿐이면 같은 종목이라도 가장 약한 측면을 적되 coreHolding 과 문장을 명확히 구별)
                 recommendations: 2개 또는 3개. ★★ 반드시 위 '최근 시장 뉴스 헤드라인' 에서 출발해서 추천할 것.
                   - 각 추천 종목은 위 헤드라인 중 하나에서 직접 언급되었거나 명백히 수혜/연관되는 실재 상장 종목이어야 함.
                     (예: "엔비디아 실적 호조" 헤드라인 → 엔비디아 또는 명확한 공급망 수혜주)
@@ -337,21 +374,39 @@ public class PortfolioAnalysisService {
                   - 뚜렷한 뉴스 근거가 2개뿐이면 2개만, 3개 이상이면 강한 순으로 3개까지.
                     근거 없이 개수를 채우지 말 것. source 는 모두 "NEWS".
                   - 각 추천에 reason·risks·fitForPortfolio 작성.
+                priorityActions: 투자위원회가 지금 당장 점검·실행할 우선순위 액션 3개(문자열 배열, 가장 시급한 순).
+                  각 항목은 한 문장으로 구체적으로(예: "○○ 비중을 손실 확대 전에 축소 검토").
+                  단, 무리한 매매 권유는 금지 — 현 상태 유지가 최선이면 그렇게 적을 것.
+                bullScenario / bearScenario: 각각 trigger(촉발 요인)와 outlook(전개 전망)을 1~2문장씩.
+                  강세·약세를 균형 있게, 제공된 뉴스·손익 구조에 근거해 작성.
+                  ★★ 두 시나리오는 서로 다른 근거를 들 것. 같은 문장에서 방향 단어(상승↔하락 등)만
+                  바꾸는 거울형 작성 금지. 각각 구체적 촉발 요인(특정 섹터·종목·뉴스·금리·환율 등)을 명시하고,
+                  outlook 도 어떤 종목/섹터가 어떻게 반응하는지 서로 다르게 서술할 것.
+                selfRebuttal: "이 진단이 틀린다면 어떤 이유 때문일까"를 1~2문장 자기반박으로 작성.
+                disclaimer: 정보 제공 목적이며 투자 자문이 아님을 밝히는 한 문장.
 
                 ── 응답 스키마 ──
                 {
-                  "summary": "포트폴리오 전체 한 줄 평가 (60자 이내)",
+                  "summary": "포트폴리오 전체 평가 (2~3문장)",
                   "sentiment": "긍정" | "중립" | "부정",
+                  "macroFit": "현재 거시 국면에서의 유불리 (1~2문장)",
+                  "grades": {
+                    "diversification": { "grade": "A~F", "comment": "..." },
+                    "risk": { "grade": "A~F", "comment": "..." },
+                    "growth": { "grade": "A~F", "comment": "..." }
+                  },
                   "holdings": [
                     {
                       "symbol": "...",
                       "name": "...",
                       "market": "KR" | "US",
-                      "action": "TAKE_PROFIT" | "HOLD" | "CUT_LOSS" | "WATCH",
+                      "action": "ADD" | "TAKE_PROFIT" | "HOLD" | "CUT_LOSS" | "WATCH",
                       "reason": "...",
                       "newsHint": "..."
                     }
                   ],
+                  "coreHolding": { "symbol": "...", "name": "...", "reason": "..." },
+                  "weakestLink": { "symbol": "...", "name": "...", "reason": "..." },
                   "recommendations": [
                     {
                       "source": "NEWS",
@@ -365,6 +420,10 @@ public class PortfolioAnalysisService {
                       "fitForPortfolio": "..."
                     }
                   ],
+                  "priorityActions": ["...", "...", "..."],
+                  "bullScenario": { "trigger": "...", "outlook": "..." },
+                  "bearScenario": { "trigger": "...", "outlook": "..." },
+                  "selfRebuttal": "이 진단이 틀린다면 어떤 이유 때문일지 (1~2문장)",
                   "disclaimer": "이 분석은 정보 제공 목적이며 투자 자문이 아닙니다."
                 }
                 """.formatted(holdingsBlock, newsBlock, heldBlock);
@@ -380,6 +439,14 @@ public class PortfolioAnalysisService {
             PortfolioAnalysisResponse out = PortfolioAnalysisResponse.builder()
                     .summary(text(root, "summary", ""))
                     .sentiment(text(root, "sentiment", "중립"))
+                    .macroFit(text(root, "macroFit", null))
+                    .grades(parseGrades(root.path("grades")))
+                    .coreHolding(parseKeyHolding(root.path("coreHolding")))
+                    .weakestLink(parseKeyHolding(root.path("weakestLink")))
+                    .priorityActions(stringList(root.path("priorityActions")))
+                    .bullScenario(parseScenario(root.path("bullScenario")))
+                    .bearScenario(parseScenario(root.path("bearScenario")))
+                    .selfRebuttal(text(root, "selfRebuttal", null))
                     .disclaimer(text(root, "disclaimer", null))
                     .build();
 
@@ -437,6 +504,45 @@ public class PortfolioAnalysisService {
     private String text(JsonNode n, String field, String fallback) {
         JsonNode v = n.path(field);
         return v.isMissingNode() || v.isNull() ? fallback : v.asText(fallback);
+    }
+
+    private Grades parseGrades(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        return Grades.builder()
+                .diversification(parseGradeItem(node.path("diversification")))
+                .risk(parseGradeItem(node.path("risk")))
+                .growth(parseGradeItem(node.path("growth")))
+                .build();
+    }
+
+    private GradeItem parseGradeItem(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        return GradeItem.builder()
+                .grade(text(node, "grade", ""))
+                .comment(text(node, "comment", ""))
+                .build();
+    }
+
+    private KeyHolding parseKeyHolding(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        String sym = text(node, "symbol", "");
+        String name = text(node, "name", "");
+        String reason = text(node, "reason", "");
+        if ((sym == null || sym.isBlank()) && (name == null || name.isBlank())
+                && (reason == null || reason.isBlank())) {
+            return null;
+        }
+        return KeyHolding.builder().symbol(sym).name(name).reason(reason).build();
+    }
+
+    private Scenario parseScenario(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return null;
+        String trigger = text(node, "trigger", "");
+        String outlook = text(node, "outlook", "");
+        if ((trigger == null || trigger.isBlank()) && (outlook == null || outlook.isBlank())) {
+            return null;
+        }
+        return Scenario.builder().trigger(trigger).outlook(outlook).build();
     }
 
     @SuppressWarnings("unused") // 추후 응답 본문에 List<String> 직접 채우는 경로에서 사용

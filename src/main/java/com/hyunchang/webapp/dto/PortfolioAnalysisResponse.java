@@ -19,10 +19,18 @@ public class PortfolioAnalysisResponse {
     private String model;
     private Instant analyzedAt;
 
-    private String summary;          // 포트폴리오 전체 한 줄 평가
+    private String summary;          // 포트폴리오 전체 평가 (투자위원회 보고 톤, 2~3문장)
     private String sentiment;        // "긍정" | "중립" | "부정"
+    private String macroFit;         // 현재 거시 국면에서의 유불리 한두 문장
+    private Grades grades;           // 분산 / 리스크 / 성장성 등급
     private List<HoldingAction> holdings;
+    private KeyHolding coreHolding;  // 가장 강한 핵심 종목
+    private KeyHolding weakestLink;  // 가장 취약한 고리
     private List<Recommendation> recommendations;
+    private List<String> priorityActions; // 우선순위 액션 3가지
+    private Scenario bullScenario;   // 강세 시나리오
+    private Scenario bearScenario;   // 약세 시나리오
+    private String selfRebuttal;     // 자기반박 — "내가 틀린다면"
     private String disclaimer;
 
     private Instant retryAt;
@@ -32,11 +40,49 @@ public class PortfolioAnalysisResponse {
     @Builder
     @NoArgsConstructor
     @AllArgsConstructor
+    public static class Grades {
+        private GradeItem diversification; // 분산
+        private GradeItem risk;            // 리스크
+        private GradeItem growth;          // 성장성
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class GradeItem {
+        private String grade;   // "A" ~ "F"
+        private String comment; // 한 문장 근거
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class KeyHolding {
+        private String symbol;
+        private String name;
+        private String reason;
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class Scenario {
+        private String trigger; // 촉발 요인
+        private String outlook; // 전개 전망
+    }
+
+    @Data
+    @Builder
+    @NoArgsConstructor
+    @AllArgsConstructor
     public static class HoldingAction {
         private String symbol;
         private String name;
         private String market;
-        /** TAKE_PROFIT | HOLD | CUT_LOSS | WATCH */
+        /** ADD | TAKE_PROFIT | HOLD | CUT_LOSS | WATCH */
         private String action;
         /** 현 시점 평가손익률(%) — 백엔드가 같이 채워 프론트에 전달 */
         private Double currentPnlPct;
