@@ -146,6 +146,7 @@ public class MenuDefinitionService {
             new DefaultMenu("/todos/create", "할일 생성", "➕", "새로운 할일 추가", "productivity", false, false, "할일 생성", false, "USER,PREMIUM,ADMIN", 8, null),
             new DefaultMenu("/subscription", "구독 관리", "💳", "정기 결제 서비스 관리", "finance", false, true, "구독", false, "ADMIN", 9, null),
             new DefaultMenu("/stock", "주식 대시보드", "📈", "실시간 주식 시장 데이터 및 포트폴리오", "finance", false, true, "주식", false, "ADMIN", 10, null),
+            new DefaultMenu("/realestate", "부동산", "🏢", "아파트 실거래가·시세·뉴스 (국토교통부)", "finance", false, true, "부동산", false, "ADMIN", 10, null),
             new DefaultMenu("/admin", "관리자 대시보드", "🎛️", "관리자 메인 대시보드", "admin", false, false, "관리자 대시보드", false, "ADMIN", 11, null),
             new DefaultMenu("/admin/users", "사용자 관리", "👥", "사용자 계정 관리", "admin", false, false, "사용자 관리", true, "ADMIN", 11, null),
             new DefaultMenu("/admin/menu-management", "권한별 접근메뉴관리", "🔐", "메뉴 접근 권한 설정", "admin", false, false, "권한별 접근메뉴관리", true, "ADMIN", 12, null),

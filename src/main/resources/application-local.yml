@@ -16,12 +16,17 @@ spring:
       max-request-size: '15GB'
 
 # 로컬 개발 시 아래 환경변수를 IDE 실행 설정 또는 OS 환경변수로 반드시 설정하세요.
-# DB_USERNAME, DB_PASSWORD, JWT_SECRET, ALPHAVANTAGE_API_KEY
+# DB_USERNAME, DB_PASSWORD, JWT_SECRET, ALPHAVANTAGE_API_KEY, REALESTATE_API_KEY
 jwt:
   secret: ${JWT_SECRET}
 
 alphavantage:
   api-key: ${ALPHAVANTAGE_API_KEY}
+
+# 국토교통부 아파트 실거래가 공개 API 서비스키 (data.go.kr)
+app:
+  realestate:
+    service-key: ${REALESTATE_API_KEY:}
 
 logging:
   level:
