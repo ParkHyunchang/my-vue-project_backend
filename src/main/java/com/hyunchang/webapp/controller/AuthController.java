@@ -183,7 +183,9 @@ public class AuthController {
             return ResponseEntity.ok(response);
         }
 
-        return ResponseEntity.badRequest().body(
+        // 미인증은 401로 반환해야 프론트 axios 인터셉터가 토큰 갱신·재시도를 수행한다.
+        // (400이면 갱신 로직이 동작하지 않아 만료 시 세션 복구가 안 됨)
+        return ResponseEntity.status(401).body(
             AuthResponse.builder().message("인증되지 않은 사용자입니다.").build()
         );
     }
