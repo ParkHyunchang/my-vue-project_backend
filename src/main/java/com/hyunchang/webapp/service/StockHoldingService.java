@@ -77,6 +77,19 @@ public class StockHoldingService {
         return saved;
     }
 
+    public StockHolding updateCore(String userId, Long id, boolean core) {
+        StockHolding holding = stockHoldingRepository.findByIdAndUserUserId(id, userId)
+            .orElseThrow(() -> new IllegalArgumentException("보유 종목을 찾을 수 없습니다."));
+
+        holding.setCore(core);
+        StockHolding saved = stockHoldingRepository.save(holding);
+
+        log.info("[STOCK/HOLDING] user={}({}), CORE id={} symbol={} core→{}",
+            userId, SecurityUtils.getCurrentUserRoleName(),
+            saved.getId(), saved.getSymbol(), core);
+        return saved;
+    }
+
     public void deleteHolding(String userId, Long id) {
         StockHolding holding = stockHoldingRepository.findByIdAndUserUserId(id, userId)
             .orElseThrow(() -> new IllegalArgumentException("보유 종목을 찾을 수 없습니다."));

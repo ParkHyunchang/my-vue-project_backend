@@ -115,6 +115,21 @@ public class StockHoldingController {
         return ResponseEntity.ok(updated);
     }
 
+    @Operation(summary = "보유 종목 코어 여부 토글 (코어=장기 적립 / 위성=단타)")
+    @PutMapping("/holdings/{id}/core")
+    public ResponseEntity<?> updateCore(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+        if (!hasAccess()) return forbidden();
+        String userId = SecurityUtils.getCurrentUserId();
+
+        Object coreObj = body.get("core");
+        if (!(coreObj instanceof Boolean core)) {
+            return ResponseEntity.badRequest().body("core 값(true/false)이 필요합니다.");
+        }
+
+        StockHolding updated = stockHoldingService.updateCore(userId, id, core);
+        return ResponseEntity.ok(updated);
+    }
+
     @Operation(summary = "보유 종목 삭제")
     @DeleteMapping("/holdings/{id}")
     public ResponseEntity<?> deleteHolding(@PathVariable Long id) {

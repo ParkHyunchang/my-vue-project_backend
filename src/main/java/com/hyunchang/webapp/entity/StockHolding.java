@@ -39,6 +39,10 @@ public class StockHolding {
     @Column(name = "avg_price")
     private Double avgPrice;
 
+    // 코어(장기 적립) 종목 여부. 사용자가 화면에서 직접 토글. true=코어, false=위성(단타)
+    @Column(name = "is_core", nullable = false)
+    private boolean core = false;
+
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

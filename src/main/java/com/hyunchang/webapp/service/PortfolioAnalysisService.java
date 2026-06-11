@@ -53,22 +53,6 @@ public class PortfolioAnalysisService {
     private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
     private static final Set<String> ALLOWED_ACTIONS = Set.of("ADD", "TAKE_PROFIT", "HOLD", "CUT_LOSS", "WATCH");
 
-    /**
-     * 코어(장기 적립) 종목 심볼 집합. 여기 포함된 종목은 holdingsBlock 에 [코어] 로,
-     * 나머지 보유 종목은 [위성](단타)으로 태깅된다.
-     * 코어 종목이 바뀌거나 추가되면 이 집합만 수정하면 됨. (대소문자 무시 비교)
-     * 시총 1위는 종목이 유동적이라 여기 고정하지 않고 프롬프트 지침으로 보조 처리한다.
-     */
-    private static final Set<String> CORE_SYMBOLS = Set.of(
-            "005930", // 삼성전자
-            "000660", // SK하이닉스
-            "AAPL",   // 애플
-            "TSLA",   // 테슬라
-            "NVDA",   // 엔비디아
-            "GOOGL",  // 알파벳 A주 (구글)
-            "GOOG"    // 알파벳 C주 (구글)
-    );
-
     private final StockHoldingService stockHoldingService;
     private final StockService stockService;
     private final StockSymbolNewsService stockSymbolNewsService;
@@ -194,6 +178,7 @@ public class PortfolioAnalysisService {
             s.name = h.getName();
             s.market = h.getMarket();
             s.avgPrice = h.getAvgPrice();
+            s.core = h.isCore();
             try {
                 StockPriceDto p = stockService.getQuote(h.getSymbol(), h.getMarket());
                 if (p != null) {
@@ -268,13 +253,6 @@ public class PortfolioAnalysisService {
         return headlines;
     }
 
-    private boolean isCore(String symbol) {
-        if (symbol == null) return false;
-        // KR 심볼은 검색·저장 시 .KS/.KQ 접미사가 붙는 경우가 있어 떼고 비교 (예: 005930.KS → 005930)
-        String norm = symbol.toUpperCase(Locale.ROOT).replaceAll("\\.(KS|KQ)$", "");
-        return CORE_SYMBOLS.contains(norm);
-    }
-
     private HoldingSnapshot findSnapshot(List<HoldingSnapshot> snapshots, String symbol) {
         if (symbol == null) return null;
         for (HoldingSnapshot s : snapshots) {
@@ -295,7 +273,7 @@ public class PortfolioAnalysisService {
         for (HoldingSnapshot s : snapshots) {
             holdingsBlock.append(i++).append(". ")
                     .append(s.name).append(" (").append(s.symbol).append(", ").append(s.market).append(") ")
-                    .append(isCore(s.symbol) ? "[코어]" : "[위성]").append("\n")
+                    .append(s.core ? "[코어]" : "[위성]").append("\n")
                     .append("   현재가: ").append(fmtPrice(s)).append(", 평단가: ")
                     .append(s.avgPrice == null ? "미입력" : fmtNum(s.avgPrice, s.market))
                     .append(", 평가손익률: ").append(fmtPnlPct(s.pnlPct))
@@ -360,14 +338,20 @@ public class PortfolioAnalysisService {
                 이 태그가 1차 기준입니다 — 반드시 태그에 따라 성격을 구분한 뒤 그에 맞는 톤으로 reason 을 쓸 것.
 
                 [코어 — 장기 적립, 원칙적으로 매도하지 않음]
-                - [코어] 태그가 붙은 종목(예: 삼성전자, SK하이닉스, 애플, 테슬라, 엔비디아, 알파벳/구글)은
-                  매도하지 않고 계속 모아가는 장기 적립 대상.
+                - [코어] 태그가 붙은 종목은 투자자가 직접 장기 적립 대상으로 지정한 종목으로,
+                  매도하지 않고 계속 모아가는 것이 원칙이다.
                 - 추가로, 국내·해외 시가총액 1위 종목은 [위성] 태그여도 코어처럼 장기 적립 관점으로 볼 것.
-                  단, 시총 1위 자리가 다른 종목으로 바뀌는 국면에서는 일부 이익실현(TAKE_PROFIT)을 검토할 수 있음.
-                - 코어 종목은 기본적으로 HOLD 또는 ADD 로 판단할 것. 손실 중이어도 CUT_LOSS·TAKE_PROFIT 를
-                  함부로 권하지 말고 '적립 관점'에서 해석할 것.
-                  (예외: 시총 1위 교체 같은 구조적 변화의 근거가 뉴스에 분명히 보이면
-                   TAKE_PROFIT 일부 검토를 reason 에 명시 가능)
+                - 코어 종목은 기본적으로 HOLD 또는 ADD 로 판단할 것. 단순 주가 하락·손실·일시적 악재로는
+                  CUT_LOSS·TAKE_PROFIT 를 권하지 말 것 — 오히려 그런 비구조적 약세는 매수 단가를 낮추는
+                  '적립(ADD) 기회'로 해석하고 reason 에 그렇게 명시할 것.
+                - 단, 아래와 같은 '구조적 악재'가 뉴스에 분명히 보이면 코어라도 포트폴리오 리밸런싱(비중 조정)을
+                  권고할 것. 이때 action 은 TAKE_PROFIT(일부 차익실현) 또는 WATCH(적립 중단·관찰)로 하고,
+                  reason 에 어떤 구조적 변화 때문인지 근거 뉴스를 인용해 명시할 것:
+                    (1) 시가총액 1위/시장 주도권 상실 — 그 종목이 더 이상 현재 시장 테마를 주도하지 못하고
+                        다른 종목·섹터가 주도권을 가져간 정황이 뉴스·흐름에서 분명할 때
+                    (2) 사업 근간을 흔드는 악재 — 규제·제재·금지, 회계부정·대형 소송, 핵심 수요·기술 구조의 붕괴 등
+                  주도권·구조 변화 판단은 반드시 제공된 뉴스·일변동률 근거에 한정하고,
+                  근거가 약하거나 불확실하면 리밸런싱을 단정하지 말고 그 불확실성을 reason 에 밝힐 것.
 
                 [위성 — 단기 매매(소액·재미)]
                 - [위성] 태그가 붙은 종목은 1종목당 200~300만원 선에서 단기 매매하는 위성 포지션.
@@ -631,6 +615,7 @@ public class PortfolioAnalysisService {
         String symbol;
         String name;
         String market;
+        boolean core;
         Double avgPrice;
         double currentPrice;
         double changePercent;
