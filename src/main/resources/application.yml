@@ -90,5 +90,7 @@ app:
   # 서비스키는 환경변수 REALESTATE_API_KEY 로 주입 (미설정 시 부동산 검색 비활성)
   realestate:
     service-key: ${REALESTATE_API_KEY:}
-    # 개별공시지가(NSDI 국가공간정보) 전용 키. 미설정 시 실거래 키(service-key) 재사용
-    land-key: ${REALLAND_API_KEY:${REALESTATE_API_KEY:}}
+    # 개별공시지가는 VWorld(api.vworld.kr/ned/data) 데이터 API 사용 — VWorld 발급 키
+    land-key: ${REALLAND_API_KEY:}
+    # VWorld 키 발급 시 등록한 서비스 URL/도메인 (요청 도메인 검증용)
+    land-domain: ${VWORLD_DOMAIN:hyunchang.synology.me:3101}

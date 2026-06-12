@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.OfficialPriceDto;
 import com.hyunchang.webapp.dto.UmdDto;
@@ -10,29 +9,36 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.InputStream;
+import java.io.StringReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * 개별공시지가 조회 서비스 (NSDI 국가공간정보 개별공시지가 API, data.go.kr 1611000).
+ * 개별공시지가 조회 서비스 (VWorld 디지털트윈국토 데이터 API, api.vworld.kr/ned/data).
  *
  * - 법정동코드(10자리) 리소스(realestate/kr-bdong-codes.json)를 메모리에 로드해
  *   시군구(5자리)별 읍면동 목록을 제공한다.
  * - 읍면동 법정동코드 + 지번(산구분·본번·부번)으로 PNU(19자리)를 만들어 공시지가를 조회한다.
  *   PNU = 법정동코드(10) + 산구분(1: 일반=1/산=2) + 본번(4) + 부번(4).
- * - 인증키는 개별공시지가(NSDI) 전용 키 app.realestate.land-key(REALLAND_API_KEY)를 사용한다.
- *   미설정 시 실거래 키(REALESTATE_API_KEY)로 폴백한다.
+ * - 인증키는 VWorld 키 app.realestate.land-key(REALLAND_API_KEY)를 사용한다.
+ *   VWorld 는 키 발급 시 등록한 서비스 URL/도메인을 요청과 대조하므로
+ *   app.realestate.land-domain(VWORLD_DOMAIN)에 등록 도메인을 넣어 함께 보낸다.
+ * - 응답 XML: {@code <response><fields><field><pblntfPclnd>(원/㎡)·<stdrYear>...</field></fields></response>}.
  */
 @Service
 public class LandPriceService {
@@ -40,10 +46,14 @@ public class LandPriceService {
     private static final Logger log = LoggerFactory.getLogger(LandPriceService.class);
     private static final String BDONG_RESOURCE = "realestate/kr-bdong-codes.json";
     private static final String PRICE_URL =
-        "https://apis.data.go.kr/1611000/nsdi/IndvdLandPriceService/attr/getIndvdLandPriceAttr";
+        "https://api.vworld.kr/ned/data/getIndvdLandPriceAttr";
 
     @Value("${app.realestate.land-key:}")
     private String serviceKey;
+
+    // VWorld 키 발급 시 등록한 서비스 URL/도메인 (도메인 검증용)
+    @Value("${app.realestate.land-domain:}")
+    private String domain;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -93,15 +103,14 @@ public class LandPriceService {
             + String.format("%04d", Math.max(0, ji));
     }
 
-    // NSDI 가 데이터 없을 때 최근 몇 개 연도까지 거슬러 조회할지
+    // VWorld 가 데이터 없을 때 최근 몇 개 연도까지 거슬러 조회할지
     private static final int YEAR_LOOKBACK = 4;
 
     /**
      * 개별공시지가 조회. year 가 null 이면 최근 연도부터 거슬러 올라가며
      * 데이터가 있는 첫 연도를 사용한다.
      *
-     * stdrYear(기준연도)는 NSDI getIndvdLandPriceAttr 의 필수 파라미터다.
-     * 누락 시 NSDI 서버가 HTTP 500("Unexpected errors")을 반환하므로 반드시 함께 보낸다.
+     * stdrYear(기준연도)는 VWorld getIndvdLandPriceAttr 의 필수 파라미터다.
      */
     public OfficialPriceDto getOfficialPrice(String bdongCode, boolean mountain, int bun, int ji, Integer year) {
         if (!isConfigured()) {
@@ -133,11 +142,13 @@ public class LandPriceService {
     private OfficialPriceDto fetchForYear(String pnu, int year) {
         try {
             String url = PRICE_URL
-                + "?serviceKey=" + serviceKey.strip()
+                + "?key=" + serviceKey.strip()
                 + "&pnu=" + pnu
                 + "&stdrYear=" + year
-                + "&format=json"
-                + "&numOfRows=100";
+                + "&format=xml"
+                + "&numOfRows=10"
+                + "&pageNo=1"
+                + (domain != null && !domain.isBlank() ? "&domain=" + domain.strip() : "");
 
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -147,60 +158,72 @@ public class LandPriceService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             String body = response.body();
-            if (response.statusCode() != 200 || body == null || body.isBlank() || body.stripLeading().startsWith("<")) {
+            if (response.statusCode() != 200 || body == null || body.isBlank()) {
                 String head = body == null ? "" : body.strip();
                 if (head.length() > 300) head = head.substring(0, 300);
-                log.warn("NSDI 공시지가 응답 비정상 (status={}, pnu={}, year={}) body=[{}]",
+                log.warn("VWorld 공시지가 응답 비정상 (status={}, pnu={}, year={}) body=[{}]",
                     response.statusCode(), pnu, year, head);
                 return OfficialPriceDto.builder().found(false).pnu(pnu)
-                    .message("공시지가를 조회하지 못했습니다. (응답: " + head + ")").build();
+                    .message("공시지가를 조회하지 못했습니다.").build();
             }
 
-            JsonNode root = objectMapper.readTree(body);
-            List<JsonNode> records = new ArrayList<>();
-            collectPriceRecords(root, records);
-
-            JsonNode best = null;
+            // 응답 XML: <response><fields><field><pblntfPclnd>(원/㎡)·<stdrYear>...</field>...</fields></response>
+            // 같은 필지·연도가 갱신일자별로 여러 건 올 수 있어, 가격>0 중 최신 연도를 채택.
+            Document doc = parseXml(body);
+            NodeList fields = doc.getElementsByTagName("field");
+            long bestPrice = 0;
             int bestYear = -1;
-            for (JsonNode r : records) {
-                long price = asLong(r.get("pblntfPclnd"));
+            for (int i = 0; i < fields.getLength(); i++) {
+                Element f = (Element) fields.item(i);
+                long price = asLong(text(f, "pblntfPclnd"));
                 if (price <= 0) continue;
-                int yr = (int) asLong(r.get("stdrYear"));
-                if (yr > bestYear) { bestYear = yr; best = r; }
+                int yr = (int) asLong(text(f, "stdrYear"));
+                if (yr > bestYear) { bestYear = yr; bestPrice = price; }
             }
-            if (best == null) {
+            if (bestYear < 0) {
+                // 결함 응답이면 메시지를 함께 남김 (정상이면 데이터 없음)
+                String err = text(doc.getDocumentElement(), "text");
+                if (!err.isBlank()) {
+                    log.warn("VWorld 공시지가 오류 (pnu={}, year={}): {}", pnu, year, err);
+                }
                 return OfficialPriceDto.builder().found(false).pnu(pnu)
-                    .message("해당 필지의 공시지가 데이터가 없습니다.").build();
+                    .message(err.isBlank() ? "해당 필지의 공시지가 데이터가 없습니다." : "공시지가 조회 오류: " + err)
+                    .build();
             }
             return OfficialPriceDto.builder()
                 .found(true).pnu(pnu)
-                .pricePerM2(asLong(best.get("pblntfPclnd")))
+                .pricePerM2(bestPrice)
                 .year(bestYear)
                 .build();
         } catch (Exception e) {
-            log.warn("NSDI 공시지가 조회 실패 (pnu={}, year={}): {}", pnu, year, e.getMessage());
+            log.warn("VWorld 공시지가 조회 실패 (pnu={}, year={}): {}", pnu, year, e.getMessage());
             return OfficialPriceDto.builder().found(false).pnu(pnu)
                 .message("공시지가 조회 중 오류가 발생했습니다.").build();
         }
     }
 
-    /** 응답 트리에서 pblntfPclnd(공시지가)를 가진 레코드를 재귀적으로 수집 (래퍼 키 변동 대비). */
-    private void collectPriceRecords(JsonNode node, List<JsonNode> out) {
-        if (node == null) return;
-        if (node.isObject()) {
-            if (node.has("pblntfPclnd")) out.add(node);
-            node.forEach(child -> collectPriceRecords(child, out));
-        } else if (node.isArray()) {
-            node.forEach(child -> collectPriceRecords(child, out));
-        }
+    private Document parseXml(String xml) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        return builder.parse(new InputSource(new StringReader(xml)));
     }
 
-    private long asLong(JsonNode n) {
-        if (n == null || n.isNull()) return 0;
-        String s = n.asText("").replace(",", "").trim();
-        if (s.isEmpty()) return 0;
-        try { return Long.parseLong(s); } catch (NumberFormatException e) {
-            try { return Math.round(Double.parseDouble(s)); } catch (NumberFormatException e2) { return 0; }
+    /** 부모 엘리먼트에서 첫 번째 자식 태그의 텍스트 (없으면 ""). */
+    private String text(Element parent, String tag) {
+        if (parent == null) return "";
+        NodeList nl = parent.getElementsByTagName(tag);
+        if (nl.getLength() == 0 || nl.item(0).getTextContent() == null) return "";
+        return nl.item(0).getTextContent().trim();
+    }
+
+    private long asLong(String s) {
+        if (s == null) return 0;
+        String clean = s.replace(",", "").trim();
+        if (clean.isEmpty()) return 0;
+        try { return Long.parseLong(clean); } catch (NumberFormatException e) {
+            try { return Math.round(Double.parseDouble(clean)); } catch (NumberFormatException e2) { return 0; }
         }
     }
 }
