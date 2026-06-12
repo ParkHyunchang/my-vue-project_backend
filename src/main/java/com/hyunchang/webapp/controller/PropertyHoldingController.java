@@ -129,9 +129,15 @@ public class PropertyHoldingController {
         String memo = body.get("memo") != null ? body.get("memo").toString() : null;
         java.time.LocalDate purchaseDate = toLocalDate(
             body.get("purchaseDate") != null ? body.get("purchaseDate").toString() : null);
+        // 토지 속성 (아파트면 무시됨)
+        String jimok = trimOrNull(body.get("jimok") != null ? body.get("jimok").toString() : null);
+        String useZone = trimOrNull(body.get("useZone") != null ? body.get("useZone").toString() : null);
+        Long officialPricePerM2 = toLong(body.get("officialPricePerM2"));
+        Integer officialPriceYear = toInt(body.get("officialPriceYear"));
 
         PropertyHolding updated = propertyHoldingService.updateHolding(
-            userId, id, purchasePrice, monthlyRent, memo, purchaseDate);
+            userId, id, purchasePrice, monthlyRent, memo, purchaseDate,
+            jimok, useZone, officialPricePerM2, officialPriceYear);
         return ResponseEntity.ok(updated);
     }
 
@@ -146,6 +152,11 @@ public class PropertyHoldingController {
 
     private Long toLong(Object obj) {
         if (obj instanceof Number n) return n.longValue();
+        return null;
+    }
+
+    private Integer toInt(Object obj) {
+        if (obj instanceof Number n) return n.intValue();
         return null;
     }
 

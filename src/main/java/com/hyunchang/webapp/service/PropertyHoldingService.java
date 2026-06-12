@@ -68,8 +68,15 @@ public class PropertyHoldingService {
         return saved;
     }
 
+    /**
+     * 보유 부동산 수정. 식별 필드(명칭·소재·면적·지번)는 변경 대상이 아니며,
+     * 가변 값(매입가·월세·메모·매입일)과 토지 속성(지목·용도지역·공시지가)만 갱신한다.
+     * 토지 전용 필드는 아파트면 컨트롤러에서 null 로 전달된다.
+     */
     public PropertyHolding updateHolding(String userId, Long id, Long purchasePrice,
-                                         Long monthlyRent, String memo, java.time.LocalDate purchaseDate) {
+                                         Long monthlyRent, String memo, java.time.LocalDate purchaseDate,
+                                         String jimok, String useZone,
+                                         Long officialPricePerM2, Integer officialPriceYear) {
         PropertyHolding holding = propertyHoldingRepository.findByIdAndUserUserId(id, userId)
             .orElseThrow(() -> new IllegalArgumentException("보유 부동산을 찾을 수 없습니다."));
 
@@ -77,6 +84,12 @@ public class PropertyHoldingService {
         holding.setMonthlyRent(monthlyRent);
         holding.setMemo(memo);
         holding.setPurchaseDate(purchaseDate);
+        if ("LAND".equalsIgnoreCase(holding.getPropertyType())) {
+            holding.setJimok(jimok);
+            holding.setUseZone(useZone);
+            holding.setOfficialPricePerM2(officialPricePerM2);
+            holding.setOfficialPriceYear(officialPriceYear);
+        }
         PropertyHolding saved = propertyHoldingRepository.save(holding);
 
         log.info("[PROPERTY/HOLDING] user={}({}), UPDATE id={} name={} price={} monthlyRent={}",
