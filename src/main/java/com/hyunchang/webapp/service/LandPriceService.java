@@ -93,8 +93,15 @@ public class LandPriceService {
             + String.format("%04d", Math.max(0, ji));
     }
 
+    // NSDI 가 데이터 없을 때 최근 몇 개 연도까지 거슬러 조회할지
+    private static final int YEAR_LOOKBACK = 4;
+
     /**
-     * 개별공시지가 조회. year 가 null 이면 응답 중 가장 최근 연도를 사용한다.
+     * 개별공시지가 조회. year 가 null 이면 최근 연도부터 거슬러 올라가며
+     * 데이터가 있는 첫 연도를 사용한다.
+     *
+     * stdrYear(기준연도)는 NSDI getIndvdLandPriceAttr 의 필수 파라미터다.
+     * 누락 시 NSDI 서버가 HTTP 500("Unexpected errors")을 반환하므로 반드시 함께 보낸다.
      */
     public OfficialPriceDto getOfficialPrice(String bdongCode, boolean mountain, int bun, int ji, Integer year) {
         if (!isConfigured()) {
@@ -106,13 +113,31 @@ public class LandPriceService {
             return OfficialPriceDto.builder().found(false)
                 .message("법정동코드(10자리)가 올바르지 않습니다.").build();
         }
+
+        if (year != null) {
+            return fetchForYear(pnu, year);
+        }
+        // 연도 미지정: 올해(공시 전일 수 있음)부터 최근 연도로 거슬러 첫 데이터 채택
+        int current = java.time.Year.now().getValue();
+        OfficialPriceDto last = null;
+        for (int y = current; y > current - YEAR_LOOKBACK; y--) {
+            OfficialPriceDto dto = fetchForYear(pnu, y);
+            if (dto.isFound()) return dto;
+            last = dto;
+        }
+        return last != null ? last : OfficialPriceDto.builder().found(false).pnu(pnu)
+            .message("해당 필지의 공시지가 데이터가 없습니다.").build();
+    }
+
+    /** 특정 기준연도(stdrYear)로 공시지가 1회 조회. */
+    private OfficialPriceDto fetchForYear(String pnu, int year) {
         try {
             String url = PRICE_URL
                 + "?serviceKey=" + serviceKey.strip()
                 + "&pnu=" + pnu
+                + "&stdrYear=" + year
                 + "&format=json"
-                + "&numOfRows=100"
-                + (year != null ? "&stdrYear=" + year : "");
+                + "&numOfRows=100";
 
             HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create(url))
@@ -125,7 +150,8 @@ public class LandPriceService {
             if (response.statusCode() != 200 || body == null || body.isBlank() || body.stripLeading().startsWith("<")) {
                 String head = body == null ? "" : body.strip();
                 if (head.length() > 300) head = head.substring(0, 300);
-                log.warn("NSDI 공시지가 응답 비정상 (status={}, pnu={}) body=[{}]", response.statusCode(), pnu, head);
+                log.warn("NSDI 공시지가 응답 비정상 (status={}, pnu={}, year={}) body=[{}]",
+                    response.statusCode(), pnu, year, head);
                 return OfficialPriceDto.builder().found(false).pnu(pnu)
                     .message("공시지가를 조회하지 못했습니다. (응답: " + head + ")").build();
             }
@@ -152,7 +178,7 @@ public class LandPriceService {
                 .year(bestYear)
                 .build();
         } catch (Exception e) {
-            log.warn("NSDI 공시지가 조회 실패 (pnu={}): {}", pnu, e.getMessage());
+            log.warn("NSDI 공시지가 조회 실패 (pnu={}, year={}): {}", pnu, year, e.getMessage());
             return OfficialPriceDto.builder().found(false).pnu(pnu)
                 .message("공시지가 조회 중 오류가 발생했습니다.").build();
         }
