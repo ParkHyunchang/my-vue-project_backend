@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.*;
+import java.util.function.Function;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -91,6 +92,180 @@ public class RealEstateAnalysisService {
             .sources(topNews)
             .providersStatus(chain.providersStatus())
             .build();
+    }
+
+    // ── 토지(LAND) AI 시황 ─────────────────────────────────────────
+
+    public LandAnalysisResponse analyzeLand(String lawdCd) {
+        RegionDto region = realEstateService.getRegion(lawdCd);
+        String sigungu = region != null ? region.getSigungu() : lawdCd;
+        String regionName = region != null ? region.getName() : lawdCd;
+
+        List<LandDealDto> deals = safe(
+            () -> realEstateService.searchLand(lawdCd, ANALYSIS_MONTHS), List.of());
+
+        if (deals.isEmpty()) {
+            return LandAnalysisResponse.builder()
+                .noData(true)
+                .stats(LandStatsDto.builder()
+                    .sigungu(sigungu).totalCount(0)
+                    .jimokBuckets(List.of()).zoneBuckets(List.of()).build())
+                .build();
+        }
+
+        LandStatsDto stats = computeLandStats(deals, sigungu);
+
+        List<RealEstateNewsDto> news = safe(() -> realEstateNewsService.getNews(false), List.of());
+        List<RealEstateNewsDto> topNews = news.stream().limit(5).collect(Collectors.toList());
+
+        String prompt = buildLandPrompt(regionName, stats, deals, topNews);
+        AiProviderChain.ChainResult chain = aiProviderChain.analyze(prompt);
+
+        if (!chain.success()) {
+            return LandAnalysisResponse.builder()
+                .blocked(true).stats(stats)
+                .retryAt(chain.retryAt()).providersStatus(chain.providersStatus()).build();
+        }
+
+        return LandAnalysisResponse.builder()
+            .blocked(false).providerName(chain.providerName()).model(chain.model())
+            .analyzedAt(Instant.now()).stats(stats)
+            .result(parseResult(chain.text())).sources(topNews)
+            .providersStatus(chain.providersStatus()).build();
+    }
+
+    private LandStatsDto computeLandStats(List<LandDealDto> deals, String sigungu) {
+        long[] units = deals.stream().mapToLong(LandDealDto::getPricePerM2).filter(v -> v > 0).toArray();
+        long avg = units.length == 0 ? 0 : Math.round(Arrays.stream(units).average().orElse(0));
+        long min = units.length == 0 ? 0 : Arrays.stream(units).min().orElse(0);
+        long max = units.length == 0 ? 0 : Arrays.stream(units).max().orElse(0);
+
+        // 추세: 거래일 오름차순 정렬 후 전반부/후반부 평균 단가 비교
+        List<LandDealDto> asc = deals.stream()
+            .filter(d -> d.getPricePerM2() > 0)
+            .sorted(Comparator.comparing(LandDealDto::getDealDate))
+            .collect(Collectors.toList());
+        double trendPct = 0;
+        if (asc.size() >= 4) {
+            int mid = asc.size() / 2;
+            double prior = unitAvg(asc.subList(0, mid));
+            double recent = unitAvg(asc.subList(mid, asc.size()));
+            if (prior > 0) trendPct = (recent - prior) / prior * 100.0;
+        }
+        trendPct = Math.round(trendPct * 10.0) / 10.0;
+        String trendLabel = trendPct > 1.5 ? "상승" : trendPct < -1.5 ? "하락" : "보합";
+
+        return LandStatsDto.builder()
+            .sigungu(sigungu).totalCount(deals.size())
+            .avgPricePerM2(avg).minPricePerM2(min).maxPricePerM2(max)
+            .trendPct(trendPct).trendLabel(trendLabel)
+            .jimokBuckets(bucketBy(deals, LandDealDto::getJimok))
+            .zoneBuckets(bucketBy(deals, LandDealDto::getUseZone))
+            .build();
+    }
+
+    private double unitAvg(List<LandDealDto> ds) {
+        return ds.stream().mapToLong(LandDealDto::getPricePerM2).filter(v -> v > 0).average().orElse(0);
+    }
+
+    /** 지목/용도지역별 평균 단가 집계 (단가 높은 순). */
+    private List<LandStatsDto.Bucket> bucketBy(List<LandDealDto> deals, Function<LandDealDto, String> key) {
+        Map<String, List<LandDealDto>> grouped = deals.stream()
+            .filter(d -> d.getPricePerM2() > 0 && key.apply(d) != null && !key.apply(d).isBlank())
+            .collect(Collectors.groupingBy(key, LinkedHashMap::new, Collectors.toList()));
+        return grouped.entrySet().stream()
+            .map(e -> LandStatsDto.Bucket.builder()
+                .label(e.getKey()).count(e.getValue().size())
+                .avgPricePerM2(Math.round(unitAvg(e.getValue()))).build())
+            .sorted(Comparator.comparingLong(LandStatsDto.Bucket::getAvgPricePerM2).reversed())
+            .collect(Collectors.toList());
+    }
+
+    private String buildLandPrompt(String regionName, LandStatsDto stats,
+                                   List<LandDealDto> deals, List<RealEstateNewsDto> news) {
+        StringBuilder jimokBlock = new StringBuilder();
+        for (LandStatsDto.Bucket b : stats.getJimokBuckets()) {
+            jimokBlock.append("· ").append(b.getLabel()).append(": ")
+                .append(b.getCount()).append("건, 평균 ").append(unit(b.getAvgPricePerM2())).append("\n");
+        }
+        StringBuilder zoneBlock = new StringBuilder();
+        for (LandStatsDto.Bucket b : stats.getZoneBuckets()) {
+            zoneBlock.append("· ").append(b.getLabel()).append(": ")
+                .append(b.getCount()).append("건, 평균 ").append(unit(b.getAvgPricePerM2())).append("\n");
+        }
+        StringBuilder dealBlock = new StringBuilder();
+        int i = 1;
+        for (LandDealDto d : deals.stream().limit(10).collect(Collectors.toList())) {
+            dealBlock.append(i++).append(". ")
+                .append(nullSafe(d.getDong())).append(" ")
+                .append(nullSafe(d.getJimok())).append(" / ").append(nullSafe(d.getUseZone()))
+                .append(" — ").append(d.getAreaM2()).append("㎡, ").append(money(d.getDealAmount()))
+                .append(" (단가 ").append(unit(d.getPricePerM2())).append(", ")
+                .append(d.getDealDate()).append(")\n");
+        }
+
+        StringBuilder newsBlock = new StringBuilder();
+        String newsInstruction;
+        if (news.isEmpty()) {
+            newsBlock.append("(수집된 부동산 뉴스 없음)");
+            newsInstruction = "관련 뉴스가 없으니 거래 데이터만 근거로 분석하세요.";
+        } else {
+            int n = 1;
+            for (RealEstateNewsDto a : news) {
+                newsBlock.append(n++).append(". ").append(nullSafe(a.getTitle())).append("\n");
+            }
+            newsInstruction = "아래 뉴스는 일반 부동산 시황 참고용입니다. 이 지역 토지와 직접 관련될 때만 신중히 인용하세요.";
+        }
+
+        return """
+            당신은 한국 토지(부동산) 시장 분석가입니다. 아래 토지 실거래 데이터와 뉴스만 근거로,
+            이 지역 토지를 매입 검토하는 사람에게 도움이 되도록 간결하고 정확하게 분석하세요.
+            토지는 필지마다 조건(지목·용도지역·도로·형상)이 달라 개별 시세 단정이 어렵다는 점을 전제로,
+            단가(원/㎡) 범위와 용도지역·지목별 차이를 중심으로 설명하세요.
+            추측이나 일반론은 쓰지 마세요. 투자 권유가 아닌 정보 정리 톤으로 작성하세요.
+            응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
+
+            ── 분석 대상 ──
+            지역: %s (토지 매매)
+            최근 %d개월 집계: 총 %d건, 평균 단가 %s, 최저 %s, 최고 %s
+            단가 추세: %s (%.1f%%, 최근 절반 vs 이전 절반)
+
+            ── 용도지역별 평균 단가 ──
+            %s
+            ── 지목별 평균 단가 ──
+            %s
+            ── 최근 대표 거래 ──
+            %s
+            ── 뉴스 사용 지침 ──
+            %s
+            ── 부동산 뉴스 ──
+            %s
+            ── 응답 스키마 ──
+            {
+              "trend": "상승" | "보합" | "하락",
+              "headline": "한 줄 핵심 요약 (60자 이내, 한국어)",
+              "priceLevel": "주력 용도지역·지목 기준 현재 단가대 요약 (예: 계획관리 전 30~40만원/평대)",
+              "keywords": ["키워드1", "키워드2", "키워드3"],
+              "watchPoints": ["토지 매입 검토 시 주의점1", "주의점2"],
+              "comment": "2~3문장 종합 코멘트"
+            }
+            """.formatted(
+                nullSafe(regionName), ANALYSIS_MONTHS,
+                stats.getTotalCount(), unit(stats.getAvgPricePerM2()),
+                unit(stats.getMinPricePerM2()), unit(stats.getMaxPricePerM2()),
+                stats.getTrendLabel(), stats.getTrendPct(),
+                zoneBlock.toString().strip(),
+                jimokBlock.toString().strip(),
+                dealBlock.toString().strip(),
+                newsInstruction,
+                newsBlock.toString().strip());
+    }
+
+    /** 단가(원/㎡) → "1,234,000원/㎡ (약 41만원/평)". */
+    private String unit(long perM2) {
+        if (perM2 <= 0) return "-";
+        long perPyeong = Math.round(perM2 * 3.3058 / 10000.0);
+        return String.format(Locale.KOREA, "%,d원/㎡ (약 %,d만원/평)", perM2, perPyeong);
     }
 
     // ── 통계 집계 ──────────────────────────────────────────────────

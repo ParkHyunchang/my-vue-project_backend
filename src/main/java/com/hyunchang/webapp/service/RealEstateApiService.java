@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.LandDealDto;
 import com.hyunchang.webapp.dto.RealEstateDealDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,8 @@ public class RealEstateApiService {
         "https://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev";
     private static final String RENT_URL =
         "https://apis.data.go.kr/1613000/RTMSDataSvcAptRent/getRTMSDataSvcAptRent";
+    private static final String LAND_TRADE_URL =
+        "https://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade";
 
     private static final int  NUM_OF_ROWS  = 1000;
     private static final int  MAX_PAGES    = 5;     // 시군구·월별 최대 5000건까지 수집
@@ -55,8 +58,12 @@ public class RealEstateApiService {
 
     // 캐시: "trade|11680|202406" → CacheEntry
     private final Map<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    // 토지 캐시: "land|11680|202406" → LandCacheEntry
+    private final Map<String, LandCacheEntry> landCache = new ConcurrentHashMap<>();
 
     private record CacheEntry(long time, List<RealEstateDealDto> data) {}
+
+    private record LandCacheEntry(long time, List<LandDealDto> data) {}
 
     public boolean isConfigured() {
         return serviceKey != null && !serviceKey.isBlank();
@@ -70,6 +77,22 @@ public class RealEstateApiService {
     /** 아파트 전월세 실거래 조회 (dealType = JEONSE | MONTHLY, 월세금액으로 분류). */
     public List<RealEstateDealDto> getRents(String lawdCd, String dealYmd) {
         return getCached("rent", RENT_URL, lawdCd, dealYmd);
+    }
+
+    /** 토지 매매 실거래 조회. (시군구·월별 6시간 TTL 캐시) */
+    public List<LandDealDto> getLandTrades(String lawdCd, String dealYmd) {
+        if (!isConfigured()) {
+            log.warn("REALESTATE_API_KEY 미설정 — 토지 실거래가 조회 비활성");
+            return Collections.emptyList();
+        }
+        String key = "land|" + lawdCd + "|" + dealYmd;
+        LandCacheEntry hit = landCache.get(key);
+        if (hit != null && (System.currentTimeMillis() - hit.time()) < CACHE_TTL_MS) {
+            return hit.data();
+        }
+        List<LandDealDto> result = fetchAllLandPages(lawdCd, dealYmd);
+        landCache.put(key, new LandCacheEntry(System.currentTimeMillis(), result));
+        return result;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -189,6 +212,102 @@ public class RealEstateApiService {
             result.add(b.build());
         }
         return result;
+    }
+
+    // ── 토지 ───────────────────────────────────────────────────────
+
+    private List<LandDealDto> fetchAllLandPages(String lawdCd, String dealYmd) {
+        List<LandDealDto> all = new ArrayList<>();
+        for (int page = 1; page <= MAX_PAGES; page++) {
+            try {
+                String fullUrl = LAND_TRADE_URL
+                    + "?serviceKey=" + serviceKey.strip()
+                    + "&LAWD_CD=" + lawdCd
+                    + "&DEAL_YMD=" + dealYmd
+                    + "&pageNo=" + page
+                    + "&numOfRows=" + NUM_OF_ROWS;
+
+                HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(fullUrl))
+                    .timeout(Duration.ofSeconds(15))
+                    .GET()
+                    .build();
+
+                HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() != 200) {
+                    log.warn("국토부 토지 API HTTP {} (lawdCd={}, ymd={})", response.statusCode(), lawdCd, dealYmd);
+                    break;
+                }
+                List<LandDealDto> pageItems = parseLandItems(response.body(), lawdCd);
+                all.addAll(pageItems);
+                if (pageItems.size() < NUM_OF_ROWS) break; // 마지막 페이지
+            } catch (Exception e) {
+                log.warn("국토부 토지 실거래가 조회 실패 (lawdCd={}, ymd={}, page={}): {}",
+                    lawdCd, dealYmd, page, e.getMessage());
+                break;
+            }
+        }
+        return all;
+    }
+
+    private List<LandDealDto> parseLandItems(String xml, String lawdCd) throws Exception {
+        if (xml == null || xml.isBlank()) return Collections.emptyList();
+
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
+        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+        DocumentBuilder builder = factory.newDocumentBuilder();
+        Document doc = builder.parse(new InputSource(new StringReader(xml)));
+
+        String resultCode = text(doc.getElementsByTagName("resultCode"));
+        if (!resultCode.isEmpty() && !resultCode.equals("00") && !resultCode.equals("000")) {
+            String msg = text(doc.getElementsByTagName("resultMsg"));
+            log.warn("국토부 토지 API 오류 resultCode={} msg={} (lawdCd={})", resultCode, msg, lawdCd);
+            return Collections.emptyList();
+        }
+
+        NodeList items = doc.getElementsByTagName("item");
+        List<LandDealDto> result = new ArrayList<>(items.getLength());
+
+        for (int i = 0; i < items.getLength(); i++) {
+            if (items.item(i).getNodeType() != org.w3c.dom.Node.ELEMENT_NODE) continue;
+            Element el = (Element) items.item(i);
+
+            // 토지 매매 API 응답 태그 (라이브 응답 기준으로 확인됨):
+            //   umdNm(법정동), jimok(지목), landUse(용도지역), dealArea(거래면적㎡),
+            //   dealAmount(거래금액 만원), dealYear/Month/Day, shareDealingType(지분구분)
+            String umdNm   = get(el, "umdNm");
+            String jimok   = get(el, "jimok");
+            String useZone = firstNonBlank(get(el, "landUse"), get(el, "landUseNm"), get(el, "지역"));
+            double area    = parseDouble(get(el, "dealArea"));
+            long   amount  = parseLong(get(el, "dealAmount"));
+            int    year    = (int) parseLong(get(el, "dealYear"));
+            int    month   = (int) parseLong(get(el, "dealMonth"));
+            int    day     = (int) parseLong(get(el, "dealDay"));
+            String share   = firstNonBlank(get(el, "shareDealingType"), get(el, "지분구분"));
+
+            if (year == 0 || amount <= 0) continue;
+
+            String dealDate = String.format("%04d-%02d-%02d", year, month, day);
+
+            result.add(LandDealDto.builder()
+                .dong(umdNm)
+                .jimok(jimok)
+                .useZone(useZone)
+                .areaM2(area)
+                .dealAmount(amount)
+                .dealDate(dealDate)
+                .sharePartition(share)
+                .build());
+        }
+        return result;
+    }
+
+    private String firstNonBlank(String... vals) {
+        for (String v : vals) {
+            if (v != null && !v.isBlank()) return v;
+        }
+        return "";
     }
 
     // ── XML/숫자 헬퍼 ──────────────────────────────────────────────

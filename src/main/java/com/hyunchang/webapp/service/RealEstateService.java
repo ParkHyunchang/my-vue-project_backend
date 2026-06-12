@@ -2,6 +2,9 @@ package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hyunchang.webapp.dto.LandDealDto;
+import com.hyunchang.webapp.dto.LandFiltersDto;
+import com.hyunchang.webapp.dto.LandQuoteDto;
 import com.hyunchang.webapp.dto.PropertyQuoteDto;
 import com.hyunchang.webapp.dto.RealEstateDealDto;
 import com.hyunchang.webapp.dto.RegionDto;
@@ -174,6 +177,84 @@ public class RealEstateService {
             .recentPrice(recentPrice)
             .recentMonthlyRent(isSale ? 0 : recent.getMonthlyRent())
             .avgPrice(avg)
+            .build();
+    }
+
+    // ── 토지(LAND) ─────────────────────────────────────────────────
+
+    /** 토지 매매 실거래 검색 — 최근 N개월 합산, 거래일 내림차순. */
+    public List<LandDealDto> searchLand(String lawdCd, int months) {
+        if (lawdCd == null || lawdCd.length() != 5) return Collections.emptyList();
+        int safeMonths = Math.max(1, Math.min(months, 12));
+        String sigungu = regions.stream()
+            .filter(r -> r.getCode().equals(lawdCd))
+            .map(RegionDto::getSigungu)
+            .findFirst().orElse("");
+
+        List<LandDealDto> all = new ArrayList<>();
+        LocalDate cursor = LocalDate.now();
+        for (int i = 0; i < safeMonths; i++) {
+            all.addAll(apiService.getLandTrades(lawdCd, cursor.format(YMD_FMT)));
+            cursor = cursor.minusMonths(1);
+        }
+        return all.stream()
+            .peek(d -> d.setSigungu(sigungu))
+            .sorted(Comparator.comparing(LandDealDto::getDealDate).reversed())
+            .collect(Collectors.toList());
+    }
+
+    /** 토지 검색 결과의 지목·용도지역 목록 (최근 12개월, 가나다순, 중복 제거). */
+    public LandFiltersDto getLandFilters(String lawdCd) {
+        List<LandDealDto> deals = searchLand(lawdCd, 12);
+        List<String> jimoks = deals.stream()
+            .map(LandDealDto::getJimok)
+            .filter(s -> s != null && !s.isBlank())
+            .distinct().sorted().collect(Collectors.toList());
+        List<String> useZones = deals.stream()
+            .map(LandDealDto::getUseZone)
+            .filter(s -> s != null && !s.isBlank())
+            .distinct().sorted().collect(Collectors.toList());
+        return LandFiltersDto.builder().jimoks(jimoks).useZones(useZones).build();
+    }
+
+    /**
+     * 보유 토지 추정 시세 — 같은 시군구·지목·용도지역 거래의 단가(원/㎡) min/avg/max 기반.
+     * 지목/용도지역이 비면 해당 조건은 매칭에서 생략한다.
+     */
+    public LandQuoteDto getLandQuote(String lawdCd, String jimok, String useZone, Double areaM2) {
+        if (lawdCd == null || lawdCd.length() != 5) {
+            return LandQuoteDto.builder().found(false).build();
+        }
+        List<LandDealDto> deals = searchLand(lawdCd, 12); // 최신순 정렬됨
+        String targetJimok = normalize(jimok);
+        String targetZone = normalize(useZone);
+
+        List<LandDealDto> matched = deals.stream()
+            .filter(d -> d.getPricePerM2() > 0)
+            .filter(d -> targetJimok.isEmpty() || normalize(d.getJimok()).equals(targetJimok))
+            .filter(d -> targetZone.isEmpty() || normalize(d.getUseZone()).equals(targetZone))
+            .collect(Collectors.toList());
+
+        if (matched.isEmpty()) {
+            return LandQuoteDto.builder().found(false).matchCount(0).build();
+        }
+
+        long[] unitPrices = matched.stream().mapToLong(LandDealDto::getPricePerM2).toArray();
+        long avgUnit = Math.round(Arrays.stream(unitPrices).average().orElse(0));
+        long minUnit = Arrays.stream(unitPrices).min().orElse(0);
+        long maxUnit = Arrays.stream(unitPrices).max().orElse(0);
+        long estimate = (areaM2 != null && areaM2 > 0)
+            ? Math.round(avgUnit * areaM2 / 10000.0) // 원 → 만원
+            : 0;
+
+        return LandQuoteDto.builder()
+            .found(true)
+            .matchCount(matched.size())
+            .pricePerM2Min(minUnit)
+            .pricePerM2Avg(avgUnit)
+            .pricePerM2Max(maxUnit)
+            .recentDate(matched.get(0).getDealDate())
+            .estimate(estimate)
             .build();
     }
 

@@ -32,14 +32,17 @@ public class PropertyHoldingService {
         return propertyHoldingRepository.findByUserUserIdOrderByIdAsc(userId);
     }
 
-    public PropertyHolding addHolding(String userId, String dealType, String name, String lawdCd,
-                                      String sigungu, Double areaM2, Long purchasePrice,
-                                      Long monthlyRent, String memo, java.time.LocalDate purchaseDate) {
+    public PropertyHolding addHolding(String userId, String propertyType, String dealType, String name,
+                                      String lawdCd, String sigungu, Double areaM2, Long purchasePrice,
+                                      Long monthlyRent, String memo, java.time.LocalDate purchaseDate,
+                                      String jimok, String useZone, String umdName, String jibun,
+                                      String bdongCode, Long officialPricePerM2, Integer officialPriceYear) {
         User user = userRepository.findByUserId(userId)
             .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다: " + userId));
 
         PropertyHolding holding = new PropertyHolding();
         holding.setUser(user);
+        holding.setPropertyType(propertyType);
         holding.setDealType(dealType);
         holding.setName(name);
         holding.setLawdCd(lawdCd);
@@ -49,11 +52,18 @@ public class PropertyHoldingService {
         holding.setMonthlyRent(monthlyRent);
         holding.setMemo(memo);
         holding.setPurchaseDate(purchaseDate);
+        holding.setJimok(jimok);
+        holding.setUseZone(useZone);
+        holding.setUmdName(umdName);
+        holding.setJibun(jibun);
+        holding.setBdongCode(bdongCode);
+        holding.setOfficialPricePerM2(officialPricePerM2);
+        holding.setOfficialPriceYear(officialPriceYear);
 
         PropertyHolding saved = propertyHoldingRepository.save(holding);
-        log.info("[PROPERTY/HOLDING] user={}({}), CREATE id={} name={} lawdCd={} dealType={} area={} price={}",
+        log.info("[PROPERTY/HOLDING] user={}({}), CREATE id={} type={} name={} lawdCd={} dealType={} area={} price={}",
             userId, SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getName(), saved.getLawdCd(), saved.getDealType(),
+            saved.getId(), saved.getPropertyType(), saved.getName(), saved.getLawdCd(), saved.getDealType(),
             saved.getAreaM2(), saved.getPurchasePrice());
         return saved;
     }

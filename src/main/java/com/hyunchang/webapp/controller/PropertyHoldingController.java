@@ -47,6 +47,7 @@ public class PropertyHoldingController {
     }
 
     public record PropertyRequest(
+        String propertyType,     // APT | LAND (미지정 시 APT)
         String dealType,
         String name,
         String lawdCd,
@@ -55,34 +56,66 @@ public class PropertyHoldingController {
         Long purchasePrice,
         Long monthlyRent,
         String memo,
-        String purchaseDate   // ISO yyyy-MM-dd
+        String purchaseDate,     // ISO yyyy-MM-dd
+        // ── 토지(LAND) 전용 ──
+        String jimok,
+        String useZone,
+        String umdName,
+        String jibun,
+        String bdongCode,
+        Long officialPricePerM2,
+        Integer officialPriceYear
     ) {}
 
-    @Operation(summary = "보유 부동산 추가")
+    @Operation(summary = "보유 부동산 추가 (아파트/토지)")
     @PostMapping("/holdings")
     public ResponseEntity<?> addHolding(@RequestBody PropertyRequest request) {
         if (!hasAccess()) return forbidden();
         String userId = SecurityUtils.getCurrentUserId();
 
+        boolean isLand = "LAND".equalsIgnoreCase(request.propertyType());
+        String propertyType = isLand ? "LAND" : "APT";
+
         if (request.name() == null || request.name().isBlank()
-            || request.lawdCd() == null || request.lawdCd().length() != 5
-            || request.dealType() == null || request.dealType().isBlank()) {
-            return ResponseEntity.badRequest().body("단지명, 지역, 거래유형은 필수입니다.");
+            || request.lawdCd() == null || request.lawdCd().length() != 5) {
+            return ResponseEntity.badRequest().body("이름(단지명/토지명)과 지역은 필수입니다.");
+        }
+        if (isLand) {
+            if (request.areaM2() == null || request.areaM2() <= 0) {
+                return ResponseEntity.badRequest().body("토지는 면적이 필수입니다.");
+            }
+        } else if (request.dealType() == null || request.dealType().isBlank()) {
+            return ResponseEntity.badRequest().body("거래유형은 필수입니다.");
         }
 
+        // 토지는 거래유형 개념이 없어 SALE 로 고정
+        String dealType = isLand ? "SALE" : request.dealType().toUpperCase();
+
         PropertyHolding created = propertyHoldingService.addHolding(
-            userId,
-            request.dealType().toUpperCase(),
+            userId, propertyType, dealType,
             request.name().trim(),
             request.lawdCd(),
             request.sigungu() != null ? request.sigungu().trim() : "",
             request.areaM2(),
             request.purchasePrice(),
-            request.monthlyRent(),
+            isLand ? null : request.monthlyRent(),
             request.memo() != null ? request.memo().trim() : null,
-            toLocalDate(request.purchaseDate())
+            toLocalDate(request.purchaseDate()),
+            trimOrNull(request.jimok()),
+            trimOrNull(request.useZone()),
+            trimOrNull(request.umdName()),
+            trimOrNull(request.jibun()),
+            isLand ? trimOrNull(request.bdongCode()) : null,
+            isLand ? request.officialPricePerM2() : null,
+            isLand ? request.officialPriceYear() : null
         );
         return ResponseEntity.ok(created);
+    }
+
+    private String trimOrNull(String s) {
+        if (s == null) return null;
+        String t = s.trim();
+        return t.isEmpty() ? null : t;
     }
 
     @Operation(summary = "보유 부동산 수정 (가격/월세/메모)")
