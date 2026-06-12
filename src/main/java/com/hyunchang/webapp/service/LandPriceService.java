@@ -31,8 +31,8 @@ import java.util.stream.Collectors;
  *   시군구(5자리)별 읍면동 목록을 제공한다.
  * - 읍면동 법정동코드 + 지번(산구분·본번·부번)으로 PNU(19자리)를 만들어 공시지가를 조회한다.
  *   PNU = 법정동코드(10) + 산구분(1: 일반=1/산=2) + 본번(4) + 부번(4).
- * - 인증키는 RealEstateApiService 와 동일한 app.realestate.service-key 를 재사용한다
- *   (data.go.kr 인증키는 계정 단위 — NSDI 개별공시지가 서비스 활용신청만 별도 필요).
+ * - 인증키는 개별공시지가(NSDI) 전용 키 app.realestate.land-key(REALLAND_API_KEY)를 사용한다.
+ *   미설정 시 실거래 키(REALESTATE_API_KEY)로 폴백한다.
  */
 @Service
 public class LandPriceService {
@@ -42,7 +42,7 @@ public class LandPriceService {
     private static final String PRICE_URL =
         "https://apis.data.go.kr/1611000/nsdi/IndvdLandPriceService/attr/getIndvdLandPriceAttr";
 
-    @Value("${app.realestate.service-key:}")
+    @Value("${app.realestate.land-key:}")
     private String serviceKey;
 
     private final ObjectMapper objectMapper = new ObjectMapper();

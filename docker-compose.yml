@@ -28,6 +28,10 @@ services:
     container_name: vue_personal_project-backend
     ports:
       - "3200:3200"
+    # .env 전체를 컨테이너 환경변수로 주입 → 새 키 추가 시 compose 수정 없이 .env만 갱신하면 됨.
+    # (아래 environment 의 항목은 값 조합/기본값이 필요한 것들이며, 동일 키는 environment 가 우선한다)
+    env_file:
+      - .env
     environment:
       TZ: Asia/Seoul
       SPRING_PROFILES_ACTIVE: docker
@@ -41,6 +45,9 @@ services:
       ALPHAVANTAGE_API_KEY: ${ALPHAVANTAGE_API_KEY}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
       KRX_API_KEY: ${KRX_API_KEY}
+      # 부동산: 실거래가(국토부 RTMS) / 개별공시지가(NSDI). env_file 로도 주입되지만 명시.
+      REALESTATE_API_KEY: ${REALESTATE_API_KEY:-}
+      REALLAND_API_KEY: ${REALLAND_API_KEY:-}
       # AI 종목 분석 provider 체인 (Gemini → Groq → Cloudflare)
       # GEMINI 만 필수, 나머지는 비워두면 chain 에서 자동 skip
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
