@@ -2,6 +2,8 @@ package com.hyunchang.webapp.service.prompt;
 
 import com.hyunchang.webapp.entity.AiPromptOverride;
 import com.hyunchang.webapp.repository.AiPromptOverrideRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +27,8 @@ public class AiPromptService {
 
     /** {{ 변수이름 }} — 한글/영문/숫자/언더스코어, 앞뒤 공백 허용. JSON 의 단일 중괄호 { } 와는 충돌하지 않는다. */
     private static final Pattern TOKEN = Pattern.compile("\\{\\{\\s*([\\p{L}\\p{N}_]+)\\s*\\}\\}");
+
+    private static final Logger log = LoggerFactory.getLogger(AiPromptService.class);
 
     private final AiPromptOverrideRepository repository;
 
@@ -73,6 +77,23 @@ public class AiPromptService {
 
     private String nz(String s) { return s == null ? "" : s; }
 
+    // ── 시드(앱 시작 시) ─────────────────────────────────────────────────────
+
+    /** 카탈로그의 7종 프롬프트 중 DB에 행이 없는 것을 기본 지침으로 시드한다(앱 시작 시 1회). */
+    @Transactional
+    public void seedDefaults() {
+        int created = 0;
+        for (PromptDefinition def : AiPromptCatalog.all()) {
+            if (repository.existsByPromptKey(def.getKey())) continue;
+            AiPromptOverride row = new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system");
+            repository.save(row);
+            created++;
+        }
+        if (created > 0) {
+            log.info("[AiPrompt] 기본 프롬프트 지침 {}건 DB 시드 완료", created);
+        }
+    }
+
     // ── 관리(Admin) ────────────────────────────────────────────────────────
 
     /** 관리 화면용: 전체 프롬프트 정의 + 현재 지침 오버라이드 상태. */
@@ -85,8 +106,8 @@ public class AiPromptService {
     }
 
     /**
-     * 지침 오버라이드 저장. 비어 있거나 기본 지침과 같으면 오버라이드를 제거(= 기본값 사용).
-     * 지침은 자유 텍스트라 변수 검증은 하지 않는다.
+     * 지침 저장. 7종 모두 DB에 행으로 관리하므로 행을 삭제하지 않고 항상 갱신한다.
+     * 내용이 비어 있으면 기본 지침으로 채워 저장한다. 지침은 자유 텍스트라 변수 검증은 하지 않는다.
      */
     @Transactional
     public PromptAdminView saveOverride(String key, String content, String updatedBy) {
@@ -94,36 +115,38 @@ public class AiPromptService {
         if (def == null) {
             throw new IllegalArgumentException("알 수 없는 프롬프트 키: " + key);
         }
-        if (content == null || content.isBlank()
-                || content.strip().equals(nz(def.getDefaultInstruction()).strip())) {
-            repository.deleteByPromptKey(key);
-            return toView(def, null);
-        }
+        String toStore = (content == null || content.isBlank()) ? def.getDefaultInstruction() : content;
         AiPromptOverride entity = repository.findByPromptKey(key).orElseGet(AiPromptOverride::new);
         entity.setPromptKey(key);
-        entity.setContent(content);
+        entity.setContent(toStore);
         entity.setUpdatedBy(updatedBy);
         repository.save(entity);
         return toView(def, entity);
     }
 
-    /** 오버라이드 삭제(기본 지침으로 되돌리기). */
+    /** 기본 지침으로 되돌리기 — 행 내용을 코드 기본 지침으로 갱신(행은 유지). */
     @Transactional
-    public PromptAdminView resetOverride(String key) {
+    public PromptAdminView resetOverride(String key, String updatedBy) {
         PromptDefinition def = AiPromptCatalog.get(key);
         if (def == null) {
             throw new IllegalArgumentException("알 수 없는 프롬프트 키: " + key);
         }
-        repository.deleteByPromptKey(key);
-        return toView(def, null);
+        AiPromptOverride entity = repository.findByPromptKey(key).orElseGet(AiPromptOverride::new);
+        entity.setPromptKey(key);
+        entity.setContent(def.getDefaultInstruction());
+        entity.setUpdatedBy(updatedBy);
+        repository.save(entity);
+        return toView(def, entity);
     }
 
     private PromptAdminView toView(PromptDefinition def, AiPromptOverride override) {
         String current = override == null ? null : override.getContent();
-        boolean customized = current != null && !current.isBlank();
+        boolean hasContent = current != null && !current.isBlank();
+        // 커스텀 여부 = 저장된 지침이 코드 기본 지침과 다른가
+        boolean customized = hasContent && !current.strip().equals(nz(def.getDefaultInstruction()).strip());
         return new PromptAdminView(
             def,
-            customized ? current : null,
+            hasContent ? current : null,
             customized,
             override == null || override.getUpdatedAt() == null ? null : override.getUpdatedAt().toString(),
             override == null ? null : override.getUpdatedBy()

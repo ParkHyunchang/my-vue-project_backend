@@ -83,7 +83,7 @@ public class AdminPromptController {
             return ResponseEntity.status(403).body("관리자 권한이 필요합니다.");
         }
         try {
-            AiPromptService.PromptAdminView view = aiPromptService.resetOverride(key);
+            AiPromptService.PromptAdminView view = aiPromptService.resetOverride(key, authentication.getName());
             log.info("[ADMIN/PROMPTS] user={}(ADMIN), RESET key={}", authentication.getName(), key);
             return ResponseEntity.ok(AiPromptResponse.from(view));
         } catch (IllegalArgumentException e) {
