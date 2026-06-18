@@ -3,6 +3,8 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
+import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
+import com.hyunchang.webapp.service.prompt.AiPromptService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -29,10 +31,12 @@ public class TravelPlannerService {
     private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
 
     private final AiProviderChain aiProviderChain;
+    private final AiPromptService aiPromptService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public TravelPlannerService(AiProviderChain aiProviderChain) {
+    public TravelPlannerService(AiProviderChain aiProviderChain, AiPromptService aiPromptService) {
         this.aiProviderChain = aiProviderChain;
+        this.aiPromptService = aiPromptService;
     }
 
     public Map<String, Object> plan(String destination, int days, String companions,
@@ -85,39 +89,10 @@ public class TravelPlannerService {
     }
 
     private String buildRefinePrompt(Object currentPlan, String instruction) {
-        String currentJson = toJson(currentPlan);
-        return """
-            당신은 한국인 여행자를 위한 여행 플래너입니다. 아래는 현재 여행 일정(JSON)입니다.
-            사용자의 수정 요청을 반영해 일정을 다시 구성하세요. 단, 다음 원칙을 지키세요:
-            - 요청과 직접 관련된 부분만 바꾸고, 나머지 일자·일정 구성은 최대한 그대로 유지하세요.
-            - 사용자가 특정 장소·식당·호텔을 정했다고 하면 그 항목을 그대로 반영하세요.
-            - 실제 존재하는 장소 위주로, 동선이 효율적이게 유지하세요. 허구의 장소는 쓰지 마세요.
-            - 전체 일정을 빠짐없이 다시 출력하세요(바뀐 부분만이 아니라 전체).
-            응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
-
-            ── 현재 일정 ──
-            %s
-
-            ── 사용자 수정 요청 ──
-            %s
-
-            ── 응답 스키마 ──
-            {
-              "title": "여행 제목",
-              "summary": "한두 문장 요약",
-              "days": [
-                {
-                  "day": 1,
-                  "theme": "그날의 테마",
-                  "items": [
-                    { "time": "오전" | "점심" | "오후" | "저녁" | "밤", "type": "관광" | "식당" | "카페" | "호텔" | "이동", "place": "장소명", "desc": "한 줄 설명" }
-                  ]
-                }
-              ],
-              "tips": ["팁1", "팁2"],
-              "estimatedBudget": "1인 예상 경비 요약"
-            }
-            """.formatted(currentJson, nullSafe(instruction));
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("현재일정", toJson(currentPlan));
+        vars.put("수정요청", nullSafe(instruction));
+        return aiPromptService.render(AiPromptCatalog.TRAVEL_REFINE, vars);
     }
 
     private String toJson(Object o) {
@@ -139,44 +114,15 @@ public class TravelPlannerService {
         String budgetScope = "항공권 " + (includeFlight ? "포함" : "불포함")
             + ", 숙박 " + (includeStay ? "포함" : "불포함");
 
-        return """
-            당신은 한국인 여행자를 위한 여행 플래너입니다. 아래 조건에 맞춰 현실적이고 동선이 효율적인
-            일자별 추천 일정을 짜세요. 실제 존재하는 장소·명소·음식 위주로 구체적으로 작성하고,
-            이동 동선이 들쭉날쭉하지 않게 가까운 곳끼리 묶으세요. 과장이나 허구의 장소는 쓰지 마세요.
-            응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
-
-            ── 여행 조건 ──
-            목적지: %s
-            기간: %d일 (%d박 %d일)
-            동행: %s
-            여행 스타일: %s
-            예산: %s
-            예산 포함 항목: %s
-
-            ── 예상 경비(estimatedBudget) 작성 지침 ──
-            위 '예산 포함 항목'을 반드시 반영하세요. 불포함으로 표시된 항목(항공권/숙박)은 예상 경비에서 제외하고,
-            무엇이 포함/불포함인지 한 줄로 함께 명시하세요. (예: "1인 약 60~80만원, 항공권·숙박 별도")
-
-            ── 응답 스키마 ──
-            {
-              "title": "여행 제목 (예: 오사카 3박4일 미식 여행)",
-              "summary": "한두 문장 요약",
-              "days": [
-                {
-                  "day": 1,
-                  "theme": "그날의 테마 (예: 도착·도톤보리 야경)",
-                  "items": [
-                    { "time": "오전" | "점심" | "오후" | "저녁" | "밤", "type": "관광" | "식당" | "카페" | "호텔" | "이동", "place": "장소명", "desc": "한 줄 설명" }
-                  ]
-                }
-              ],
-              "tips": ["현지 팁1", "팁2", "팁3"],
-              "estimatedBudget": "1인 예상 경비 요약 (포함/불포함 항목 명시)"
-            }
-            반드시 days 배열의 길이는 %d 여야 합니다.
-            """.formatted(
-                nullSafe(destination), days, nights, days,
-                companionsText, styleText, budgetText, budgetScope, days);
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("목적지", nullSafe(destination));
+        vars.put("기간일수", String.valueOf(days));
+        vars.put("박수", String.valueOf(nights));
+        vars.put("동행", companionsText);
+        vars.put("여행스타일", styleText);
+        vars.put("예산", budgetText);
+        vars.put("예산포함항목", budgetScope);
+        return aiPromptService.render(AiPromptCatalog.TRAVEL_CREATE, vars);
     }
 
     private Map<String, Object> parsePlan(String text, String destination, int days) {

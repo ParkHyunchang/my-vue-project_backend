@@ -8,6 +8,8 @@ import com.hyunchang.webapp.dto.StockAnalysisResult;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
+import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
+import com.hyunchang.webapp.service.prompt.AiPromptService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -15,8 +17,10 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -43,14 +47,17 @@ public class StockAnalysisService {
     private final StockService stockService;
     private final StockSymbolNewsService stockSymbolNewsService;
     private final AiProviderChain aiProviderChain;
+    private final AiPromptService aiPromptService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public StockAnalysisService(StockService stockService,
                                 StockSymbolNewsService stockSymbolNewsService,
-                                AiProviderChain aiProviderChain) {
+                                AiProviderChain aiProviderChain,
+                                AiPromptService aiPromptService) {
         this.stockService = stockService;
         this.stockSymbolNewsService = stockSymbolNewsService;
         this.aiProviderChain = aiProviderChain;
+        this.aiPromptService = aiPromptService;
     }
 
     public StockAnalysisResponse analyze(String symbol, String market) {
@@ -157,37 +164,14 @@ public class StockAnalysisService {
                     """;
         }
 
-        return """
-                당신은 한국 주식 시장 분석가입니다. 아래 종목 정보와 뉴스만 근거로
-                간결하고 정확하게 분석하세요. 추측이나 일반론은 절대 쓰지 마세요.
-                응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요.
-                코드블록·해설·다른 텍스트를 절대 포함하지 마세요.
-
-                ── 종목 ──
-                이름: %s
-                티커: %s
-                시장: %s
-                %s
-                ── 뉴스 사용 지침 ──
-                %s
-                ── 최근 뉴스 ──
-                %s
-                ── 응답 스키마 ──
-                {
-                  "sentiment": "긍정" | "중립" | "부정",
-                  "headline": "한 줄 핵심 요약 (60자 이내, 한국어)",
-                  "keywords": ["키워드1", "키워드2", "키워드3"],
-                  "positives": ["호재 1", "호재 2"],
-                  "risks": ["리스크 1", "리스크 2"],
-                  "comment": "2~3문장 종합 코멘트 (투자 자문이 아닌 정보 정리 톤)"
-                }
-                """.formatted(
-                        nullSafe(name),
-                        nullSafe(symbol),
-                        nullSafe(market),
-                        priceBlock.toString(),
-                        newsInstruction.strip(),
-                        newsBlock.toString());
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("종목명", nullSafe(name));
+        vars.put("티커", nullSafe(symbol));
+        vars.put("시장", nullSafe(market));
+        vars.put("시세정보", priceBlock.toString());
+        vars.put("뉴스지침", newsInstruction.strip());
+        vars.put("뉴스목록", newsBlock.toString());
+        return aiPromptService.render(AiPromptCatalog.STOCK_ANALYSIS, vars);
     }
 
     // ─────────────────────────────────────────────────────────────────────

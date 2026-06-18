@@ -5,11 +5,14 @@ import com.hyunchang.webapp.entity.Diary;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.DiaryRepository;
 import com.hyunchang.webapp.repository.UserRepository;
+import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
+import com.hyunchang.webapp.service.prompt.AiPromptService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Map;
 
 @Service
 public class DiaryService {
@@ -17,11 +20,14 @@ public class DiaryService {
     private final DiaryRepository diaryRepository;
     private final UserRepository userRepository;
     private final ClaudeService claudeService;
+    private final AiPromptService aiPromptService;
 
-    public DiaryService(DiaryRepository diaryRepository, UserRepository userRepository, ClaudeService claudeService) {
+    public DiaryService(DiaryRepository diaryRepository, UserRepository userRepository,
+                        ClaudeService claudeService, AiPromptService aiPromptService) {
         this.diaryRepository = diaryRepository;
         this.userRepository = userRepository;
         this.claudeService = claudeService;
+        this.aiPromptService = aiPromptService;
     }
 
     private User getCurrentUser() {
@@ -62,21 +68,9 @@ public class DiaryService {
     public Diary analyze(Long id) {
         Diary diary = findById(id);
 
-        String prompt = """
-                다음은 사용자가 오늘 작성한 일기입니다. 아래 JSON 형식으로만 응답해주세요. 다른 텍스트는 절대 포함하지 마세요.
-
-                일기 내용:
-                %s
-
-                응답 형식 (JSON만):
-                {
-                  "mood": "감정을 나타내는 이모지 하나와 한 단어 (예: 😊 기쁨)",
-                  "moodScore": 감정 점수 1~10 숫자,
-                  "summary": "일기 내용을 2~3문장으로 요약",
-                  "keywords": ["키워드1", "키워드2", "키워드3"],
-                  "comment": "공감하고 격려하는 따뜻한 한마디 (2~3문장)"
-                }
-                """.formatted(diary.getContent());
+        String prompt = aiPromptService.render(
+                AiPromptCatalog.DIARY_ANALYSIS,
+                Map.of("일기내용", diary.getContent() == null ? "" : diary.getContent()));
 
         String analysis = claudeService.chat(List.of(new ChatMessage("user", prompt)));
         diary.setAiAnalysis(analysis);

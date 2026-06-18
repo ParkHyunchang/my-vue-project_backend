@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.*;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
+import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
+import com.hyunchang.webapp.service.prompt.AiPromptService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -37,14 +39,17 @@ public class RealEstateAnalysisService {
     private final RealEstateService realEstateService;
     private final RealEstateNewsService realEstateNewsService;
     private final AiProviderChain aiProviderChain;
+    private final AiPromptService aiPromptService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public RealEstateAnalysisService(RealEstateService realEstateService,
                                      RealEstateNewsService realEstateNewsService,
-                                     AiProviderChain aiProviderChain) {
+                                     AiProviderChain aiProviderChain,
+                                     AiPromptService aiPromptService) {
         this.realEstateService = realEstateService;
         this.realEstateNewsService = realEstateNewsService;
         this.aiProviderChain = aiProviderChain;
+        this.aiPromptService = aiPromptService;
     }
 
     public RealEstateAnalysisResponse analyze(String lawdCd, String dealType) {
@@ -217,48 +222,21 @@ public class RealEstateAnalysisService {
             newsInstruction = "아래 뉴스는 일반 부동산 시황 참고용입니다. 이 지역 토지와 직접 관련될 때만 신중히 인용하세요.";
         }
 
-        return """
-            당신은 한국 토지(부동산) 시장 분석가입니다. 아래 토지 실거래 데이터와 뉴스만 근거로,
-            이 지역 토지를 매입 검토하는 사람에게 도움이 되도록 간결하고 정확하게 분석하세요.
-            토지는 필지마다 조건(지목·용도지역·도로·형상)이 달라 개별 시세 단정이 어렵다는 점을 전제로,
-            단가(원/㎡) 범위와 용도지역·지목별 차이를 중심으로 설명하세요.
-            추측이나 일반론은 쓰지 마세요. 투자 권유가 아닌 정보 정리 톤으로 작성하세요.
-            응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
-
-            ── 분석 대상 ──
-            지역: %s (토지 매매)
-            최근 %d개월 집계: 총 %d건, 평균 단가 %s, 최저 %s, 최고 %s
-            단가 추세: %s (%.1f%%, 최근 절반 vs 이전 절반)
-
-            ── 용도지역별 평균 단가 ──
-            %s
-            ── 지목별 평균 단가 ──
-            %s
-            ── 최근 대표 거래 ──
-            %s
-            ── 뉴스 사용 지침 ──
-            %s
-            ── 부동산 뉴스 ──
-            %s
-            ── 응답 스키마 ──
-            {
-              "trend": "상승" | "보합" | "하락",
-              "headline": "한 줄 핵심 요약 (60자 이내, 한국어)",
-              "priceLevel": "주력 용도지역·지목 기준 현재 단가대 요약 (예: 계획관리 전 30~40만원/평대)",
-              "keywords": ["키워드1", "키워드2", "키워드3"],
-              "watchPoints": ["토지 매입 검토 시 주의점1", "주의점2"],
-              "comment": "2~3문장 종합 코멘트"
-            }
-            """.formatted(
-                nullSafe(regionName), ANALYSIS_MONTHS,
-                stats.getTotalCount(), unit(stats.getAvgPricePerM2()),
-                unit(stats.getMinPricePerM2()), unit(stats.getMaxPricePerM2()),
-                stats.getTrendLabel(), stats.getTrendPct(),
-                zoneBlock.toString().strip(),
-                jimokBlock.toString().strip(),
-                dealBlock.toString().strip(),
-                newsInstruction,
-                newsBlock.toString().strip());
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("지역", nullSafe(regionName));
+        vars.put("분석개월수", String.valueOf(ANALYSIS_MONTHS));
+        vars.put("거래건수", String.valueOf(stats.getTotalCount()));
+        vars.put("평균단가", unit(stats.getAvgPricePerM2()));
+        vars.put("최저단가", unit(stats.getMinPricePerM2()));
+        vars.put("최고단가", unit(stats.getMaxPricePerM2()));
+        vars.put("추세", stats.getTrendLabel());
+        vars.put("추세율", String.format(Locale.US, "%.1f", stats.getTrendPct()));
+        vars.put("용도지역별단가", zoneBlock.toString().strip());
+        vars.put("지목별단가", jimokBlock.toString().strip());
+        vars.put("대표거래", dealBlock.toString().strip());
+        vars.put("뉴스지침", newsInstruction);
+        vars.put("뉴스목록", newsBlock.toString().strip());
+        return aiPromptService.render(AiPromptCatalog.REALESTATE_LAND, vars);
     }
 
     /** 단가(원/㎡) → "1,234,000원/㎡ (약 41만원/평)". */
@@ -376,45 +354,22 @@ public class RealEstateAnalysisService {
             newsInstruction = "아래 뉴스는 일반 부동산 시황 참고용입니다. 이 지역과 직접 관련될 때만 신중히 인용하세요.";
         }
 
-        return """
-            당신은 한국 부동산 시장 분석가입니다. 아래 실거래 데이터와 뉴스만 근거로,
-            이 지역을 매수/계약 검토하는 사람에게 도움이 되도록 간결하고 정확하게 분석하세요.
-            추측이나 일반론은 쓰지 마세요. 투자 권유가 아닌 정보 정리 톤으로 작성하세요.
-            응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
-
-            ── 분석 대상 ──
-            지역: %s
-            거래유형: %s
-            최근 %d개월 집계: 총 %d건, 평균 %s, 최저 %s, 최고 %s
-            가격 추세: %s (%.1f%%, 최근 절반 vs 이전 절반)
-
-            ── 평형(전용면적)별 시세 ──
-            %s
-            ── 최근 대표 거래 (%s) ──
-            %s
-            ── 뉴스 사용 지침 ──
-            %s
-            ── 부동산 뉴스 ──
-            %s
-            ── 응답 스키마 ──
-            {
-              "trend": "상승" | "보합" | "하락",
-              "headline": "한 줄 핵심 요약 (60자 이내, 한국어)",
-              "priceLevel": "주력 평형 기준 현재 시세대 요약 (예: 전용 84㎡ 24~26억대)",
-              "keywords": ["키워드1", "키워드2", "키워드3"],
-              "watchPoints": ["매수 검토 시 주의점1", "주의점2"],
-              "comment": "2~3문장 종합 코멘트"
-            }
-            """.formatted(
-                nullSafe(regionName), dealLabel, ANALYSIS_MONTHS,
-                stats.getTotalCount(), money(stats.getAvgPrice()),
-                money(stats.getMinPrice()), money(stats.getMaxPrice()),
-                stats.getTrendLabel(), stats.getTrendPct(),
-                bucketBlock.toString().strip(),
-                priceLabel,
-                dealBlock.toString().strip(),
-                newsInstruction,
-                newsBlock.toString().strip());
+        Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("지역", nullSafe(regionName));
+        vars.put("거래유형", dealLabel);
+        vars.put("분석개월수", String.valueOf(ANALYSIS_MONTHS));
+        vars.put("거래건수", String.valueOf(stats.getTotalCount()));
+        vars.put("평균가", money(stats.getAvgPrice()));
+        vars.put("최저가", money(stats.getMinPrice()));
+        vars.put("최고가", money(stats.getMaxPrice()));
+        vars.put("추세", stats.getTrendLabel());
+        vars.put("추세율", String.format(Locale.US, "%.1f", stats.getTrendPct()));
+        vars.put("평형별시세", bucketBlock.toString().strip());
+        vars.put("가격항목", priceLabel);
+        vars.put("대표거래", dealBlock.toString().strip());
+        vars.put("뉴스지침", newsInstruction);
+        vars.put("뉴스목록", newsBlock.toString().strip());
+        return aiPromptService.render(AiPromptCatalog.REALESTATE_TRADE, vars);
     }
 
     // ── JSON 파싱 ──────────────────────────────────────────────────
