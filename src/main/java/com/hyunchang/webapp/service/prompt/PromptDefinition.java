@@ -1,17 +1,16 @@
 package com.hyunchang.webapp.service.prompt;
 
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
- * 편집 가능한 AI 프롬프트 한 종류의 정의 (코드에 고정된 기본값 + 메타데이터).
- *  - key          : 식별자 (DB 오버라이드 매칭 키)
- *  - displayName  : 관리 화면에 보여줄 이름
- *  - category     : 그룹핑용 (주식 / 여행 / 부동산 / 포트폴리오 / 일기)
- *  - description  : 이 프롬프트가 어디에 쓰이는지 설명
- *  - variables    : {{이름}} 으로 치환 가능한 변수 목록
- *  - defaultTemplate : 코드가 가진 기본 프롬프트 (되돌리기·폴백의 기준)
+ * 편집 가능한 AI 프롬프트 한 종류의 정의.
+ *
+ * 프롬프트는 세 부분으로 구성된다:
+ *   1. instruction (편집 가능) — 페르소나 + "어떻게 분석/답변할지" 지침. 관리자가 수정하는 유일한 부분.
+ *   2. fixedContext (고정)    — 분석에 들어가는 데이터 영역. {{변수}} 를 포함하며 코드가 값을 채운다.
+ *   3. fixedSchema  (고정)    — 응답 형식(JSON 스키마). 사람이 건드리면 파싱이 깨지므로 고정.
+ *
+ * 최종 프롬프트 = instruction + fixedContext(값 치환) + fixedSchema.
  */
 public class PromptDefinition {
 
@@ -19,17 +18,22 @@ public class PromptDefinition {
     private final String displayName;
     private final String category;
     private final String description;
-    private final List<PromptVariable> variables;
-    private final String defaultTemplate;
+    private final List<PromptVariable> variables;   // fixedContext 에 자동으로 들어가는 데이터(읽기 전용 안내용)
+    private final String defaultInstruction;        // 편집 가능 — 기본 지침
+    private final String fixedContext;               // 고정 — 데이터 영역({{변수}})
+    private final String fixedSchema;                // 고정 — 응답 스키마
 
     public PromptDefinition(String key, String displayName, String category, String description,
-                            List<PromptVariable> variables, String defaultTemplate) {
+                            List<PromptVariable> variables, String defaultInstruction,
+                            String fixedContext, String fixedSchema) {
         this.key = key;
         this.displayName = displayName;
         this.category = category;
         this.description = description;
         this.variables = variables;
-        this.defaultTemplate = defaultTemplate;
+        this.defaultInstruction = defaultInstruction;
+        this.fixedContext = fixedContext;
+        this.fixedSchema = fixedSchema;
     }
 
     public String getKey() { return key; }
@@ -37,10 +41,14 @@ public class PromptDefinition {
     public String getCategory() { return category; }
     public String getDescription() { return description; }
     public List<PromptVariable> getVariables() { return variables; }
-    public String getDefaultTemplate() { return defaultTemplate; }
+    public String getDefaultInstruction() { return defaultInstruction; }
+    public String getFixedContext() { return fixedContext; }
+    public String getFixedSchema() { return fixedSchema; }
 
-    /** 이 프롬프트에서 허용되는 변수 이름 집합. */
-    public Set<String> variableNames() {
-        return variables.stream().map(PromptVariable::name).collect(Collectors.toSet());
+    /** 관리 화면에서 '자동으로 붙는 고정 영역'을 한 덩어리로 미리보기 위한 문자열. */
+    public String fixedPreview() {
+        return (fixedContext == null ? "" : fixedContext.strip())
+            + "\n\n"
+            + (fixedSchema == null ? "" : fixedSchema.strip());
     }
 }
