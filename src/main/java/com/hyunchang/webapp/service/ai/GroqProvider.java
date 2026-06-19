@@ -25,7 +25,6 @@ public class GroqProvider implements AiProvider {
 
     private static final String BASE_URL = "https://api.groq.com";
     private static final String MODEL = "llama-3.3-70b-versatile";
-
     private final RestClient restClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String apiKey;
@@ -43,7 +42,10 @@ public class GroqProvider implements AiProvider {
     public AiProviderResult generate(String prompt) {
         Map<String, Object> body = Map.of(
                 "model", MODEL,
-                "messages", List.of(Map.of("role", "user", "content", prompt)),
+                "messages", List.of(
+                        Map.of("role", "system", "content", JSON_SYSTEM_MESSAGE),
+                        Map.of("role", "user", "content", prompt)
+                ),
                 "response_format", Map.of("type", "json_object"),
                 "temperature", 0.4
         );

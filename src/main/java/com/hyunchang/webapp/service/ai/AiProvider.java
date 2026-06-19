@@ -11,6 +11,8 @@ package com.hyunchang.webapp.service.ai;
  * isEnabled() 가 false 면 chain 에서 자동 skip 된다.
  */
 public interface AiProvider {
+    String JSON_SYSTEM_MESSAGE =
+            "You must respond with valid JSON only. Return only a JSON object.";
 
     /** Chain 로그·UI 표시용 식별자. 예: "Gemini Flash" */
     String getName();

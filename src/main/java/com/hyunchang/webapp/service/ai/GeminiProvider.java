@@ -43,6 +43,9 @@ public class GeminiProvider implements AiProvider {
     @Override
     public AiProviderResult generate(String prompt) {
         Map<String, Object> body = Map.of(
+                "systemInstruction", Map.of(
+                        "parts", List.of(Map.of("text", JSON_SYSTEM_MESSAGE))
+                ),
                 "contents", List.of(Map.of(
                         "parts", List.of(Map.of("text", prompt))
                 )),
