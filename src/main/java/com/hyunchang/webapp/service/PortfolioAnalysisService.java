@@ -61,21 +61,28 @@ public class PortfolioAnalysisService {
     private final StockSymbolNewsService stockSymbolNewsService;
     private final AiProviderChain aiProviderChain;
     private final AiPromptService aiPromptService;
+    private final FinancialDataService financialDataService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PortfolioAnalysisService(StockHoldingService stockHoldingService,
                                     StockService stockService,
                                     StockSymbolNewsService stockSymbolNewsService,
                                     AiProviderChain aiProviderChain,
-                                    AiPromptService aiPromptService) {
+                                    AiPromptService aiPromptService,
+                                    FinancialDataService financialDataService) {
         this.stockHoldingService = stockHoldingService;
         this.stockService = stockService;
         this.stockSymbolNewsService = stockSymbolNewsService;
         this.aiProviderChain = aiProviderChain;
         this.aiPromptService = aiPromptService;
+        this.financialDataService = financialDataService;
     }
 
     public PortfolioAnalysisResponse analyze() {
+        return analyze(null);
+    }
+
+    public PortfolioAnalysisResponse analyze(Map<String, Object> requestBody) {
         String userId = SecurityUtils.getCurrentUserId();
         List<StockHolding> holdings = stockHoldingService.getHoldings(userId);
 
@@ -91,7 +98,8 @@ public class PortfolioAnalysisService {
         }
 
         // 1. 보유 종목 시세 + 평가손익 계산 (서버에서 정확하게)
-        List<HoldingSnapshot> snapshots = buildSnapshots(holdings);
+        Map<String, ClientHoldingContext> clientContext = parseClientContext(requestBody);
+        List<HoldingSnapshot> snapshots = buildSnapshots(holdings, clientContext);
 
         // 1-1. 보유 종목별 뉴스 헤드라인 1~2건씩 병렬 수집
         //      (시세만 주면 "추세 양호" 같은 균일 답변이 나와서 종목별 차별화 컨텍스트 추가)
@@ -104,13 +112,26 @@ public class PortfolioAnalysisService {
         // 3. 최근 시장 뉴스 헤드라인 — 추천의 핵심 근거
         List<String> marketHeadlines = collectMarketHeadlines();
 
+        // 3-1. 보유 종목 재무 데이터 (US: Yahoo, KR: 추후 DART) — 실패해도 분석 진행
+        String financials;
+        try {
+            List<FinancialDataService.Holding> finHoldings = snapshots.stream()
+                    .map(s -> new FinancialDataService.Holding(s.symbol, s.name, s.market))
+                    .toList();
+            financials = financialDataService.holdingsSummary(finHoldings);
+        } catch (Exception e) {
+            log.warn("[Portfolio/Analysis] 재무 데이터 수집 실패: {}", e.getMessage());
+            financials = "(재무 데이터 미수집)";
+        }
+
         // 4. 프롬프트 + chain 호출
-        String prompt = buildPrompt(snapshots, perSymbolNews, marketHeadlines, heldLabels);
+        String prompt = buildPrompt(snapshots, perSymbolNews, marketHeadlines, heldLabels, financials);
         AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt);
 
         int perSymbolTotal = perSymbolNews.values().stream().mapToInt(List::size).sum();
-        log.info("[Portfolio/Analysis] user={} 보유 {}개, 종목별 뉴스 합 {}건, 시장 뉴스 {}건",
-                userId, holdings.size(), perSymbolTotal, marketHeadlines.size());
+        long weightCount = snapshots.stream().filter(s -> s.weightPct != null).count();
+        log.info("[Portfolio/Analysis] user={} 보유 {}개, 비중 {}개, 종목별 뉴스 합 {}건, 시장 뉴스 {}건",
+                userId, holdings.size(), weightCount, perSymbolTotal, marketHeadlines.size());
 
         if (!chainResult.success()) {
             return PortfolioAnalysisResponse.builder()
@@ -121,68 +142,72 @@ public class PortfolioAnalysisService {
                     .build();
         }
 
-        // 5. JSON 파싱
-        PortfolioAnalysisResponse parsed = parseResult(chainResult.text());
-
-        // 6. 보유 종목 currentPnlPct 는 서버 계산값으로 덮어씀 (LLM 환각 방지)
-        if (parsed.getHoldings() != null) {
-            for (HoldingAction ha : parsed.getHoldings()) {
-                HoldingSnapshot snap = findSnapshot(snapshots, ha.getSymbol());
-                if (snap != null) {
-                    ha.setCurrentPnlPct(snap.pnlPct);
-                    if (ha.getName() == null || ha.getName().isBlank()) ha.setName(snap.name);
-                    if (ha.getMarket() == null || ha.getMarket().isBlank()) ha.setMarket(snap.market);
-                }
-                if (!ALLOWED_ACTIONS.contains(ha.getAction())) {
-                    ha.setAction("HOLD");
-                }
-            }
-        }
-
-        // 6-1. 추천의 held 플래그는 실제 보유 종목과 대조해 서버가 확정 (LLM 자기신고 무시)
-        if (parsed.getRecommendations() != null) {
-            Set<String> heldSet = new HashSet<>();
-            for (StockHolding h : holdings) heldSet.add(h.getSymbol().toUpperCase(Locale.ROOT));
-            for (Recommendation r : parsed.getRecommendations()) {
-                r.setHeld(r.getSymbol() != null
-                        && heldSet.contains(r.getSymbol().toUpperCase(Locale.ROOT)));
-            }
-        }
+        // 5. 마크다운 리포트 (자유리포트 — JSON 파싱/오버레이 없이 AI 원문 사용)
+        //    보유 종목 손익률 등 정확한 수치는 이미 프롬프트({{보유종목}})에 서버 계산값으로 들어가므로 리포트도 정확.
+        String report = cleanReport(chainResult.text());
 
         return PortfolioAnalysisResponse.builder()
                 .blocked(false)
                 .providerName(chainResult.providerName())
                 .model(chainResult.model())
                 .analyzedAt(Instant.now())
-                .summary(parsed.getSummary())
-                .sentiment(parsed.getSentiment() == null ? "중립" : parsed.getSentiment())
-                .macroFit(parsed.getMacroFit())
-                .grades(parsed.getGrades())
-                .holdings(parsed.getHoldings() == null ? List.of() : parsed.getHoldings())
-                .coreHolding(parsed.getCoreHolding())
-                .weakestLink(parsed.getWeakestLink())
-                .recommendations(parsed.getRecommendations() == null ? List.of() : parsed.getRecommendations())
-                .priorityActions(parsed.getPriorityActions() == null ? List.of() : parsed.getPriorityActions())
-                .bullScenario(parsed.getBullScenario())
-                .bearScenario(parsed.getBearScenario())
-                .selfRebuttal(parsed.getSelfRebuttal())
-                .disclaimer(parsed.getDisclaimer() == null || parsed.getDisclaimer().isBlank()
-                        ? "이 분석은 AI가 생성한 정보 정리이며 투자 자문이 아닙니다."
-                        : parsed.getDisclaimer())
+                .report(report)
+                .disclaimer("이 분석은 AI가 생성한 정보 정리이며 투자 자문이 아닙니다.")
                 .providersStatus(chainResult.providersStatus())
                 .build();
+    }
+
+    /** AI 마크다운 리포트 정리 — 전체를 감싼 ``` 코드펜스가 있으면 벗긴다. */
+    private String cleanReport(String text) {
+        if (text == null) return "";
+        String t = text.strip();
+        if (t.startsWith("```")) {
+            int nl = t.indexOf('\n');
+            if (nl > 0) t = t.substring(nl + 1);
+            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
+            t = t.strip();
+        }
+        return t;
     }
 
     // ─────────────────────────────────────────────────────────────────────
     // 컨텍스트 수집
 
-    private List<HoldingSnapshot> buildSnapshots(List<StockHolding> holdings) {
+    private Map<String, ClientHoldingContext> parseClientContext(Map<String, Object> requestBody) {
+        Object rawHoldings = requestBody == null ? null : requestBody.get("holdings");
+        if (!(rawHoldings instanceof List<?> list) && requestBody != null && requestBody.get("portfolio") instanceof Map<?, ?> portfolio) {
+            rawHoldings = portfolio.get("holdings");
+        }
+        if (!(rawHoldings instanceof List<?> list)) {
+            return Map.of();
+        }
+
+        Map<String, ClientHoldingContext> out = new HashMap<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> m)) continue;
+            String symbol = str(m.get("symbol"));
+            if (!notBlank(symbol)) continue;
+
+            ClientHoldingContext c = new ClientHoldingContext();
+            c.weightPct = dbl(m.get("weightPct"));
+            if (c.weightPct == null) c.weightPct = dbl(m.get("chartWeightPct"));
+            c.marketValue = dbl(m.get("marketValue"));
+            c.marketValueKRW = dbl(m.get("marketValueKRW"));
+            c.currentPrice = dbl(m.get("currentPrice"));
+            out.put(symbol.toUpperCase(Locale.ROOT), c);
+        }
+        return out;
+    }
+
+    private List<HoldingSnapshot> buildSnapshots(List<StockHolding> holdings,
+                                                 Map<String, ClientHoldingContext> clientContext) {
         List<HoldingSnapshot> out = new ArrayList<>();
         for (StockHolding h : holdings) {
             HoldingSnapshot s = new HoldingSnapshot();
             s.symbol = h.getSymbol();
             s.name = h.getName();
             s.market = h.getMarket();
+            s.quantity = h.getQuantity();
             s.avgPrice = h.getAvgPrice();
             s.core = h.isCore();
             try {
@@ -195,12 +220,48 @@ public class PortfolioAnalysisService {
             } catch (Exception e) {
                 log.warn("[Portfolio/Analysis] 시세 조회 실패 {}: {}", h.getSymbol(), e.getMessage());
             }
+            ClientHoldingContext c = clientContext == null
+                    ? null
+                    : clientContext.get(h.getSymbol().toUpperCase(Locale.ROOT));
+            if (s.currentPrice <= 0 && c != null && c.currentPrice != null && c.currentPrice > 0) {
+                s.currentPrice = c.currentPrice;
+            }
+            if (s.currentPrice > 0 && s.quantity != null && s.quantity > 0) {
+                s.marketValue = s.currentPrice * s.quantity;
+                if ("KR".equalsIgnoreCase(s.market)) {
+                    s.marketValueKRW = s.marketValue;
+                }
+            }
+            if (c != null) {
+                s.weightPct = c.weightPct;
+                if (c.marketValue != null) s.marketValue = c.marketValue;
+                if (c.marketValueKRW != null) s.marketValueKRW = c.marketValueKRW;
+            }
             if (s.avgPrice != null && s.avgPrice > 0 && s.currentPrice > 0) {
                 s.pnlPct = ((s.currentPrice - s.avgPrice) / s.avgPrice) * 100.0;
             }
             out.add(s);
         }
+        fillMissingWeights(out);
         return out;
+    }
+
+    private void fillMissingWeights(List<HoldingSnapshot> snapshots) {
+        boolean hasAllWeights = snapshots.stream().allMatch(s -> s.weightPct != null);
+        if (hasAllWeights) return;
+
+        double totalKRW = snapshots.stream()
+                .map(s -> s.marketValueKRW)
+                .filter(v -> v != null && v > 0)
+                .mapToDouble(Double::doubleValue)
+                .sum();
+        if (totalKRW <= 0) return;
+
+        for (HoldingSnapshot s : snapshots) {
+            if (s.weightPct == null && s.marketValueKRW != null && s.marketValueKRW > 0) {
+                s.weightPct = (s.marketValueKRW / totalKRW) * 100.0;
+            }
+        }
     }
 
     /**
@@ -273,17 +334,22 @@ public class PortfolioAnalysisService {
     private String buildPrompt(List<HoldingSnapshot> snapshots,
                                Map<String, List<String>> perSymbolNews,
                                List<String> marketHeadlines,
-                               List<String> heldLabels) {
+                               List<String> heldLabels,
+                               String financials) {
         StringBuilder holdingsBlock = new StringBuilder();
         int i = 1;
         for (HoldingSnapshot s : snapshots) {
             holdingsBlock.append(i++).append(". ")
                     .append(s.name).append(" (").append(s.symbol).append(", ").append(s.market).append(") ")
-                    .append(s.core ? "[코어]" : "[위성]").append("\n")
+                    .append("\n")
+                    .append("   보유수량: ").append(s.quantity == null ? "미입력" : String.format(Locale.KOREA, "%,d", s.quantity)).append("주")
+                    .append(", 현재 비중: ").append(fmtWeightPct(s.weightPct)).append("\n")
                     .append("   현재가: ").append(fmtPrice(s)).append(", 평단가: ")
                     .append(s.avgPrice == null ? "미입력" : fmtNum(s.avgPrice, s.market))
                     .append(", 평가손익률: ").append(fmtPnlPct(s.pnlPct))
-                    .append(", 일변동률: ").append(fmtPct(s.changePercent)).append("\n");
+                    .append(", 일변동률: ").append(fmtPct(s.changePercent)).append("\n")
+                    .append("   평가금액: ").append(fmtMoney(s.marketValue, s.market))
+                    .append(", 원화 평가금액: ").append(fmtKRWValue(s.marketValueKRW)).append("\n");
             // 종목별 뉴스 헤드라인 1~2건 — 각 종목 분석을 차별화하는 결정적 단서
             List<String> hl = perSymbolNews == null ? null : perSymbolNews.get(s.symbol);
             if (hl != null && !hl.isEmpty()) {
@@ -315,9 +381,13 @@ public class PortfolioAnalysisService {
 
         Map<String, String> vars = new LinkedHashMap<>();
         vars.put("보유종목", holdingsBlock.toString());
+        vars.put("재무데이터", financials == null || financials.isBlank() ? "(재무 데이터 미수집)" : financials);
         vars.put("시장뉴스", newsBlock.toString());
         vars.put("보유종목목록", heldBlock.toString());
-        return aiPromptService.render(AiPromptCatalog.PORTFOLIO_ANALYSIS, vars);
+        return aiPromptService.render(AiPromptCatalog.PORTFOLIO_ANALYSIS, vars)
+                + "\n\n"
+                + "추가 출력 지침: 코어/위성, core/satellite, 코어 종목, 위성 종목이라는 표현과 기준은 사용하지 마세요. "
+                + "모든 판단은 현재 비중, 평가손익, 섹터/국가 집중도, 뉴스, 재무 데이터만 기준으로 설명하세요.";
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -460,8 +530,29 @@ public class PortfolioAnalysisService {
     }
     private String fmtPct(double v) { return String.format(Locale.US, "%+.2f%%", v); }
     private String fmtPnlPct(Double v) { return v == null ? "미입력" : String.format(Locale.US, "%+.2f%%", v); }
+    private String fmtWeightPct(Double v) { return v == null ? "미입력" : String.format(Locale.US, "%.2f%%", v); }
+    private String fmtMoney(Double v, String market) {
+        if (v == null || v <= 0) return "미입력";
+        return fmtNum(v, market) + ("KR".equalsIgnoreCase(market) ? " KRW" : " USD");
+    }
+    private String fmtKRWValue(Double v) {
+        if (v == null || v <= 0) return "미입력";
+        return String.format(Locale.KOREA, "%,d KRW", Math.round(v));
+    }
 
     private boolean notBlank(String s) { return s != null && !s.isBlank(); }
+    private String str(Object v) { return v == null ? null : String.valueOf(v); }
+    private Double dbl(Object v) {
+        if (v == null) return null;
+        if (v instanceof Number n) return n.doubleValue();
+        try {
+            String s = String.valueOf(v).replaceAll("[^0-9.+-]", "");
+            if (s.isBlank()) return null;
+            return Double.parseDouble(s);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     private String truncate(String s, int max) {
         if (s == null) return "";
@@ -474,10 +565,21 @@ public class PortfolioAnalysisService {
         String name;
         String market;
         boolean core;
+        Long quantity;
         Double avgPrice;
         double currentPrice;
         double changePercent;
         String currency;
         Double pnlPct;
+        Double marketValue;
+        Double marketValueKRW;
+        Double weightPct;
+    }
+
+    private static class ClientHoldingContext {
+        Double currentPrice;
+        Double marketValue;
+        Double marketValueKRW;
+        Double weightPct;
     }
 }

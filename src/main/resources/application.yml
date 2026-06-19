@@ -63,6 +63,11 @@ admin:
 alphavantage:
   api-key: ${ALPHAVANTAGE_API_KEY}
 
+# OpenDART 전자공시 (국내 재무제표) — https://opendart.fss.or.kr
+# 비워두면 국내 재무 연동 비활성(시세·뉴스 기반으로만 분석)
+dart:
+  api-key: ${DART_API_KEY:}
+
 
 # Anthropic Claude API
 anthropic:

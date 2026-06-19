@@ -6,8 +6,11 @@ import com.hyunchang.webapp.util.SecurityUtils;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/portfolio/analyze")
@@ -25,10 +28,10 @@ public class PortfolioAnalysisController {
     }
 
     @PostMapping
-    public ResponseEntity<?> analyze() {
+    public ResponseEntity<?> analyze(@RequestBody(required = false) Map<String, Object> requestBody) {
         if (!menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH)) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
         }
-        return ResponseEntity.ok(portfolioAnalysisService.analyze());
+        return ResponseEntity.ok(portfolioAnalysisService.analyze(requestBody));
     }
 }

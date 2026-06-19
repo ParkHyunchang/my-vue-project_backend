@@ -19,7 +19,9 @@ public class PortfolioAnalysisResponse {
     private String model;
     private Instant analyzedAt;
 
-    private String summary;          // 포트폴리오 전체 평가 (투자위원회 보고 톤, 2~3문장)
+    private String report;           // AI 마크다운 진단 리포트 (자유리포트 전환 후 메인)
+
+    private String summary;          // (구버전) 아래 구조화 필드들은 자유리포트 전환 후 미사용
     private String sentiment;        // "긍정" | "중립" | "부정"
     private String macroFit;         // 현재 거시 국면에서의 유불리 한두 문장
     private Grades grades;           // 분산 / 리스크 / 성장성 등급

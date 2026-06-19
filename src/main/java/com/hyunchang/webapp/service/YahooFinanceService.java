@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hyunchang.webapp.dto.StockHeatmapItemDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockSearchResultDto;
@@ -532,6 +533,130 @@ public class YahooFinanceService {
             log.warn("v8 chart 조회 실패 [{}]: {}", symbol, e.getMessage());
             return null;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────
+    // 재무 펀더멘털 조회 (v10 quoteSummary)
+    // ─────────────────────────────────────────────────────────────
+
+    /**
+     * 종목의 재무 펀더멘털(PER·PBR·ROE·마진·성장률·컨센서스 등)을 조회한다.
+     * v10 quoteSummary 는 cookie+crumb 인증이 필요하므로 기존 인증 토큰을 재사용한다.
+     * 실패 시 null 을 반환해 호출자가 '데이터 없음'으로 처리하게 한다.
+     */
+    public JsonNode fetchFundamentals(String symbol) {
+        if (symbol == null || symbol.isBlank()) return null;
+        if (!refreshYahooAuth()) return null;
+        try {
+            String modules = "summaryDetail,defaultKeyStatistics,financialData,price";
+            String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
+                + URLEncoder.encode(symbol, StandardCharsets.UTF_8)
+                + "?modules=" + URLEncoder.encode(modules, StandardCharsets.UTF_8)
+                + "&lang=en-US&region=US&crumb="
+                + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8);
+
+            HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
+            headers.set("Accept-Language", "en-US,en;q=0.9");
+            headers.set(HttpHeaders.COOKIE, cachedCookieHeader);
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode result = objectMapper.readTree(resp.getBody())
+                .path("quoteSummary").path("result").path(0);
+            return result.isMissingNode() || result.isNull() ? null : result;
+
+        } catch (RestClientException | IOException e) {
+            JsonNode fallback = fetchFundamentalsFromQuote(symbol);
+            if (fallback != null) {
+                log.info("Yahoo quoteSummary 재무 조회 실패 [{}] → v7/quote 폴백 사용", symbol);
+                return fallback;
+            }
+            log.warn("Yahoo quoteSummary 재무 조회 실패 [{}]: {}", symbol, e.getMessage());
+            if (e instanceof HttpStatusCodeException hsce
+                    && hsce.getStatusCode().value() == 401) {
+                synchronized (crumbLock) { cachedCrumb = null; }
+            }
+            return null;
+        }
+    }
+
+    /**
+     * quoteSummary 가 404/차단되는 경우 v7/finance/quote 에서 가능한 재무 필드만 폴백 수집한다.
+     * v7 quote 는 가격/시총/PER/PBR/배당수익률 등 제한된 필드만 제공하지만,
+     * AI 프롬프트에는 "재무 데이터 없음"보다 훨씬 유용하고 호출 안정성도 높다.
+     */
+    private JsonNode fetchFundamentalsFromQuote(String symbol) {
+        if (symbol == null || symbol.isBlank()) return null;
+        if (!refreshYahooAuth()) return null;
+        try {
+            String url = "https://query2.finance.yahoo.com/v7/finance/quote?symbols="
+                + URLEncoder.encode(symbol, StandardCharsets.UTF_8)
+                + "&lang=en-US&region=US&crumb="
+                + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8);
+
+            HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
+            headers.set("Accept-Language", "en-US,en;q=0.9");
+            headers.set(HttpHeaders.COOKIE, cachedCookieHeader);
+            ResponseEntity<String> resp = restTemplate.exchange(
+                url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+
+            JsonNode quote = objectMapper.readTree(resp.getBody())
+                .path("quoteResponse").path("result").path(0);
+            if (quote.isMissingNode() || quote.isNull()) return null;
+
+            ObjectNode root = objectMapper.createObjectNode();
+            ObjectNode price = root.putObject("price");
+            ObjectNode summaryDetail = root.putObject("summaryDetail");
+            ObjectNode keyStats = root.putObject("defaultKeyStatistics");
+            ObjectNode financialData = root.putObject("financialData");
+
+            putRaw(price, "marketCap", quote.path("marketCap"));
+            putRaw(summaryDetail, "trailingPE", quote.path("trailingPE"));
+            putRaw(summaryDetail, "forwardPE", quote.path("forwardPE"));
+            putRaw(summaryDetail, "dividendYield", quote.path("dividendYield"));
+            putRaw(keyStats, "priceToBook", quote.path("priceToBook"));
+            putRaw(financialData, "targetMeanPrice", quote.path("targetMeanPrice"));
+
+            if (quote.hasNonNull("recommendationKey")) {
+                financialData.put("recommendationKey", quote.path("recommendationKey").asText());
+            }
+
+            return hasAnyValue(root) ? root : null;
+        } catch (RestClientException | IOException e) {
+            log.info("Yahoo v7/quote 재무 폴백 조회 실패 [{}]: {}", symbol, e.getMessage());
+            if (e instanceof HttpStatusCodeException hsce
+                    && hsce.getStatusCode().value() == 401) {
+                synchronized (crumbLock) { cachedCrumb = null; }
+            }
+            return null;
+        }
+    }
+
+    private void putRaw(ObjectNode parent, String field, JsonNode source) {
+        if (source == null || source.isMissingNode() || source.isNull()) return;
+        if (!source.isNumber()) return;
+        parent.putObject(field).put("raw", source.asDouble());
+    }
+
+    private boolean hasAnyValue(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return false;
+        if (node.isValueNode()) return !node.asText("").isBlank();
+        if (node.isObject() || node.isArray()) {
+            for (JsonNode child : node) {
+                if (hasAnyValue(child)) return true;
+            }
+        }
+        return false;
+    }
+
+    /** quoteSummary 응답에서 {raw,fmt} 또는 스칼라 숫자를 raw double 로. 없으면 NaN. */
+    public double summaryNumber(JsonNode node) {
+        if (node == null || node.isMissingNode() || node.isNull()) return Double.NaN;
+        if (node.isObject()) {
+            JsonNode raw = node.path("raw");
+            return raw.isMissingNode() || raw.isNull() ? Double.NaN : raw.asDouble(Double.NaN);
+        }
+        return node.asDouble(Double.NaN);
     }
 
     // ─────────────────────────────────────────────────────────────
