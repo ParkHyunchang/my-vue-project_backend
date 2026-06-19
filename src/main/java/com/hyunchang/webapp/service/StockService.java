@@ -40,6 +40,8 @@ public class StockService {
     private static final long TOP10_CACHE_TTL_MS    = 2 * 60 * 1000L;      // 2분 (Top10 실시간 갱신)
     private static final long PORTFOLIO_PRICE_TTL_MS = 2 * 60 * 1000L;      // 2분 (포트폴리오 개별 시세)
     private static final String BASE_RANKS_FILE = "data/base-ranks.json";
+    private static final String TOP10_SNAPSHOTS_FILE = "data/top10-snapshots.json";
+    private static final int US_TOP10_DISCOVERY_SIZE = 100;
     private static final int  DAILY_LIMIT  = 25; // Alpha Vantage 일일 한도 (표시용)
     private static final DateTimeFormatter HEATMAP_FMT =
         DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
@@ -48,6 +50,7 @@ public class StockService {
     private final Map<String, List<StockQuoteDto>>  quoteCache       = new ConcurrentHashMap<>();
     private final Map<String, Long>                 cacheTimes       = new ConcurrentHashMap<>();
     private final Map<String, Map<String, Integer>> baseRanks        = new ConcurrentHashMap<>();
+    private final Map<String, Top10Snapshot>        top10Snapshots   = new ConcurrentHashMap<>();
     private final Map<String, StockPriceDto>        singlePriceCache = new ConcurrentHashMap<>();
     private final Map<String, Long>                 singlePriceTimes = new ConcurrentHashMap<>();
 
@@ -65,6 +68,13 @@ public class StockService {
     private final StockNewsService     newsService;
     private final NaverFinanceService  naverService;
     private final ObjectMapper         objectMapper;
+
+    private record Top10Snapshot(
+        String market,
+        String source,
+        String fetchedAt,
+        List<StockQuoteDto> quotes
+    ) {}
 
     public StockService(KrxService krxService,
                         KrxOpenApiService krxApiService,
@@ -131,8 +141,8 @@ public class StockService {
     /**
      * 미국 시총 Top 10.
      * 1순위: Yahoo Finance screener API — 미국 상장 전체에서 시총 상위 동적 조회 (ADR 포함, 하드코딩 없음)
-     * 2순위: 정적 후보 풀 + v7/quote 일괄 조회 (screener crumb 인증 실패 대비 폴백)
-     * 3순위: v8/chart 개별 조회 (v7/quote마저 차단된 경우 최후 폴백)
+     * 2순위: 마지막 성공 스냅샷 (외부 API 실패 시 신규 상장 반영 실패보다 오래된 성공 데이터 우선)
+     * 3순위: 정적 후보 풀 기반 부트스트랩 (스냅샷도 없는 최초 실행 시 최후 안전망)
      */
     public List<StockQuoteDto> getTop10US() {
         Long cachedAt = cacheTimes.get("US");
@@ -141,37 +151,33 @@ public class StockService {
             return quoteCache.getOrDefault("US", Collections.emptyList());
         }
 
-        // 1순위: screener API (Top 15 정도 받아둬야 ADR 포함 시 안정적으로 10개 채워짐)
-        List<YahooFinanceService.RawQuote> raws = yahooService.fetchTopMarketCapUs(15);
-        String source = "screener API";
-
-        // 2순위: screener 실패 시 — 정적 후보 풀 + v7/quote
-        if (raws.isEmpty()) {
-            log.warn("Yahoo screener 실패 — 정적 후보 풀 + v7/quote로 폴백");
-            raws = yahooService.fetchBulkQuotes(yahooService.getUsStocksFallback());
-            source = "v7/quote 폴백";
-        }
-
-        // 3순위: v7/quote도 실패 시 — v8/chart 개별 호출
-        List<StockQuoteDto> result;
+        List<YahooFinanceService.RawQuote> raws =
+            yahooService.fetchTopMarketCapUs(US_TOP10_DISCOVERY_SIZE);
         if (!raws.isEmpty()) {
-            result = buildQuoteDtos("US", raws, "USD");
-        } else {
-            log.warn("v7/quote 일괄 조회 실패 — v8/chart 개별 조회로 폴백");
-            result = fetchAll("US", yahooService.getUsStocksFallback(), "USD");
-            source = "v8/chart 폴백";
-        }
-
-        // 시총 순위 표시는 Top10까지만
-        if (result.size() > 10) result = new ArrayList<>(result.subList(0, 10));
-
-        if (!result.isEmpty()) {
-            log.info("미국 시총 Top10 조회 완료 [{}]: {}개 종목 (실시간 시총 정렬)",
-                source, result.size());
+            List<StockQuoteDto> result = buildQuoteDtos("US", raws, "USD");
+            if (result.size() > 10) result = new ArrayList<>(result.subList(0, 10));
+            saveSuccessfulTop10Snapshot("US", result, "yahoo-screener");
             quoteCache.put("US", result);
             cacheTimes.put("US", System.currentTimeMillis());
+            log.info("미국 시총 Top10 조회 완료 [yahoo-screener]: {}개 종목 (전체시장 동적 조회)", result.size());
+            return result;
         }
-        return result;
+
+        List<StockQuoteDto> snapshot = latestTop10SnapshotQuotes("US");
+        if (!snapshot.isEmpty()) {
+            quoteCache.put("US", snapshot);
+            cacheTimes.put("US", System.currentTimeMillis());
+            log.warn("Yahoo screener 실패 — 마지막 성공 스냅샷 반환 [US]: {}개 종목", snapshot.size());
+            return snapshot;
+        }
+
+        log.warn("Yahoo screener 실패 및 스냅샷 없음 — 최초 실행 부트스트랩용 정적 후보 풀 사용");
+        List<StockQuoteDto> bootstrap = fetchBootstrapUsTop10();
+        if (!bootstrap.isEmpty()) {
+            quoteCache.put("US", bootstrap);
+            cacheTimes.put("US", System.currentTimeMillis());
+        }
+        return bootstrap;
     }
 
     /** Alpha Vantage API 쿼터 현황 조회 (표시용) */
@@ -430,6 +436,72 @@ public class StockService {
         return result;
     }
 
+    private List<StockQuoteDto> fetchBootstrapUsTop10() {
+        List<YahooFinanceService.RawQuote> raws = yahooService.fetchBulkQuotes(yahooService.getUsStocksFallback());
+        List<StockQuoteDto> result;
+        if (!raws.isEmpty()) {
+            result = buildQuoteDtos("US", raws, "USD");
+        } else {
+            result = fetchAll("US", yahooService.getUsStocksFallback(), "USD");
+        }
+        return result.size() > 10 ? new ArrayList<>(result.subList(0, 10)) : result;
+    }
+
+    private List<StockQuoteDto> latestTop10SnapshotQuotes(String market) {
+        Top10Snapshot snapshot = top10Snapshots.get(market);
+        if (snapshot == null || snapshot.quotes() == null || snapshot.quotes().isEmpty()) {
+            return Collections.emptyList();
+        }
+        return new ArrayList<>(snapshot.quotes());
+    }
+
+    private synchronized void saveSuccessfulTop10Snapshot(
+            String market, List<StockQuoteDto> quotes, String source) {
+        if (quotes == null || quotes.isEmpty()) return;
+
+        List<StockQuoteDto> top10 = quotes.size() > 10
+            ? new ArrayList<>(quotes.subList(0, 10))
+            : new ArrayList<>(quotes);
+        Top10Snapshot previous = top10Snapshots.get(market);
+        logTop10Changes(market, previous != null ? previous.quotes() : Collections.emptyList(), top10);
+
+        top10Snapshots.put(market, new Top10Snapshot(
+            market,
+            source,
+            LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+            top10
+        ));
+        persistTop10Snapshots();
+    }
+
+    private void logTop10Changes(String market, List<StockQuoteDto> previous, List<StockQuoteDto> current) {
+        List<String> prevSymbols = symbolsByRank(previous);
+        List<String> currSymbols = symbolsByRank(current);
+        if (prevSymbols.isEmpty()) {
+            log.info("[Top10 스냅샷] {} 신규 저장: {}", market, currSymbols);
+            return;
+        }
+        if (prevSymbols.equals(currSymbols)) {
+            log.info("[Top10 스냅샷] {} 구성/순위 변동 없음", market);
+            return;
+        }
+
+        Set<String> prevSet = new LinkedHashSet<>(prevSymbols);
+        Set<String> currSet = new LinkedHashSet<>(currSymbols);
+        List<String> entered = currSymbols.stream().filter(s -> !prevSet.contains(s)).toList();
+        List<String> exited = prevSymbols.stream().filter(s -> !currSet.contains(s)).toList();
+        log.info("[Top10 스냅샷] {} 변경 감지 - 진입: {}, 제외: {}, 새 순서: {}",
+            market, entered, exited, currSymbols);
+    }
+
+    private List<String> symbolsByRank(List<StockQuoteDto> quotes) {
+        if (quotes == null || quotes.isEmpty()) return Collections.emptyList();
+        return quotes.stream()
+            .sorted(Comparator.comparingInt(StockQuoteDto::getRank))
+            .map(StockQuoteDto::getSymbol)
+            .toList();
+    }
+
     private synchronized void refreshHeatmapCache() {
         List<StockHeatmapSectorDto> result = fetchHeatmapFromYahoo();
         if (!result.isEmpty()) {
@@ -552,6 +624,23 @@ public class StockService {
         }
     }
 
+    @PostConstruct
+    public void loadTop10SnapshotsFromFile() {
+        File file = new File(TOP10_SNAPSHOTS_FILE);
+        if (!file.exists()) {
+            log.info("[Top10 스냅샷 로드] 파일 없음 ({})", TOP10_SNAPSHOTS_FILE);
+            return;
+        }
+        try {
+            Map<String, Top10Snapshot> loaded = objectMapper.readValue(
+                file, new TypeReference<>() {});
+            top10Snapshots.putAll(loaded);
+            log.info("[Top10 스냅샷 로드] {}개 마켓 복원 ({})", loaded.size(), TOP10_SNAPSHOTS_FILE);
+        } catch (IOException e) {
+            log.warn("[Top10 스냅샷 로드] 파일 읽기 실패: {}", e.getMessage());
+        }
+    }
+
     private void saveBaseRanks(String cacheKey) {
         List<StockQuoteDto> cached = quoteCache.get(cacheKey);
         if (cached != null && !cached.isEmpty()) {
@@ -571,6 +660,17 @@ public class StockService {
             log.info("[순위 기준점 파일 저장] {}", BASE_RANKS_FILE);
         } catch (IOException e) {
             log.warn("[순위 기준점 파일 저장] 실패: {}", e.getMessage());
+        }
+    }
+
+    private void persistTop10Snapshots() {
+        try {
+            File file = new File(TOP10_SNAPSHOTS_FILE);
+            file.getParentFile().mkdirs();
+            objectMapper.writeValue(file, top10Snapshots);
+            log.info("[Top10 스냅샷 파일 저장] {}", TOP10_SNAPSHOTS_FILE);
+        } catch (IOException e) {
+            log.warn("[Top10 스냅샷 파일 저장] 실패: {}", e.getMessage());
         }
     }
 

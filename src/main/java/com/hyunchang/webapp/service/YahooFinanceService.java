@@ -37,8 +37,8 @@ public class YahooFinanceService {
     private static final Logger log = LoggerFactory.getLogger(YahooFinanceService.class);
 
     /**
-     * 미국 시총 Top10 폴백용 후보 심볼 목록 — src/main/resources/stock/us-stocks-fallback.json 에서 로드.
-     * 1순위 screener API (fetchTopMarketCapUs)가 차단/실패하는 경우에만 사용되는 안전망이며,
+     * 미국 시총 Top10 최초 부트스트랩용 후보 심볼 목록 — src/main/resources/stock/us-stocks-fallback.json 에서 로드.
+     * screener API와 마지막 성공 스냅샷이 모두 없을 때만 사용하는 최후 안전망이며,
      * v7/quote 또는 v8/chart로 시총을 조회한 뒤 내림차순 정렬해 상위를 추출합니다.
      * shares 값은 Yahoo가 marketCap=0을 반환할 때만 가격×주식수 계산용 폴백으로 사용됩니다.
      */
@@ -250,7 +250,18 @@ public class YahooFinanceService {
                 double price     = readNumber(q.path("regularMarketPrice"));
                 double change    = readNumber(q.path("regularMarketChange"));
                 double changePct = readNumber(q.path("regularMarketChangePercent"));
-                long   mktCap    = (long) readNumber(q.path("marketCap"));
+                long   mktCap    = firstPositiveLong(
+                    q.path("marketCap"),
+                    q.path("intradaymarketcap"),
+                    q.path("intradayMarketCap")
+                );
+                double shares = firstPositiveNumber(
+                    q.path("sharesOutstanding"),
+                    q.path("impliedSharesOutstanding")
+                );
+                if (mktCap == 0 && price > 0 && shares > 0) {
+                    mktCap = Math.round(price * shares);
+                }
                 long   volume    = (long) readNumber(q.path("regularMarketVolume"));
 
                 if (price == 0 || mktCap == 0) continue;
@@ -348,6 +359,22 @@ public class YahooFinanceService {
         if (node.isMissingNode() || node.isNull()) return 0;
         if (node.isObject()) return node.path("raw").asDouble(0);
         return node.asDouble(0);
+    }
+
+    private long firstPositiveLong(JsonNode... nodes) {
+        for (JsonNode node : nodes) {
+            double value = readNumber(node);
+            if (value > 0) return (long) value;
+        }
+        return 0;
+    }
+
+    private double firstPositiveNumber(JsonNode... nodes) {
+        for (JsonNode node : nodes) {
+            double value = readNumber(node);
+            if (value > 0) return value;
+        }
+        return 0;
     }
 
     // ─────────────────────────────────────────────────────────────
