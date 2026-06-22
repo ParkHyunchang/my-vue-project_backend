@@ -26,6 +26,7 @@ public class Dating {
     
     private String dateType; // "single" 또는 "range"
     private String category;
+    @Column(columnDefinition = "TEXT")
     private String description;
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
