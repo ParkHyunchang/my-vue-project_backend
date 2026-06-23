@@ -17,6 +17,8 @@ public final class AiPromptCatalog {
 
     public static final String STOCK_ANALYSIS = "STOCK_ANALYSIS";
     public static final String PORTFOLIO_ANALYSIS = "PORTFOLIO_ANALYSIS";
+    public static final String PORTFOLIO_ISA_ANALYSIS = "PORTFOLIO_ISA_ANALYSIS";
+    public static final String PORTFOLIO_IRP_ANALYSIS = "PORTFOLIO_IRP_ANALYSIS";
     public static final String TRAVEL_CREATE = "TRAVEL_CREATE";
     public static final String TRAVEL_REFINE = "TRAVEL_REFINE";
     public static final String REALESTATE_TRADE = "REALESTATE_TRADE";
@@ -41,6 +43,8 @@ public final class AiPromptCatalog {
         // 주식 그룹 (종목 분석 + 포트폴리오 진단)
         register(stockAnalysis());
         register(portfolioAnalysis());
+        register(portfolioIsaAnalysis());
+        register(portfolioIrpAnalysis());
         // 여행 그룹
         register(travelCreate());
         register(travelRefine());
@@ -233,6 +237,130 @@ public final class AiPromptCatalog {
             ── 출력 형식 ──
             위 지침에서 지정한 보고서 형식에 따라 한국어 마크다운으로 작성하세요.
             제목(##)·표(table)·굵게·목록을 적절히 사용하고, 답변 전체를 ``` 코드블록으로 감싸지 마세요.
+            제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
+            """
+        );
+    }
+
+    private static PromptDefinition portfolioIsaAnalysis() {
+        return new PromptDefinition(
+            PORTFOLIO_ISA_ANALYSIS,
+            "ISA 포트폴리오 AI 진단",
+            "주식",
+            "ISA 계좌의 보유 종목·현금성 자산·뉴스를 근거로 절세 계좌 관점의 중장기 운용 진단을 생성합니다.",
+            List.of(
+                new PromptVariable("계좌유형", "분석 계좌명 (ISA)"),
+                new PromptVariable("계좌설명", "프론트에서 전달한 계좌별 분석 메모"),
+                new PromptVariable("보유종목", "ISA 보유 자산 상세 (주식/ETF/현금성 자산, 현재가·평단가·손익률·관련 뉴스)"),
+                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                new PromptVariable("보유종목목록", "현재 보유 중인 자산 라벨 목록")
+            ),
+            """
+            당신은 ISA 계좌 운용을 전문으로 하는 자산배분 컨설턴트입니다.
+            이 보고서는 일반 주식 포트폴리오 진단이 아니라, 반드시 ISA 계좌 진단으로 작성하세요.
+            ISA의 핵심 목적은 절세 혜택을 활용한 중장기 운용입니다. 단기 수익률만 보고 잦은 매매를 권하지 말고,
+            계좌 전체의 분산, 현금성 자산 대기비중, 리밸런싱 여력, 과도한 회전율 위험을 함께 평가하세요.
+
+            ── 가용 데이터의 한계 (반드시 준수) ──
+            - 제공된 보유 자산, 현재가, 평단가, 평가손익률, 일변동률, 뉴스, 재무 데이터만 근거로 판단하세요.
+            - PER·PBR·ROE·목표주가 같은 수치가 제공되지 않았으면 절대 지어내지 마세요.
+            - CASH 자산은 수익률 판단 대상이 아니라 대기자금/리밸런싱 재원/방어적 완충 자산으로 해석하세요.
+
+            ── ISA 진단 기준 ──
+            - 계좌가 성장형/배당형/방어형/혼합형 중 어디에 가까운지 먼저 판단하세요.
+            - 현금성 자산 비중이 너무 낮으면 조정 여력이 부족하다고 보고, 너무 높으면 투자 기회비용을 지적하세요.
+            - 특정 종목·섹터·국가 집중이 절세 계좌의 장기 운용 목적에 맞는지 점검하세요.
+            - 단기 손익보다 “ISA 안에서 계속 가져갈 만한 자산인지”와 “리밸런싱 우선순위”를 중심으로 조언하세요.
+            - 추천은 ISA 계좌에 새로 담기 적합한 중장기 후보 또는 기존 보유자산의 비중 조정 관점으로만 제시하세요.
+
+            결론부터 제시하고, 한국어 마크다운 보고서로 작성하세요.
+            """,
+            """
+            ── 계좌 ──
+            계좌유형: {{계좌유형}}
+            계좌설명: {{계좌설명}}
+            ── 보유 자산 ──
+            {{보유종목}}
+            ── 보유 종목 재무 데이터 ──
+            {{재무데이터}}
+            ── 최근 시장 뉴스 ──
+            {{시장뉴스}}
+            ── 현재 보유 중인 자산 ──
+            {{보유종목목록}}
+            """,
+            """
+            ── 출력 형식 ──
+            한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
+            다음 섹션을 반드시 포함하세요:
+            1. ## ISA 계좌 종합 진단
+            2. ## 자산 구성과 현금성 자산 점검
+            3. ## 보유 자산별 판단
+            4. ## 리밸런싱 우선순위
+            5. ## ISA 관점의 유의점
+            6. ## 참고 고지
+            제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
+            """
+        );
+    }
+
+    private static PromptDefinition portfolioIrpAnalysis() {
+        return new PromptDefinition(
+            PORTFOLIO_IRP_ANALYSIS,
+            "퇴직연금 IRP 포트폴리오 AI 진단",
+            "주식",
+            "퇴직연금 IRP 계좌의 보유 종목·현금성 자산·뉴스를 근거로 은퇴자산 관점의 장기 안정성 진단을 생성합니다.",
+            List.of(
+                new PromptVariable("계좌유형", "분석 계좌명 (퇴직연금 IRP)"),
+                new PromptVariable("계좌설명", "프론트에서 전달한 계좌별 분석 메모"),
+                new PromptVariable("보유종목", "IRP 보유 자산 상세 (주식/ETF/현금성 자산, 현재가·평단가·손익률·관련 뉴스)"),
+                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                new PromptVariable("보유종목목록", "현재 보유 중인 자산 라벨 목록")
+            ),
+            """
+            당신은 퇴직연금 IRP 계좌를 운용하는 연금 포트폴리오 전문가입니다.
+            이 보고서는 일반 주식 포트폴리오 진단이 아니라, 반드시 퇴직연금 IRP 계좌 진단으로 작성하세요.
+            IRP의 핵심 목적은 은퇴자산의 장기 복리와 손실 방어입니다. 단기 매매 수익보다
+            장기 안정성, 분산, 변동성 관리, 현금성 자산의 완충 역할, 리밸런싱 규율을 우선하세요.
+
+            ── 가용 데이터의 한계 (반드시 준수) ──
+            - 제공된 보유 자산, 현재가, 평단가, 평가손익률, 일변동률, 뉴스, 재무 데이터만 근거로 판단하세요.
+            - 제공되지 않은 밸류에이션·목표주가·컨센서스 숫자는 절대 지어내지 마세요.
+            - CASH 자산은 손익률 판단 대상이 아니라 안전자산/대기자금/리밸런싱 완충 자산으로 해석하세요.
+
+            ── IRP 진단 기준 ──
+            - 은퇴자산 계좌답게 “장기 유지 가능한 구조인지”를 가장 먼저 평가하세요.
+            - 공격적 성장자산이 과도하면 변동성 위험을 지적하고, 현금성/방어자산 비중이 과도하면 장기 수익률 저하를 지적하세요.
+            - 특정 테마·종목 집중이 노후자산 관점에서 감내 가능한지 보수적으로 판단하세요.
+            - 손절/단기 차익실현보다 리밸런싱, 분산, 위험 축소, 추가 납입 시 우선순위를 중심으로 조언하세요.
+            - 추천은 IRP 계좌에 적합한 장기·분산·방어적 후보 또는 기존 보유자산의 비중 조정 관점으로만 제시하세요.
+
+            결론부터 제시하고, 한국어 마크다운 보고서로 작성하세요.
+            """,
+            """
+            ── 계좌 ──
+            계좌유형: {{계좌유형}}
+            계좌설명: {{계좌설명}}
+            ── 보유 자산 ──
+            {{보유종목}}
+            ── 보유 종목 재무 데이터 ──
+            {{재무데이터}}
+            ── 최근 시장 뉴스 ──
+            {{시장뉴스}}
+            ── 현재 보유 중인 자산 ──
+            {{보유종목목록}}
+            """,
+            """
+            ── 출력 형식 ──
+            한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
+            다음 섹션을 반드시 포함하세요:
+            1. ## 퇴직연금 IRP 계좌 종합 진단
+            2. ## 은퇴자산 관점의 위험 점검
+            3. ## 현금성 자산과 리밸런싱 여력
+            4. ## 보유 자산별 판단
+            5. ## 리밸런싱 우선순위
+            6. ## 참고 고지
             제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
             """
         );

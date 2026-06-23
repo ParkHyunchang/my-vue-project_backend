@@ -12,6 +12,8 @@ import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Recommendation;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Scenario;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
+import com.hyunchang.webapp.entity.IrpHolding;
+import com.hyunchang.webapp.entity.IsaHolding;
 import com.hyunchang.webapp.entity.StockHolding;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
@@ -55,8 +57,15 @@ public class PortfolioAnalysisService {
     private static final Pattern JSON_FENCE = Pattern.compile("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```");
     private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
     private static final Set<String> ALLOWED_ACTIONS = Set.of("ADD", "TAKE_PROFIT", "HOLD", "CUT_LOSS", "WATCH");
+    private static final String ACCOUNT_STOCK = "stock";
+    private static final String ACCOUNT_ISA = "isa";
+    private static final String ACCOUNT_IRP = "irp";
+    private static final String ASSET_CASH = "CASH";
+    private static final String ASSET_STOCK = "STOCK";
 
     private final StockHoldingService stockHoldingService;
+    private final IsaHoldingService isaHoldingService;
+    private final IrpHoldingService irpHoldingService;
     private final StockService stockService;
     private final StockSymbolNewsService stockSymbolNewsService;
     private final AiProviderChain aiProviderChain;
@@ -65,12 +74,16 @@ public class PortfolioAnalysisService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PortfolioAnalysisService(StockHoldingService stockHoldingService,
+                                    IsaHoldingService isaHoldingService,
+                                    IrpHoldingService irpHoldingService,
                                     StockService stockService,
                                     StockSymbolNewsService stockSymbolNewsService,
                                     AiProviderChain aiProviderChain,
                                     AiPromptService aiPromptService,
                                     FinancialDataService financialDataService) {
         this.stockHoldingService = stockHoldingService;
+        this.isaHoldingService = isaHoldingService;
+        this.irpHoldingService = irpHoldingService;
         this.stockService = stockService;
         this.stockSymbolNewsService = stockSymbolNewsService;
         this.aiProviderChain = aiProviderChain;
@@ -84,12 +97,13 @@ public class PortfolioAnalysisService {
 
     public PortfolioAnalysisResponse analyze(Map<String, Object> requestBody) {
         String userId = SecurityUtils.getCurrentUserId();
-        List<StockHolding> holdings = stockHoldingService.getHoldings(userId);
+        AnalysisAccount account = parseAnalysisAccount(requestBody);
+        List<PortfolioHoldingInput> holdings = loadHoldings(userId, account);
 
         if (holdings.isEmpty()) {
             return PortfolioAnalysisResponse.builder()
                     .blocked(false)
-                    .summary("보유 종목이 없습니다. 종목을 먼저 추가해 주세요.")
+                    .summary(account.label + " 보유 자산이 없습니다. 종목이나 현금성 자산을 먼저 추가해 주세요.")
                     .sentiment("중립")
                     .holdings(List.of())
                     .recommendations(List.of())
@@ -107,7 +121,7 @@ public class PortfolioAnalysisService {
 
         // 2. 추천에서 제외할 보유 종목 (이미 가진 종목은 추천하지 않음)
         List<String> heldLabels = new ArrayList<>();
-        for (StockHolding h : holdings) heldLabels.add(h.getName() + " (" + h.getSymbol() + ")");
+        for (PortfolioHoldingInput h : holdings) heldLabels.add(h.name + " (" + h.symbol + ")");
 
         // 3. 최근 시장 뉴스 헤드라인 — 추천의 핵심 근거
         List<String> marketHeadlines = collectMarketHeadlines();
@@ -116,22 +130,25 @@ public class PortfolioAnalysisService {
         String financials;
         try {
             List<FinancialDataService.Holding> finHoldings = snapshots.stream()
+                    .filter(s -> !s.isCash())
                     .map(s -> new FinancialDataService.Holding(s.symbol, s.name, s.market))
                     .toList();
-            financials = financialDataService.holdingsSummary(finHoldings);
+            financials = finHoldings.isEmpty()
+                    ? "(주식/ETF 보유분이 없어 재무 데이터 수집 대상 없음)"
+                    : financialDataService.holdingsSummary(finHoldings);
         } catch (Exception e) {
             log.warn("[Portfolio/Analysis] 재무 데이터 수집 실패: {}", e.getMessage());
             financials = "(재무 데이터 미수집)";
         }
 
         // 4. 프롬프트 + chain 호출
-        String prompt = buildPrompt(snapshots, perSymbolNews, marketHeadlines, heldLabels, financials);
+        String prompt = buildPrompt(account, snapshots, perSymbolNews, marketHeadlines, heldLabels, financials);
         AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt);
 
         int perSymbolTotal = perSymbolNews.values().stream().mapToInt(List::size).sum();
         long weightCount = snapshots.stream().filter(s -> s.weightPct != null).count();
-        log.info("[Portfolio/Analysis] user={} 보유 {}개, 비중 {}개, 종목별 뉴스 합 {}건, 시장 뉴스 {}건",
-                userId, holdings.size(), weightCount, perSymbolTotal, marketHeadlines.size());
+        log.info("[Portfolio/Analysis] user={} account={} 보유 {}개, 비중 {}개, 종목별 뉴스 합 {}건, 시장 뉴스 {}건",
+                userId, account.type, holdings.size(), weightCount, perSymbolTotal, marketHeadlines.size());
 
         if (!chainResult.success()) {
             return PortfolioAnalysisResponse.builder()
@@ -173,6 +190,98 @@ public class PortfolioAnalysisService {
     // ─────────────────────────────────────────────────────────────────────
     // 컨텍스트 수집
 
+    private AnalysisAccount parseAnalysisAccount(Map<String, Object> requestBody) {
+        Object rawType = requestBody == null ? null : requestBody.get("accountType");
+        Object rawLabel = requestBody == null ? null : requestBody.get("accountLabel");
+        Object rawNote = requestBody == null ? null : requestBody.get("accountNote");
+
+        if (requestBody != null && requestBody.get("portfolio") instanceof Map<?, ?> portfolio) {
+            if (rawType == null) rawType = portfolio.get("accountType");
+            if (rawLabel == null) rawLabel = portfolio.get("accountLabel");
+            if (rawNote == null) rawNote = portfolio.get("accountNote");
+        }
+
+        String type = str(rawType);
+        type = type == null ? ACCOUNT_STOCK : type.trim().toLowerCase(Locale.ROOT);
+
+        return switch (type) {
+            case ACCOUNT_ISA -> new AnalysisAccount(
+                    ACCOUNT_ISA,
+                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "ISA",
+                    AiPromptCatalog.PORTFOLIO_ISA_ANALYSIS,
+                    str(rawNote)
+            );
+            case ACCOUNT_IRP -> new AnalysisAccount(
+                    ACCOUNT_IRP,
+                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "퇴직연금 IRP",
+                    AiPromptCatalog.PORTFOLIO_IRP_ANALYSIS,
+                    str(rawNote)
+            );
+            default -> new AnalysisAccount(
+                    ACCOUNT_STOCK,
+                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "주식",
+                    AiPromptCatalog.PORTFOLIO_ANALYSIS,
+                    str(rawNote)
+            );
+        };
+    }
+
+    private List<PortfolioHoldingInput> loadHoldings(String userId, AnalysisAccount account) {
+        if (ACCOUNT_ISA.equals(account.type)) {
+            return isaHoldingService.getHoldings(userId).stream()
+                    .map(this::fromIsaHolding)
+                    .toList();
+        }
+        if (ACCOUNT_IRP.equals(account.type)) {
+            return irpHoldingService.getHoldings(userId).stream()
+                    .map(this::fromIrpHolding)
+                    .toList();
+        }
+        return stockHoldingService.getHoldings(userId).stream()
+                .map(this::fromStockHolding)
+                .toList();
+    }
+
+    private PortfolioHoldingInput fromStockHolding(StockHolding h) {
+        PortfolioHoldingInput out = new PortfolioHoldingInput();
+        out.symbol = h.getSymbol();
+        out.name = h.getName();
+        out.market = h.getMarket();
+        out.quantity = h.getQuantity();
+        out.avgPrice = h.getAvgPrice();
+        out.core = h.isCore();
+        out.assetType = ASSET_STOCK;
+        return out;
+    }
+
+    private PortfolioHoldingInput fromIsaHolding(IsaHolding h) {
+        PortfolioHoldingInput out = new PortfolioHoldingInput();
+        out.symbol = h.getSymbol();
+        out.name = h.getName();
+        out.market = h.getMarket();
+        out.quantity = h.getQuantity();
+        out.avgPrice = h.getAvgPrice();
+        out.core = h.isCore();
+        out.assetType = normalizeAssetType(h.getAssetType());
+        return out;
+    }
+
+    private PortfolioHoldingInput fromIrpHolding(IrpHolding h) {
+        PortfolioHoldingInput out = new PortfolioHoldingInput();
+        out.symbol = h.getSymbol();
+        out.name = h.getName();
+        out.market = h.getMarket();
+        out.quantity = h.getQuantity();
+        out.avgPrice = h.getAvgPrice();
+        out.core = h.isCore();
+        out.assetType = normalizeAssetType(h.getAssetType());
+        return out;
+    }
+
+    private String normalizeAssetType(String assetType) {
+        return ASSET_CASH.equalsIgnoreCase(assetType) ? ASSET_CASH : ASSET_STOCK;
+    }
+
     private Map<String, ClientHoldingContext> parseClientContext(Map<String, Object> requestBody) {
         Object rawHoldings = requestBody == null ? null : requestBody.get("holdings");
         if (!(rawHoldings instanceof List<?> list) && requestBody != null && requestBody.get("portfolio") instanceof Map<?, ?> portfolio) {
@@ -199,30 +308,42 @@ public class PortfolioAnalysisService {
         return out;
     }
 
-    private List<HoldingSnapshot> buildSnapshots(List<StockHolding> holdings,
+    private List<HoldingSnapshot> buildSnapshots(List<PortfolioHoldingInput> holdings,
                                                  Map<String, ClientHoldingContext> clientContext) {
         List<HoldingSnapshot> out = new ArrayList<>();
-        for (StockHolding h : holdings) {
+        for (PortfolioHoldingInput h : holdings) {
             HoldingSnapshot s = new HoldingSnapshot();
-            s.symbol = h.getSymbol();
-            s.name = h.getName();
-            s.market = h.getMarket();
-            s.quantity = h.getQuantity();
-            s.avgPrice = h.getAvgPrice();
-            s.core = h.isCore();
-            try {
-                StockPriceDto p = stockService.getQuote(h.getSymbol(), h.getMarket());
-                if (p != null) {
-                    s.currentPrice = p.getPrice();
-                    s.changePercent = p.getChangePercent();
-                    s.currency = p.getCurrency();
+            s.symbol = h.symbol;
+            s.name = h.name;
+            s.market = h.market;
+            s.quantity = h.quantity;
+            s.avgPrice = h.avgPrice;
+            s.core = h.core;
+            s.assetType = normalizeAssetType(h.assetType);
+
+            if (s.isCash()) {
+                s.currentPrice = 1.0;
+                s.changePercent = 0.0;
+                s.currency = "KRW";
+                if (s.quantity != null && s.quantity > 0) {
+                    s.marketValue = s.quantity.doubleValue();
+                    s.marketValueKRW = s.quantity.doubleValue();
                 }
-            } catch (Exception e) {
-                log.warn("[Portfolio/Analysis] 시세 조회 실패 {}: {}", h.getSymbol(), e.getMessage());
+            } else {
+                try {
+                    StockPriceDto p = stockService.getQuote(h.symbol, h.market);
+                    if (p != null) {
+                        s.currentPrice = p.getPrice();
+                        s.changePercent = p.getChangePercent();
+                        s.currency = p.getCurrency();
+                    }
+                } catch (Exception e) {
+                    log.warn("[Portfolio/Analysis] 시세 조회 실패 {}: {}", h.symbol, e.getMessage());
+                }
             }
             ClientHoldingContext c = clientContext == null
                     ? null
-                    : clientContext.get(h.getSymbol().toUpperCase(Locale.ROOT));
+                    : clientContext.get(h.symbol.toUpperCase(Locale.ROOT));
             if (s.currentPrice <= 0 && c != null && c.currentPrice != null && c.currentPrice > 0) {
                 s.currentPrice = c.currentPrice;
             }
@@ -237,7 +358,7 @@ public class PortfolioAnalysisService {
                 if (c.marketValue != null) s.marketValue = c.marketValue;
                 if (c.marketValueKRW != null) s.marketValueKRW = c.marketValueKRW;
             }
-            if (s.avgPrice != null && s.avgPrice > 0 && s.currentPrice > 0) {
+            if (!s.isCash() && s.avgPrice != null && s.avgPrice > 0 && s.currentPrice > 0) {
                 s.pnlPct = ((s.currentPrice - s.avgPrice) / s.avgPrice) * 100.0;
             }
             out.add(s);
@@ -271,7 +392,12 @@ public class PortfolioAnalysisService {
      */
     private Map<String, List<String>> fetchPerSymbolNewsParallel(List<HoldingSnapshot> snapshots) {
         List<CompletableFuture<Map.Entry<String, List<String>>>> futures = new ArrayList<>();
+        Map<String, List<String>> result = new HashMap<>();
         for (HoldingSnapshot s : snapshots) {
+            if (s.isCash()) {
+                result.put(s.symbol, List.of());
+                continue;
+            }
             futures.add(CompletableFuture.supplyAsync(() -> {
                 try {
                     String enName = "US".equalsIgnoreCase(s.market)
@@ -290,7 +416,6 @@ public class PortfolioAnalysisService {
                 }
             }));
         }
-        Map<String, List<String>> result = new HashMap<>();
         for (CompletableFuture<Map.Entry<String, List<String>>> f : futures) {
             try {
                 Map.Entry<String, List<String>> entry = f.get(8, TimeUnit.SECONDS);
@@ -331,7 +456,8 @@ public class PortfolioAnalysisService {
     // ─────────────────────────────────────────────────────────────────────
     // 프롬프트 조립
 
-    private String buildPrompt(List<HoldingSnapshot> snapshots,
+    private String buildPrompt(AnalysisAccount account,
+                               List<HoldingSnapshot> snapshots,
                                Map<String, List<String>> perSymbolNews,
                                List<String> marketHeadlines,
                                List<String> heldLabels,
@@ -341,7 +467,20 @@ public class PortfolioAnalysisService {
         for (HoldingSnapshot s : snapshots) {
             holdingsBlock.append(i++).append(". ")
                     .append(s.name).append(" (").append(s.symbol).append(", ").append(s.market).append(") ")
-                    .append("\n")
+                    .append("\n");
+
+            if (s.isCash()) {
+                holdingsBlock
+                    .append("   자산유형: 현금성 자산(CASH)\n")
+                    .append("   금액: ").append(s.quantity == null ? "미입력" : String.format(Locale.KOREA, "%,d KRW", s.quantity))
+                    .append(", 현재 비중: ").append(fmtWeightPct(s.weightPct)).append("\n")
+                    .append("   평가금액: ").append(fmtKRWValue(s.marketValueKRW)).append("\n")
+                    .append("   관련 뉴스: (현금성 자산 — 뉴스/시세 조회 대상 아님)\n");
+                continue;
+            }
+
+            holdingsBlock
+                    .append("   자산유형: 주식/ETF(STOCK), 사용자 지정 핵심자산: ").append(s.core ? "예" : "아니오").append("\n")
                     .append("   보유수량: ").append(s.quantity == null ? "미입력" : String.format(Locale.KOREA, "%,d", s.quantity)).append("주")
                     .append(", 현재 비중: ").append(fmtWeightPct(s.weightPct)).append("\n")
                     .append("   현재가: ").append(fmtPrice(s)).append(", 평단가: ")
@@ -380,13 +519,37 @@ public class PortfolioAnalysisService {
         }
 
         Map<String, String> vars = new LinkedHashMap<>();
+        vars.put("계좌유형", account.label);
+        vars.put("계좌설명", notBlank(account.note) ? account.note : defaultAccountNote(account.type));
         vars.put("보유종목", holdingsBlock.toString());
         vars.put("재무데이터", financials == null || financials.isBlank() ? "(재무 데이터 미수집)" : financials);
         vars.put("시장뉴스", newsBlock.toString());
         vars.put("보유종목목록", heldBlock.toString());
-        return aiPromptService.render(AiPromptCatalog.PORTFOLIO_ANALYSIS, vars)
+        return aiPromptService.render(account.promptKey, vars)
                 + "\n\n"
-                + "추가 출력 지침: 코어/위성, core/satellite, 코어 종목, 위성 종목이라는 표현과 기준은 사용하지 마세요. "
+                + additionalAccountInstruction(account);
+    }
+
+    private String defaultAccountNote(String accountType) {
+        return switch (accountType) {
+            case ACCOUNT_ISA -> "ISA 계좌입니다. 절세 목적, 중장기 운용, 현금성 자산의 대기 비중을 함께 고려합니다.";
+            case ACCOUNT_IRP -> "퇴직연금 IRP 계좌입니다. 은퇴자산 보존, 장기 복리, 변동성 관리, 현금성 자산 비중을 함께 고려합니다.";
+            default -> "일반 주식 포트폴리오입니다. 성장성, 리스크, 분산, 비중 조정을 중심으로 분석합니다.";
+        };
+    }
+
+    private String additionalAccountInstruction(AnalysisAccount account) {
+        if (ACCOUNT_ISA.equals(account.type)) {
+            return "추가 출력 지침: 이 보고서는 반드시 ISA 계좌 진단으로 작성하세요. "
+                    + "일반 주식 포트폴리오라고 부르지 말고, 절세 계좌의 중장기 운용·현금성 자산 대기비중·과도한 매매 회전율을 함께 점검하세요. "
+                    + "CASH 자산은 손익률이 아니라 리밸런싱 재원과 방어적 완충 역할로 해석하세요.";
+        }
+        if (ACCOUNT_IRP.equals(account.type)) {
+            return "추가 출력 지침: 이 보고서는 반드시 퇴직연금 IRP 계좌 진단으로 작성하세요. "
+                    + "일반 주식 포트폴리오라고 부르지 말고, 은퇴자산의 장기 안정성·분산·변동성 방어·현금성 자산 비중을 최우선으로 평가하세요. "
+                    + "CASH 자산은 손익률이 아니라 안전자산/대기자금/리밸런싱 완충 역할로 해석하세요.";
+        }
+        return "추가 출력 지침: 코어/위성, core/satellite, 코어 종목, 위성 종목이라는 표현과 기준은 사용하지 마세요. "
                 + "모든 판단은 현재 비중, 평가손익, 섹터/국가 집중도, 뉴스, 재무 데이터만 기준으로 설명하세요.";
     }
 
@@ -560,10 +723,35 @@ public class PortfolioAnalysisService {
     }
 
     // 보유 종목 컨텍스트 임시 객체
+    private static class AnalysisAccount {
+        final String type;
+        final String label;
+        final String promptKey;
+        final String note;
+
+        AnalysisAccount(String type, String label, String promptKey, String note) {
+            this.type = type;
+            this.label = label;
+            this.promptKey = promptKey;
+            this.note = note;
+        }
+    }
+
+    private static class PortfolioHoldingInput {
+        String symbol;
+        String name;
+        String market;
+        String assetType;
+        boolean core;
+        Long quantity;
+        Double avgPrice;
+    }
+
     private static class HoldingSnapshot {
         String symbol;
         String name;
         String market;
+        String assetType;
         boolean core;
         Long quantity;
         Double avgPrice;
@@ -574,6 +762,10 @@ public class PortfolioAnalysisService {
         Double marketValue;
         Double marketValueKRW;
         Double weightPct;
+
+        boolean isCash() {
+            return ASSET_CASH.equalsIgnoreCase(assetType);
+        }
     }
 
     private static class ClientHoldingContext {
