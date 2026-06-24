@@ -24,6 +24,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -62,6 +63,9 @@ public class PortfolioAnalysisService {
     private static final String ACCOUNT_IRP = "irp";
     private static final String ASSET_CASH = "CASH";
     private static final String ASSET_STOCK = "STOCK";
+    private static final double IRP_RISKY_ASSET_LIMIT_PCT = 70.0;
+    private static final double IRP_SAFE_ASSET_TARGET_PCT = 30.0;
+    private static final LocalDate ISA_OPENED_ON = LocalDate.of(2026, 6, 24);
 
     private final StockHoldingService stockHoldingService;
     private final IsaHoldingService isaHoldingService;
@@ -525,32 +529,101 @@ public class PortfolioAnalysisService {
         vars.put("재무데이터", financials == null || financials.isBlank() ? "(재무 데이터 미수집)" : financials);
         vars.put("시장뉴스", newsBlock.toString());
         vars.put("보유종목목록", heldBlock.toString());
+        vars.put("계좌비중점검", accountAllocationMemo(account, snapshots));
         return aiPromptService.render(account.promptKey, vars)
                 + "\n\n"
-                + additionalAccountInstruction(account);
+                + additionalAccountInstruction(account, snapshots);
     }
 
     private String defaultAccountNote(String accountType) {
         return switch (accountType) {
-            case ACCOUNT_ISA -> "ISA 계좌입니다. 절세 목적, 중장기 운용, 현금성 자산의 대기 비중을 함께 고려합니다.";
-            case ACCOUNT_IRP -> "퇴직연금 IRP 계좌입니다. 은퇴자산 보존, 장기 복리, 변동성 관리, 현금성 자산 비중을 함께 고려합니다.";
+            case ACCOUNT_ISA -> "ISA 계좌입니다. 2026-06-24 신규 개설한 서민형 ISA라는 기본정보는 내부 판단 기준으로만 사용하고, 세제·의무기간 판단에 직접 필요할 때만 언급합니다.";
+            case ACCOUNT_IRP -> "퇴직연금 IRP 계좌입니다. 위험자산 70% 한도와 안전자산 약 30% 필요 비중은 내부 판단 기준으로만 사용하고, 리밸런싱 판단에 직접 필요할 때만 언급합니다.";
             default -> "일반 주식 포트폴리오입니다. 성장성, 리스크, 분산, 비중 조정을 중심으로 분석합니다.";
         };
     }
 
-    private String additionalAccountInstruction(AnalysisAccount account) {
+    private String additionalAccountInstruction(AnalysisAccount account, List<HoldingSnapshot> snapshots) {
         if (ACCOUNT_ISA.equals(account.type)) {
             return "추가 출력 지침: 이 보고서는 반드시 ISA 계좌 진단으로 작성하세요. "
-                    + "일반 주식 포트폴리오라고 부르지 말고, 절세 계좌의 중장기 운용·현금성 자산 대기비중·과도한 매매 회전율을 함께 점검하세요. "
-                    + "CASH 자산은 손익률이 아니라 리밸런싱 재원과 방어적 완충 역할로 해석하세요.";
+                    + "국내 ISA 제도와 절세 계좌 운용을 다루는 최고 수준의 전문가 관점으로, 절세 계좌의 중장기 운용·현금성 자산 대기비중·과도한 매매 회전율을 함께 점검하세요. "
+                    + "CASH 자산은 손익률이 아니라 리밸런싱 재원과 방어적 완충 역할로 해석하세요. "
+                    + "ISA 개설일·의무가입기간·서민형 비과세 한도는 분석의 기본 전제로만 깔아두고, 매도/리밸런싱/세제 유의점 판단에 직접 필요할 때만 짧게 언급하세요. "
+                    + "필요하지 않으면 ISA 기본정보를 별도 문단으로 반복하지 마세요. "
+                    + "보고서 마지막 실전 섹션에는 ISA에 추가매수할 만한 후보와 손절/축소 검토 후보를 구분해 제시하세요. "
+                    + "근거가 부족하면 억지로 채우지 말고 '해당 없음'이라고 쓰세요.\n"
+                    + isaTaxMemo() + "\n"
+                    + accountAllocationMemo(account, snapshots);
         }
         if (ACCOUNT_IRP.equals(account.type)) {
             return "추가 출력 지침: 이 보고서는 반드시 퇴직연금 IRP 계좌 진단으로 작성하세요. "
-                    + "일반 주식 포트폴리오라고 부르지 말고, 은퇴자산의 장기 안정성·분산·변동성 방어·현금성 자산 비중을 최우선으로 평가하세요. "
-                    + "CASH 자산은 손익률이 아니라 안전자산/대기자금/리밸런싱 완충 역할로 해석하세요.";
+                    + "퇴직연금 제도와 연금자산 배분을 관리하는 최고 수준의 전문가 관점으로, 은퇴자산의 장기 안정성·분산·변동성 방어·현금성 자산 비중을 최우선으로 평가하세요. "
+                    + "CASH 자산은 손익률이 아니라 안전자산/대기자금/리밸런싱 완충 역할로 해석하세요. "
+                    + "위험자산 70% 한도와 안전자산 약 30% 기준은 기본 전제로만 깔아두고, 추가매수 가능 여부나 리밸런싱 우선순위에 직접 영향을 줄 때만 짧게 언급하세요. "
+                    + "필요하지 않으면 IRP 한도 규칙을 별도 문단으로 반복하지 마세요. "
+                    + "보고서 마지막 실전 섹션에는 IRP에 추가매수할 만한 후보와 손절/축소 검토 후보를 구분해 제시하세요. "
+                    + "IRP 한도상 추가매수가 어려우면 그 후보는 관망 또는 대기 후보로 분류하고, 근거가 부족하면 '해당 없음'이라고 쓰세요.\n"
+                    + accountAllocationMemo(account, snapshots);
         }
         return "추가 출력 지침: 코어/위성, core/satellite, 코어 종목, 위성 종목이라는 표현과 기준은 사용하지 마세요. "
                 + "모든 판단은 현재 비중, 평가손익, 섹터/국가 집중도, 뉴스, 재무 데이터만 기준으로 설명하세요.";
+    }
+
+    private String isaTaxMemo() {
+        LocalDate mandatoryEndOn = ISA_OPENED_ON.plusYears(3);
+        return "ISA 기본 배경정보(내부 판단용): 2026-06-24 신규 개설한 서민형 ISA, 의무가입기간 3년, 의무가입기간 충족 기준일 "
+                + mandatoryEndOn + ", 서민형 비과세 한도 400만원. "
+                + "이 정보는 항상 출력하지 말고, 매도/인출/세제 유의점 판단에 직접 관련될 때만 사용하세요.";
+    }
+
+    private String accountAllocationMemo(AnalysisAccount account, List<HoldingSnapshot> snapshots) {
+        if (snapshots == null || snapshots.isEmpty()) {
+            return "계좌 비중 점검: 보유 자산이 없어 위험자산/안전자산 비중을 계산할 수 없습니다.";
+        }
+
+        double riskyPct = snapshots.stream()
+                .filter(s -> !s.isCash())
+                .map(s -> s.weightPct)
+                .filter(v -> v != null && v > 0)
+                .mapToDouble(Double::doubleValue)
+                .sum();
+        double cashPct = snapshots.stream()
+                .filter(HoldingSnapshot::isCash)
+                .map(s -> s.weightPct)
+                .filter(v -> v != null && v > 0)
+                .mapToDouble(Double::doubleValue)
+                .sum();
+        double knownPct = riskyPct + cashPct;
+
+        if (knownPct <= 0) {
+            return "계좌 비중 점검: 현재가 또는 평가금액이 부족해 위험자산/안전자산 비중을 계산할 수 없습니다.";
+        }
+
+        String base = String.format(Locale.KOREA,
+                "계좌 비중 점검: 주식/ETF 등 위험자산 %.1f%%, CASH 기준 안전/현금성 자산 %.1f%%입니다. ",
+                riskyPct, cashPct);
+
+        if (ACCOUNT_IRP.equals(account.type)) {
+            double remainingRiskCapacity = Math.max(0, IRP_RISKY_ASSET_LIMIT_PCT - riskyPct);
+            double safeGap = Math.max(0, IRP_SAFE_ASSET_TARGET_PCT - cashPct);
+            String rule = String.format(Locale.KOREA,
+                    "IRP 기본 배경정보(내부 판단용): 위험자산 한도 70%% 기준상 위험자산 추가 가능 여력 약 %.1f%%p, 안전자산 30%% 기준 대비 부족분 약 %.1f%%p. ",
+                    remainingRiskCapacity, safeGap);
+            String status = riskyPct > IRP_RISKY_ASSET_LIMIT_PCT
+                    ? "현재 위험자산 비중이 70%를 초과하므로 위험자산 추가보다 위험자산 축소 또는 안전자산 보강을 우선하는 판단 근거로만 사용하세요. "
+                    : safeGap > 0
+                        ? "위험자산 추가 매수 전 안전/현금성 자산 보강 필요 여부를 판단하는 내부 기준으로만 사용하세요. "
+                        : "위험자산 한도 안에서 추가 매수 여부를 판단하되, 은퇴자산 변동성 관리를 우선하는 내부 기준으로 사용하세요. ";
+            return base + rule + status
+                    + "필요하지 않으면 출력에서 IRP 한도 규칙을 반복하지 마세요. 실제 퇴직연금 상품별 위험/안전자산 분류는 사업자 기준과 상품 약관을 확인해야 하며, 이 서비스는 CASH를 안전/현금성 자산으로 계산합니다.";
+        }
+
+        if (ACCOUNT_ISA.equals(account.type)) {
+            return base + "ISA 기본정보는 세제·의무기간 판단이 필요할 때만 출력에 반영하고, 평소에는 현금성 자산을 리밸런싱 재원으로 쓸 수 있는지 중심으로 판단하세요. "
+                    + isaTaxMemo();
+        }
+
+        return base;
     }
 
     // ─────────────────────────────────────────────────────────────────────
