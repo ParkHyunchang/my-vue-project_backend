@@ -157,11 +157,10 @@ public class StockAnalysisService {
         } else {
             int i = 1;
             for (StockNewsDto n : news) {
-                newsBlock.append(i++).append(". ")
-                        .append(nullSafe(n.getTitle()))
-                        .append(" — ")
-                        .append(truncate(nullSafe(n.getDescription()), 200))
-                        .append("\n");
+                String formatted = formatNewsForPrompt(n, 220);
+                if (!formatted.isBlank()) {
+                    newsBlock.append(i++).append(". ").append(formatted).append("\n");
+                }
             }
             newsInstruction = """
                     아래 뉴스는 이 종목과 관련해 수집된 참고 자료입니다.
@@ -392,6 +391,23 @@ public class StockAnalysisService {
     }
 
     private String nullSafe(String s) { return s == null ? "" : s; }
+
+    private String formatNewsForPrompt(StockNewsDto n, int descLimit) {
+        if (n == null || nullSafe(n.getTitle()).isBlank()) return "";
+        List<String> meta = new ArrayList<>();
+        if (!nullSafe(n.getSource()).isBlank()) meta.add("출처: " + n.getSource().trim());
+        if (!nullSafe(n.getPubDate()).isBlank()) meta.add("날짜: " + n.getPubDate().trim());
+
+        StringBuilder sb = new StringBuilder();
+        if (!meta.isEmpty()) {
+            sb.append("[").append(String.join(", ", meta)).append("] ");
+        }
+        sb.append(n.getTitle().trim());
+        if (!nullSafe(n.getDescription()).isBlank()) {
+            sb.append(" — 요약: ").append(truncate(n.getDescription().trim(), descLimit));
+        }
+        return sb.toString();
+    }
 
     private String truncate(String s, int max) {
         if (s == null) return "";

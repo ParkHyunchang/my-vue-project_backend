@@ -101,11 +101,15 @@ public class StockNewsService {
         new String[]{"한국경제",   "https://www.hankyung.com/feed/finance",                                              "KR"},
         new String[]{"연합뉴스",   "https://www.yna.co.kr/rss/economy.xml",                                              "KR"},
         new String[]{"매일경제",   "https://www.mk.co.kr/rss/40300001/",                                                 "KR"},
+        new String[]{"Google News KR 증시", googleNewsRss("증시 OR 코스피 OR 코스닥 OR 주가 OR 실적", "ko", "KR", "ko-KR"), "KR"},
+        new String[]{"Google News KR 경제지", googleNewsRss("주식 OR 투자 OR 증권 site:hankyung.com OR site:mk.co.kr OR site:sedaily.com OR site:edaily.co.kr OR site:news.mt.co.kr", "ko", "KR", "ko-KR"), "KR"},
         // ── 해외 (US) ────────────────────────────────────────────────
         new String[]{"Yahoo Finance", "https://finance.yahoo.com/rss/topfinstories",                                     "US"},
         new String[]{"MarketWatch",   "https://feeds.marketwatch.com/marketwatch/topstories/",                          "US"},
         new String[]{"CNBC",          "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=15839069", "US"},
-        new String[]{"Motley Fool",   "https://www.fool.com/feeds/index.aspx",                                           "US"}
+        new String[]{"Motley Fool",   "https://www.fool.com/feeds/index.aspx",                                           "US"},
+        new String[]{"Google News US Markets", googleNewsRss("stocks OR earnings OR \"S&P 500\" OR Nasdaq", "en", "US", "en-US"), "US"},
+        new String[]{"Google News US Financial Press", googleNewsRss("stock OR earnings site:reuters.com OR site:cnbc.com OR site:marketwatch.com OR site:barrons.com OR site:fool.com", "en", "US", "en-US"), "US"}
     );
 
     // #4 뉴스 캐시 + 동시성 보호 락
@@ -238,11 +242,7 @@ public class StockNewsService {
     private long parsePubDateEpoch(StockNewsDto news) {
         String pubDate = news.getPubDate();
         if (pubDate == null || pubDate.isBlank()) return 0L;
-        try {
-            return ZonedDateTime.parse(pubDate.trim(), RSS_DATE_FMT).toEpochSecond();
-        } catch (DateTimeParseException e) {
-            return 0L;
-        }
+        return parsePubDateStringEpoch(pubDate);
     }
 
     private List<StockNewsDto> parseRss(String url, String sourceName, String market) throws Exception {
@@ -279,18 +279,17 @@ public class StockNewsService {
             String  link    = getNodeText(el, "link");
             String  desc    = normalizeText(getNodeText(el, "description"));
             String  pubDate = getNodeText(el, "pubDate");
+            String  itemSource = getNodeText(el, "source");
 
             if (title.isBlank()) continue;
 
             // 오래된 기사 제외 (날짜 파싱 실패 시 통과)
             if (!pubDate.isBlank()) {
-                try {
-                    long pubEpoch = ZonedDateTime.parse(pubDate.trim(), RSS_DATE_FMT).toEpochSecond();
-                    if ((nowEpoch - pubEpoch) > maxAgeSeconds) {
-                        log.debug("오래된 기사 제외 [{}]: {}", sourceName, title);
-                        continue;
-                    }
-                } catch (DateTimeParseException ignore) {}
+                long pubEpoch = parsePubDateStringEpoch(pubDate);
+                if (pubEpoch > 0 && (nowEpoch - pubEpoch) > maxAgeSeconds) {
+                    log.debug("오래된 기사 제외 [{}]: {}", sourceName, title);
+                    continue;
+                }
             }
 
             if (!isStockRelated(title, desc, market)) {
@@ -307,7 +306,7 @@ public class StockNewsService {
 
             news.add(StockNewsDto.builder()
                 .title(title).link(link).description(desc)
-                .pubDate(pubDate).source(sourceName).market(market)
+                .pubDate(pubDate).source(mergeSource(sourceName, itemSource)).market(market)
                 .imageUrl(imageUrl)
                 .build());
         }
@@ -332,6 +331,33 @@ public class StockNewsService {
         // ③ 제목에 없으면 설명에서 키워드 2개 이상 필요 (단일 우연 매칭 방지)
         long descMatches = keywords.stream().filter(descLower::contains).count();
         return descMatches >= 2;
+    }
+
+    private static String googleNewsRss(String query, String langPrefix, String gl, String hl) {
+        String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
+        return "https://news.google.com/rss/search?q=" + encoded
+                + "&hl=" + hl + "&gl=" + gl + "&ceid=" + gl + ":" + langPrefix;
+    }
+
+    private long parsePubDateStringEpoch(String pubDate) {
+        if (pubDate == null || pubDate.isBlank()) return 0L;
+        String normalized = pubDate.trim();
+        try {
+            return ZonedDateTime.parse(normalized, RSS_DATE_FMT).toEpochSecond();
+        } catch (DateTimeParseException ignore) {}
+        try {
+            return ZonedDateTime.parse(normalized, DateTimeFormatter.RFC_1123_DATE_TIME).toEpochSecond();
+        } catch (DateTimeParseException ignore) {}
+        return 0L;
+    }
+
+    private String mergeSource(String sourceName, String itemSource) {
+        if (itemSource == null || itemSource.isBlank()) return sourceName;
+        if (sourceName == null || sourceName.isBlank()) return itemSource;
+        if (sourceName.toLowerCase(Locale.ROOT).contains(itemSource.toLowerCase(Locale.ROOT))) {
+            return sourceName;
+        }
+        return sourceName + " · " + itemSource;
     }
 
     private String translateToKorean(String text) {

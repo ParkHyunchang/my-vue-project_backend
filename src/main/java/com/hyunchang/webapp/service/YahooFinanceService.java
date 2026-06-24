@@ -573,7 +573,11 @@ public class YahooFinanceService {
      */
     public JsonNode fetchFundamentals(String symbol) {
         if (symbol == null || symbol.isBlank()) return null;
-        if (!refreshYahooAuth()) return null;
+        boolean authed = refreshYahooAuth();
+        if (!authed) {
+            log.info("Yahoo 인증 토큰 없이 v7/quote 재무 폴백 시도 [{}]", symbol);
+            return fetchFundamentalsFromQuote(symbol, false);
+        }
         try {
             String modules = "summaryDetail,defaultKeyStatistics,financialData,price";
             String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
@@ -590,10 +594,17 @@ public class YahooFinanceService {
 
             JsonNode result = objectMapper.readTree(resp.getBody())
                 .path("quoteSummary").path("result").path(0);
-            return result.isMissingNode() || result.isNull() ? null : result;
+            if (!result.isMissingNode() && !result.isNull()) return result;
+
+            JsonNode fallback = fetchFundamentalsFromQuote(symbol, true);
+            if (fallback != null) {
+                log.info("Yahoo quoteSummary 결과 없음 [{}] → v7/quote 폴백 사용", symbol);
+                return fallback;
+            }
+            return null;
 
         } catch (RestClientException | IOException e) {
-            JsonNode fallback = fetchFundamentalsFromQuote(symbol);
+            JsonNode fallback = fetchFundamentalsFromQuote(symbol, true);
             if (fallback != null) {
                 log.info("Yahoo quoteSummary 재무 조회 실패 [{}] → v7/quote 폴백 사용", symbol);
                 return fallback;
@@ -612,18 +623,22 @@ public class YahooFinanceService {
      * v7 quote 는 가격/시총/PER/PBR/배당수익률 등 제한된 필드만 제공하지만,
      * AI 프롬프트에는 "재무 데이터 없음"보다 훨씬 유용하고 호출 안정성도 높다.
      */
-    private JsonNode fetchFundamentalsFromQuote(String symbol) {
+    private JsonNode fetchFundamentalsFromQuote(String symbol, boolean useAuth) {
         if (symbol == null || symbol.isBlank()) return null;
-        if (!refreshYahooAuth()) return null;
+        if (useAuth && !refreshYahooAuth()) useAuth = false;
         try {
             String url = "https://query2.finance.yahoo.com/v7/finance/quote?symbols="
                 + URLEncoder.encode(symbol, StandardCharsets.UTF_8)
-                + "&lang=en-US&region=US&crumb="
-                + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8);
+                + "&lang=en-US&region=US";
+            if (useAuth && cachedCrumb != null) {
+                url += "&crumb=" + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8);
+            }
 
             HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
             headers.set("Accept-Language", "en-US,en;q=0.9");
-            headers.set(HttpHeaders.COOKIE, cachedCookieHeader);
+            if (useAuth && cachedCookieHeader != null) {
+                headers.set(HttpHeaders.COOKIE, cachedCookieHeader);
+            }
             ResponseEntity<String> resp = restTemplate.exchange(
                 url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
@@ -640,8 +655,12 @@ public class YahooFinanceService {
             putRaw(price, "marketCap", quote.path("marketCap"));
             putRaw(summaryDetail, "trailingPE", quote.path("trailingPE"));
             putRaw(summaryDetail, "forwardPE", quote.path("forwardPE"));
-            putRaw(summaryDetail, "dividendYield", quote.path("dividendYield"));
+            putRaw(summaryDetail, "dividendYield", firstPresent(quote, "dividendYield", "trailingAnnualDividendYield"));
+            putRaw(summaryDetail, "priceToSalesTrailing12Months", firstPresent(quote, "priceToSalesTrailing12Months", "priceToSales"));
             putRaw(keyStats, "priceToBook", quote.path("priceToBook"));
+            putRaw(keyStats, "enterpriseToEbitda", quote.path("enterpriseToEbitda"));
+            putRaw(keyStats, "shortRatio", quote.path("shortRatio"));
+            putRaw(keyStats, "sharesShort", quote.path("sharesShort"));
             putRaw(financialData, "targetMeanPrice", quote.path("targetMeanPrice"));
 
             if (quote.hasNonNull("recommendationKey")) {
@@ -650,6 +669,13 @@ public class YahooFinanceService {
 
             return hasAnyValue(root) ? root : null;
         } catch (RestClientException | IOException e) {
+            if (useAuth) {
+                JsonNode noAuthFallback = fetchFundamentalsFromQuote(symbol, false);
+                if (noAuthFallback != null) {
+                    log.info("Yahoo v7/quote 인증 폴백 실패 [{}] → 비인증 v7/quote 사용", symbol);
+                    return noAuthFallback;
+                }
+            }
             log.info("Yahoo v7/quote 재무 폴백 조회 실패 [{}]: {}", symbol, e.getMessage());
             if (e instanceof HttpStatusCodeException hsce
                     && hsce.getStatusCode().value() == 401) {
@@ -657,6 +683,15 @@ public class YahooFinanceService {
             }
             return null;
         }
+    }
+
+    private JsonNode firstPresent(JsonNode node, String... fields) {
+        if (node == null || node.isMissingNode() || node.isNull()) return objectMapper.nullNode();
+        for (String field : fields) {
+            JsonNode value = node.path(field);
+            if (!value.isMissingNode() && !value.isNull()) return value;
+        }
+        return objectMapper.nullNode();
     }
 
     private void putRaw(ObjectNode parent, String field, JsonNode source) {

@@ -12,10 +12,15 @@ import org.w3c.dom.NodeList;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
+import java.time.LocalDate;
 import java.time.Year;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipInputStream;
 
 /**
@@ -44,6 +49,12 @@ public class DartFinancialService {
     private volatile Map<String, String> stockToCorp = null;
     private final Object loadLock = new Object();
 
+    private static final Set<String> DISCLOSURE_RISK_KEYWORDS = Set.of(
+            "타법인", "최대주주", "대주주", "담보", "질권", "전환사채", "신주인수권",
+            "유상증자", "감자", "자기주식", "주식등의대량보유", "임원ㆍ주요주주",
+            "횡령", "배임", "불성실", "소송", "상장폐지", "관리종목"
+    );
+
     public DartFinancialService(RestTemplate restTemplate,
                                 ObjectMapper objectMapper,
                                 KrxOpenApiService krxOpenApiService) {
@@ -71,6 +82,52 @@ public class DartFinancialService {
             if (block != null) return block;
         }
         return null;
+    }
+
+    /** 최근 12개월 DART 공시 중 주주가치 훼손·구조 변화 후보를 요약한다. */
+    public String disclosureSummary(String symbol) {
+        if (!enabled()) return null;
+        List<DartDisclosure> disclosures = recentDisclosures(symbol, 20);
+        if (disclosures.isEmpty()) return "(DART 최근 공시: 최근 12개월 조회 결과 없음)";
+
+        List<DartDisclosure> riskItems = disclosures.stream()
+                .filter(this::isRiskDisclosure)
+                .limit(5)
+                .toList();
+
+        StringBuilder sb = new StringBuilder("(출처: DART 전자공시, 최근 12개월 공시 체크)\n");
+        if (riskItems.isEmpty()) {
+            sb.append("주주가치 훼손/구조 변화 후보 공시: 해당 없음\n");
+        } else {
+            sb.append("주주가치 훼손/구조 변화 후보 공시:\n");
+            for (DartDisclosure d : riskItems) {
+                sb.append("- ").append(d.date()).append(" ").append(d.name()).append("\n");
+            }
+        }
+
+        sb.append("최근 공시 표본:\n");
+        disclosures.stream().limit(3).forEach(d ->
+                sb.append("- ").append(d.date()).append(" ").append(d.name()).append("\n"));
+        return sb.toString().strip();
+    }
+
+    /** 포트폴리오 한 줄 요약용 DART 공시 체크. */
+    public String disclosureOneLine(String symbol) {
+        if (!enabled()) return null;
+        List<DartDisclosure> disclosures = recentDisclosures(symbol, 12);
+        if (disclosures.isEmpty()) return null;
+        List<DartDisclosure> riskItems = disclosures.stream()
+                .filter(this::isRiskDisclosure)
+                .limit(2)
+                .toList();
+        if (riskItems.isEmpty()) return "DART 최근 공시 위험 후보 없음";
+        StringBuilder sb = new StringBuilder("DART 공시 위험 후보 ");
+        for (int i = 0; i < riskItems.size(); i++) {
+            DartDisclosure d = riskItems.get(i);
+            if (i > 0) sb.append(" / ");
+            sb.append(d.date()).append(" ").append(d.name());
+        }
+        return sb.toString();
     }
 
     // ── corp_code 매핑 ─────────────────────────────────────────────────────
@@ -167,6 +224,7 @@ public class DartFinancialService {
             Long assets = pick(fs, "자산총계");
             Long liabilities = pick(fs, "부채총계");
             Long equity = pick(fs, "자본총계");
+            Long cfo = pick(fs, "영업활동현금흐름", "영업활동으로 인한 현금흐름", "영업활동 현금흐름", "영업활동으로인한현금흐름");
 
             StringBuilder sb = new StringBuilder();
             line(sb, "매출액", revenue);
@@ -183,6 +241,13 @@ public class DartFinancialService {
             line(sb, "자산총계", assets);
             line(sb, "부채총계", liabilities);
             line(sb, "자본총계", equity);
+            line(sb, "영업활동현금흐름(CFO)", cfo);
+            if (cfo != null && netProfit != null && netProfit > 0) {
+                double quality = (double) cfo / netProfit;
+                sb.append("CFO/Net Income(이익의 질): ").append(String.format(Locale.US, "%.2f배", quality));
+                if (quality < 1.0) sb.append(" (1.0 미만: 이익의 질 검증 필요)");
+                sb.append("\n");
+            }
             if (marketCap > 0) {
                 sb.append("시가총액(KRX): ").append(won(marketCap)).append("\n");
             }
@@ -224,6 +289,48 @@ public class DartFinancialService {
         }
         return null;
     }
+
+    private List<DartDisclosure> recentDisclosures(String symbol, int count) {
+        String code = stockCode(symbol);
+        if (code == null) return List.of();
+        String corp = corpCode(code);
+        if (corp == null) return List.of();
+
+        try {
+            LocalDate end = LocalDate.now();
+            LocalDate start = end.minusMonths(12);
+            String url = "https://opendart.fss.or.kr/api/list.json"
+                    + "?crtfc_key=" + apiKey
+                    + "&corp_code=" + corp
+                    + "&bgn_de=" + start.format(DateTimeFormatter.BASIC_ISO_DATE)
+                    + "&end_de=" + end.format(DateTimeFormatter.BASIC_ISO_DATE)
+                    + "&page_no=1&page_count=" + Math.max(1, Math.min(100, count));
+            String body = restTemplate.getForObject(url, String.class);
+            if (body == null || body.isBlank()) return List.of();
+            JsonNode root = objectMapper.readTree(body);
+            if (!"000".equals(root.path("status").asText())) return List.of();
+
+            List<DartDisclosure> out = new ArrayList<>();
+            for (JsonNode item : root.path("list")) {
+                String name = item.path("report_nm").asText("").trim();
+                String date = item.path("rcept_dt").asText("").trim();
+                String receiptNo = item.path("rcept_no").asText("").trim();
+                if (!name.isBlank()) out.add(new DartDisclosure(date, name, receiptNo));
+                if (out.size() >= count) break;
+            }
+            return out;
+        } catch (Exception e) {
+            log.warn("[DART] 최근 공시 조회 실패 [{}]: {}", symbol, e.getMessage());
+            return List.of();
+        }
+    }
+
+    private boolean isRiskDisclosure(DartDisclosure d) {
+        if (d == null || d.name() == null) return false;
+        return DISCLOSURE_RISK_KEYWORDS.stream().anyMatch(d.name()::contains);
+    }
+
+    private record DartDisclosure(String date, String name, String receiptNo) {}
 
     /** "1,234,567" → long. 음수 괄호 "(1,234)" 처리. 실패 시 Long.MIN_VALUE. */
     private long parseAmount(String s) {

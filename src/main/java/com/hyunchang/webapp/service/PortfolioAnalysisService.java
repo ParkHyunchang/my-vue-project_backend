@@ -390,7 +390,7 @@ public class PortfolioAnalysisService {
     }
 
     /**
-     * 보유 종목 각각에 대해 종목별 뉴스 1~2건씩 병렬 수집.
+     * 보유 종목 각각에 대해 종목별 뉴스 5건까지 병렬 수집.
      * StockSymbolNewsService 가 Google News + Yahoo Finance + AlphaVantage 합산해서 돌려준 결과 중 상위만 채택.
      * 종목별 컨텍스트를 차별화해서 LLM 응답이 "추세 양호" 같은 균일 문구로 수렴하는 것을 방지한다.
      */
@@ -410,8 +410,9 @@ public class PortfolioAnalysisService {
                     List<StockNewsDto> news = stockSymbolNewsService.fetchForSymbol(s.symbol, s.market, s.name, enName);
                     List<String> headlines = new ArrayList<>();
                     for (StockNewsDto n : news) {
-                        if (notBlank(n.getTitle())) headlines.add(n.getTitle().trim());
-                        if (headlines.size() >= 2) break;
+                        String formatted = formatNewsForPrompt(n, 180);
+                        if (notBlank(formatted)) headlines.add(formatted);
+                        if (headlines.size() >= 5) break;
                     }
                     return Map.entry(s.symbol, headlines);
                 } catch (Exception e) {
@@ -436,14 +437,16 @@ public class PortfolioAnalysisService {
         List<String> headlines = new ArrayList<>();
         try {
             for (StockNewsDto n : stockService.getNews("KR", false)) {
-                if (notBlank(n.getTitle())) headlines.add("[KR] " + n.getTitle());
-                if (headlines.size() >= 10) break;
+                String formatted = formatNewsForPrompt(n, 140);
+                if (notBlank(formatted)) headlines.add("[KR] " + formatted);
+                if (headlines.size() >= 12) break;
             }
         } catch (Exception ignore) {}
         try {
             for (StockNewsDto n : stockService.getNews("US", false)) {
-                if (notBlank(n.getTitle())) headlines.add("[US] " + n.getTitle());
-                if (headlines.size() >= 20) break;
+                String formatted = formatNewsForPrompt(n, 140);
+                if (notBlank(formatted)) headlines.add("[US] " + formatted);
+                if (headlines.size() >= 24) break;
             }
         } catch (Exception ignore) {}
         return headlines;
@@ -774,6 +777,23 @@ public class PortfolioAnalysisService {
     private String fmtKRWValue(Double v) {
         if (v == null || v <= 0) return "미입력";
         return String.format(Locale.KOREA, "%,d KRW", Math.round(v));
+    }
+
+    private String formatNewsForPrompt(StockNewsDto n, int descLimit) {
+        if (n == null || !notBlank(n.getTitle())) return "";
+        List<String> meta = new ArrayList<>();
+        if (notBlank(n.getSource())) meta.add("출처: " + n.getSource().trim());
+        if (notBlank(n.getPubDate())) meta.add("날짜: " + n.getPubDate().trim());
+
+        StringBuilder sb = new StringBuilder();
+        if (!meta.isEmpty()) {
+            sb.append("[").append(String.join(", ", meta)).append("] ");
+        }
+        sb.append(n.getTitle().trim());
+        if (notBlank(n.getDescription())) {
+            sb.append(" — 요약: ").append(truncate(n.getDescription().trim(), descLimit));
+        }
+        return sb.toString();
     }
 
     private boolean notBlank(String s) { return s != null && !s.isBlank(); }
