@@ -19,3 +19,10 @@ logging:
   level:
     org.hibernate.SQL: WARN
     org.springframework.web: INFO
+
+# SpringDoc: 운영 환경에서는 문서 생성 자체를 비활성화 (SecurityConfig의 denyAll과 이중 차단)
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false

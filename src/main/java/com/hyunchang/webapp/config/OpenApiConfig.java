@@ -16,7 +16,10 @@ public class OpenApiConfig {
         String schemeName = "bearerAuth";
 
         return new OpenAPI()
-            .info(new Info().title("Todo API").version("v1"))
+            .info(new Info()
+                .title("Personal Project API")
+                .description("my-vue-project 백엔드 REST API")
+                .version("v1"))
             .addSecurityItem(new SecurityRequirement().addList(schemeName))
             .components(new Components().addSecuritySchemes(
                 schemeName,

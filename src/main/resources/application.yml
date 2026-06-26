@@ -44,6 +44,17 @@ logging:
     org.springframework.web.servlet.resource.ResourceHttpRequestHandler: INFO
     org.hibernate.SQL: INFO
 
+# SpringDoc / Swagger UI
+# prod 프로파일에서는 application-prod.yml 에서 enabled: false 로 비활성화됨
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: method
+    tags-sorter: alpha
+    disable-swagger-default-url: true
+
 # JWT Configuration
 # access-expiration: 15분, refresh-expiration: 7일
 # 쿠키 옵션: cookie-secure는 HTTPS 환경에서만 true
