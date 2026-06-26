@@ -60,6 +60,7 @@ public class PortfolioAnalysisService {
     private static final Set<String> ALLOWED_ACTIONS = Set.of("ADD", "TAKE_PROFIT", "HOLD", "CUT_LOSS", "WATCH");
     private static final String ACCOUNT_STOCK = "stock";
     private static final String ACCOUNT_ISA = "isa";
+    private static final String ACCOUNT_ISA_INFINITE = "isa_infinite";
     private static final String ACCOUNT_IRP = "irp";
     private static final String ASSET_CASH = "CASH";
     private static final String ASSET_STOCK = "STOCK";
@@ -215,6 +216,12 @@ public class PortfolioAnalysisService {
                     AiPromptCatalog.PORTFOLIO_ISA_ANALYSIS,
                     str(rawNote)
             );
+            case ACCOUNT_ISA_INFINITE -> new AnalysisAccount(
+                    ACCOUNT_ISA_INFINITE,
+                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "ISA 무한매수법",
+                    AiPromptCatalog.PORTFOLIO_ISA_INFINITE_BUY_ANALYSIS,
+                    str(rawNote)
+            );
             case ACCOUNT_IRP -> new AnalysisAccount(
                     ACCOUNT_IRP,
                     notBlank(str(rawLabel)) ? str(rawLabel).trim() : "퇴직연금 IRP",
@@ -231,7 +238,7 @@ public class PortfolioAnalysisService {
     }
 
     private List<PortfolioHoldingInput> loadHoldings(String userId, AnalysisAccount account) {
-        if (ACCOUNT_ISA.equals(account.type)) {
+        if (ACCOUNT_ISA.equals(account.type) || ACCOUNT_ISA_INFINITE.equals(account.type)) {
             return isaHoldingService.getHoldings(userId).stream()
                     .map(this::fromIsaHolding)
                     .toList();
@@ -547,6 +554,14 @@ public class PortfolioAnalysisService {
     }
 
     private String additionalAccountInstruction(AnalysisAccount account, List<HoldingSnapshot> snapshots) {
+        if (ACCOUNT_ISA_INFINITE.equals(account.type)) {
+            return "추가 출력 지침: 이 보고서는 반드시 순수 마크다운 형식으로 작성하세요. "
+                    + "JSON, XML, 코드블록 등 마크다운 이외의 포맷은 절대 사용하지 마세요. "
+                    + "섹션 제목은 ## 형식으로 직접 작성하고, 내용은 그 아래에 바로 서술하세요. "
+                    + "무한매수법 사이클 진단 전문가 관점을 유지하세요. "
+                    + isaTaxMemo() + "\n"
+                    + accountAllocationMemo(account, snapshots);
+        }
         if (ACCOUNT_ISA.equals(account.type)) {
             return "추가 출력 지침: 이 보고서는 반드시 ISA 계좌 진단으로 작성하세요. "
                     + "국내 ISA 제도와 절세 계좌 운용을 다루는 최고 수준의 전문가 관점으로, 절세 계좌의 중장기 운용·현금성 자산 대기비중·과도한 매매 회전율을 함께 점검하세요. "
