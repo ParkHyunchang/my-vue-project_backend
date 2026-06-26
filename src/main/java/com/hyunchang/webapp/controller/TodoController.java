@@ -1,11 +1,10 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.service.TodoService;
-import com.hyunchang.webapp.service.MenuPermissionService;
-import com.hyunchang.webapp.util.SecurityUtils;
 import org.springframework.data.domain.Page;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -18,19 +17,19 @@ public class TodoController {
     private static final String MENU_PATH = "/todos";
 
     private final TodoService todoService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
 
-    public TodoController(TodoService todoService, MenuPermissionService menuPermissionService) {
+    public TodoController(TodoService todoService, MenuAccessGuard menuAccessGuard) {
         this.todoService = todoService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+        return menuAccessGuard.forbidden();
     }
 
     @GetMapping
@@ -82,7 +81,7 @@ public class TodoController {
     public ResponseEntity<?> delete(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         todoService.delete(id);
-        return ResponseEntity.ok().body("삭제되었습니다.");
+        return ApiResponses.deleted();
     }
 
     @DeleteMapping("/completed")

@@ -1,16 +1,16 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.TravelItinerary;
 import com.hyunchang.webapp.entity.TravelLog;
 import com.hyunchang.webapp.entity.TravelWishlist;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.TravelGeocodeService;
 import com.hyunchang.webapp.service.TravelPlannerService;
 import com.hyunchang.webapp.service.TravelService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,24 +28,24 @@ public class TravelController {
     private final TravelService travelService;
     private final TravelPlannerService travelPlannerService;
     private final TravelGeocodeService travelGeocodeService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
 
     public TravelController(TravelService travelService,
                             TravelPlannerService travelPlannerService,
                             TravelGeocodeService travelGeocodeService,
-                            MenuPermissionService menuPermissionService) {
+                            MenuAccessGuard menuAccessGuard) {
         this.travelService = travelService;
         this.travelPlannerService = travelPlannerService;
         this.travelGeocodeService = travelGeocodeService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+        return menuAccessGuard.forbidden();
     }
 
     // ── 버킷리스트 ─────────────────────────────────────────────────
@@ -93,7 +93,7 @@ public class TravelController {
     public ResponseEntity<?> deleteWishlist(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         travelService.deleteWishlist(SecurityUtils.getCurrentUserId(), id);
-        return ResponseEntity.ok(Map.of("message", "삭제되었습니다."));
+        return ApiResponses.deletedMessage();
     }
 
     // ── 다녀온 곳 ──────────────────────────────────────────────────
@@ -143,7 +143,7 @@ public class TravelController {
     public ResponseEntity<?> deleteVisited(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         travelService.deleteVisited(SecurityUtils.getCurrentUserId(), id);
-        return ResponseEntity.ok(Map.of("message", "삭제되었습니다."));
+        return ApiResponses.deletedMessage();
     }
 
     // ── AI 플래너 ──────────────────────────────────────────────────
@@ -234,7 +234,7 @@ public class TravelController {
     public ResponseEntity<?> deleteItinerary(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         travelService.deleteItinerary(SecurityUtils.getCurrentUserId(), id);
-        return ResponseEntity.ok(Map.of("message", "삭제되었습니다."));
+        return ApiResponses.deletedMessage();
     }
 
     // ── 위치 검색 (지오코딩 프록시) ─────────────────────────────────

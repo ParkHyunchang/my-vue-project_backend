@@ -1,13 +1,13 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.StockHolding;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.StockHoldingService;
 import com.hyunchang.webapp.service.StockService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,23 +22,23 @@ public class StockHoldingController {
     private static final String MENU_PATH = "/portfolio";
 
     private final StockHoldingService stockHoldingService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
     private final StockService stockService;
 
     public StockHoldingController(StockHoldingService stockHoldingService,
-                                  MenuPermissionService menuPermissionService,
+                                  MenuAccessGuard menuAccessGuard,
                                   StockService stockService) {
         this.stockHoldingService = stockHoldingService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
         this.stockService = stockService;
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+        return menuAccessGuard.forbidden();
     }
 
     @Operation(summary = "현재 사용자 보유 종목 전체 조회")
@@ -136,6 +136,6 @@ public class StockHoldingController {
         if (!hasAccess()) return forbidden();
         String userId = SecurityUtils.getCurrentUserId();
         stockHoldingService.deleteHolding(userId, id);
-        return ResponseEntity.ok(Map.of("message", "삭제되었습니다."));
+        return ApiResponses.deletedMessage();
     }
 }

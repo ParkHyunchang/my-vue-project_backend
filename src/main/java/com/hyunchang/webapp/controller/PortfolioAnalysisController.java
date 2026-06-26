@@ -1,9 +1,7 @@
 package com.hyunchang.webapp.controller;
 
-import com.hyunchang.webapp.service.MenuPermissionService;
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.service.PortfolioAnalysisService;
-import com.hyunchang.webapp.util.SecurityUtils;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -19,19 +17,17 @@ public class PortfolioAnalysisController {
     private static final String MENU_PATH = "/stock";
 
     private final PortfolioAnalysisService portfolioAnalysisService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
 
     public PortfolioAnalysisController(PortfolioAnalysisService portfolioAnalysisService,
-                                       MenuPermissionService menuPermissionService) {
+                                       MenuAccessGuard menuAccessGuard) {
         this.portfolioAnalysisService = portfolioAnalysisService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
     }
 
     @PostMapping
     public ResponseEntity<?> analyze(@RequestBody(required = false) Map<String, Object> requestBody) {
-        if (!menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
-        }
+        if (!menuAccessGuard.hasAccess(MENU_PATH)) return menuAccessGuard.forbidden();
         return ResponseEntity.ok(portfolioAnalysisService.analyze(requestBody));
     }
 }

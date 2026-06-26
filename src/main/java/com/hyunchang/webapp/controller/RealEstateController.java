@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.dto.LandDealDto;
 import com.hyunchang.webapp.dto.LandFiltersDto;
 import com.hyunchang.webapp.dto.LandQuoteDto;
@@ -11,14 +12,11 @@ import com.hyunchang.webapp.dto.RealEstateDealDto;
 import com.hyunchang.webapp.dto.RealEstateNewsDto;
 import com.hyunchang.webapp.dto.RegionDto;
 import com.hyunchang.webapp.service.LandPriceService;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.RealEstateAnalysisService;
 import com.hyunchang.webapp.service.RealEstateNewsService;
 import com.hyunchang.webapp.service.RealEstateService;
-import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -41,18 +39,18 @@ public class RealEstateController {
     private final RealEstateNewsService realEstateNewsService;
     private final RealEstateAnalysisService realEstateAnalysisService;
     private final LandPriceService landPriceService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
 
     public RealEstateController(RealEstateService realEstateService,
                                 RealEstateNewsService realEstateNewsService,
                                 RealEstateAnalysisService realEstateAnalysisService,
                                 LandPriceService landPriceService,
-                                MenuPermissionService menuPermissionService) {
+                                MenuAccessGuard menuAccessGuard) {
         this.realEstateService = realEstateService;
         this.realEstateNewsService = realEstateNewsService;
         this.realEstateAnalysisService = realEstateAnalysisService;
         this.landPriceService = landPriceService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
     }
 
     @Operation(summary = "지역(법정동 시군구) 검색 — q 미입력 시 전체 목록")
@@ -178,9 +176,7 @@ public class RealEstateController {
     @Operation(summary = "AI 지역 시황 분석 — 검색한 시군구+거래유형 실거래/뉴스 기반")
     @PostMapping("/analyze")
     public ResponseEntity<?> analyze(@RequestBody AnalyzeRequest request) {
-        if (!menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
-        }
+        if (!menuAccessGuard.hasAccess(MENU_PATH)) return menuAccessGuard.forbidden();
         if (request == null || request.lawdCd() == null || request.lawdCd().isBlank()) {
             return ResponseEntity.badRequest().body("lawdCd 가 필요합니다.");
         }
@@ -197,9 +193,7 @@ public class RealEstateController {
     @Operation(summary = "AI 토지 지역 시황 분석 — 검색한 시군구 토지 실거래 단가/지목/용도지역 기반")
     @PostMapping("/land/analyze")
     public ResponseEntity<?> analyzeLand(@RequestBody LandAnalyzeRequest request) {
-        if (!menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH)) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
-        }
+        if (!menuAccessGuard.hasAccess(MENU_PATH)) return menuAccessGuard.forbidden();
         if (request == null || request.lawdCd() == null || request.lawdCd().isBlank()) {
             return ResponseEntity.badRequest().body("lawdCd 가 필요합니다.");
         }

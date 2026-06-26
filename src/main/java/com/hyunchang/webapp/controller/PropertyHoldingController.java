@@ -1,12 +1,12 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.PropertyHolding;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.PropertyHoldingService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,20 +21,20 @@ public class PropertyHoldingController {
     private static final String MENU_PATH = "/realestate";
 
     private final PropertyHoldingService propertyHoldingService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
 
     public PropertyHoldingController(PropertyHoldingService propertyHoldingService,
-                                     MenuPermissionService menuPermissionService) {
+                                     MenuAccessGuard menuAccessGuard) {
         this.propertyHoldingService = propertyHoldingService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+        return menuAccessGuard.forbidden();
     }
 
     @Operation(summary = "현재 사용자 보유 부동산 전체 조회")
@@ -147,7 +147,7 @@ public class PropertyHoldingController {
         if (!hasAccess()) return forbidden();
         String userId = SecurityUtils.getCurrentUserId();
         propertyHoldingService.deleteHolding(userId, id);
-        return ResponseEntity.ok(Map.of("message", "삭제되었습니다."));
+        return ApiResponses.deletedMessage();
     }
 
     private Long toLong(Object obj) {

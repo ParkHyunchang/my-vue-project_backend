@@ -1,14 +1,14 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.IrpHolding;
 import com.hyunchang.webapp.entity.PortfolioAssetType;
 import com.hyunchang.webapp.service.IrpHoldingService;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.StockService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,23 +23,23 @@ public class IrpHoldingController {
     private static final String MENU_PATH = "/portfolio";
 
     private final IrpHoldingService irpHoldingService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
     private final StockService stockService;
 
     public IrpHoldingController(IrpHoldingService irpHoldingService,
-                                MenuPermissionService menuPermissionService,
+                                MenuAccessGuard menuAccessGuard,
                                 StockService stockService) {
         this.irpHoldingService = irpHoldingService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
         this.stockService = stockService;
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Access denied.");
+        return menuAccessGuard.forbidden();
     }
 
     @Operation(summary = "List IRP holdings")
@@ -120,7 +120,7 @@ public class IrpHoldingController {
     public ResponseEntity<?> deleteHolding(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         irpHoldingService.deleteHolding(SecurityUtils.getCurrentUserId(), id);
-        return ResponseEntity.ok(Map.of("message", "Deleted."));
+        return ApiResponses.deletedMessage();
     }
 
     private PortfolioAssetType resolveAssetType(String raw) {

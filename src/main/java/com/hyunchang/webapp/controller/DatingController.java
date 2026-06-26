@@ -1,13 +1,13 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.Dating;
 import com.hyunchang.webapp.service.DatingService;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.UploadPathUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,14 +25,14 @@ public class DatingController {
     private static final Logger log = LoggerFactory.getLogger(DatingController.class);
     private static final String MENU_PATH = "/dating";
     private final DatingService datingService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
     private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("dating");
     private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif");
     private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
 
-    public DatingController(DatingService datingService, MenuPermissionService menuPermissionService) {
+    public DatingController(DatingService datingService, MenuAccessGuard menuAccessGuard) {
         this.datingService = datingService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
         try {
             Files.createDirectories(UPLOAD_ROOT);
         } catch (IOException e) {
@@ -41,11 +41,11 @@ public class DatingController {
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+        return menuAccessGuard.forbidden();
     }
 
     @GetMapping
@@ -78,7 +78,7 @@ public class DatingController {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
         datingService.delete(id, SecurityUtils.getCurrentUserId(), roleName);
-        return ResponseEntity.ok().body("삭제되었습니다.");
+        return ApiResponses.deleted();
     }
 
     @DeleteMapping("/image")

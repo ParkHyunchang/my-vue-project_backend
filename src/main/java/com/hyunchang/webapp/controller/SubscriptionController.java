@@ -1,10 +1,9 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.common.security.MenuAccessGuard;
+import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.Subscription;
-import com.hyunchang.webapp.service.MenuPermissionService;
 import com.hyunchang.webapp.service.SubscriptionService;
-import com.hyunchang.webapp.util.SecurityUtils;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -16,20 +15,20 @@ public class SubscriptionController {
     private static final String MENU_PATH = "/subscription";
 
     private final SubscriptionService subscriptionService;
-    private final MenuPermissionService menuPermissionService;
+    private final MenuAccessGuard menuAccessGuard;
 
     public SubscriptionController(SubscriptionService subscriptionService,
-                                  MenuPermissionService menuPermissionService) {
+                                  MenuAccessGuard menuAccessGuard) {
         this.subscriptionService = subscriptionService;
-        this.menuPermissionService = menuPermissionService;
+        this.menuAccessGuard = menuAccessGuard;
     }
 
     private boolean hasAccess() {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), MENU_PATH);
+        return menuAccessGuard.hasAccess(MENU_PATH);
     }
 
     private ResponseEntity<?> forbidden() {
-        return ResponseEntity.status(HttpStatus.FORBIDDEN).body("접근 권한이 없습니다.");
+        return menuAccessGuard.forbidden();
     }
 
     @GetMapping
@@ -55,6 +54,6 @@ public class SubscriptionController {
     public ResponseEntity<?> delete(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
         subscriptionService.delete(id);
-        return ResponseEntity.ok().body("삭제되었습니다.");
+        return ApiResponses.deleted();
     }
 }
