@@ -1,15 +1,6 @@
 package com.hyunchang.webapp.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse;
-import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.GradeItem;
-import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Grades;
-import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.HoldingAction;
-import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.KeyHolding;
-import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Recommendation;
-import com.hyunchang.webapp.dto.PortfolioAnalysisResponse.Scenario;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.entity.IrpHolding;
@@ -26,18 +17,13 @@ import org.springframework.stereotype.Service;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 포트폴리오 AI 진단.
@@ -45,9 +31,8 @@ import java.util.regex.Pattern;
  * 흐름:
  *   1. 보유 종목 + 시세 + 평가손익률 조립
  *   2. 보유 종목별 뉴스 + 최근 시장 뉴스 헤드라인 풀 구성
- *   3. 최근 뉴스 기반 추천 종목 2~3개를 AI 가 선정 (보유 종목은 추천 제외)
- *   4. AI provider chain 호출 → JSON 응답 파싱
- *   5. holdings 의 currentPnlPct 는 서버 계산값으로 덮어써서 신뢰도 확보
+ *   3. 재무 데이터(US: Yahoo, KR: OpenDART) 수집
+ *   4. AI provider chain 호출 → 마크다운 리포트 반환
  *
  * 캐싱 없음 — 매번 최신.
  */
@@ -55,9 +40,6 @@ import java.util.regex.Pattern;
 public class PortfolioAnalysisService {
     private static final Logger log = LoggerFactory.getLogger(PortfolioAnalysisService.class);
 
-    private static final Pattern JSON_FENCE = Pattern.compile("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```");
-    private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
-    private static final Set<String> ALLOWED_ACTIONS = Set.of("ADD", "TAKE_PROFIT", "HOLD", "CUT_LOSS", "WATCH");
     private static final String ACCOUNT_STOCK = "stock";
     private static final String ACCOUNT_ISA = "isa";
     private static final String ACCOUNT_ISA_INFINITE = "isa_infinite";
@@ -76,7 +58,6 @@ public class PortfolioAnalysisService {
     private final AiProviderChain aiProviderChain;
     private final AiPromptService aiPromptService;
     private final FinancialDataService financialDataService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public PortfolioAnalysisService(StockHoldingService stockHoldingService,
                                     IsaHoldingService isaHoldingService,
@@ -110,8 +91,6 @@ public class PortfolioAnalysisService {
                     .blocked(false)
                     .summary(account.label + " 보유 자산이 없습니다. 종목이나 현금성 자산을 먼저 추가해 주세요.")
                     .sentiment("중립")
-                    .holdings(List.of())
-                    .recommendations(List.of())
                     .disclaimer("이 분석은 AI가 생성한 정보 정리이며 투자 자문이 아닙니다.")
                     .build();
         }
@@ -295,7 +274,7 @@ public class PortfolioAnalysisService {
 
     private Map<String, ClientHoldingContext> parseClientContext(Map<String, Object> requestBody) {
         Object rawHoldings = requestBody == null ? null : requestBody.get("holdings");
-        if (!(rawHoldings instanceof List<?> list) && requestBody != null && requestBody.get("portfolio") instanceof Map<?, ?> portfolio) {
+        if (!(rawHoldings instanceof List<?>) && requestBody != null && requestBody.get("portfolio") instanceof Map<?, ?> portfolio) {
             rawHoldings = portfolio.get("holdings");
         }
         if (!(rawHoldings instanceof List<?> list)) {
@@ -457,14 +436,6 @@ public class PortfolioAnalysisService {
             }
         } catch (Exception ignore) {}
         return headlines;
-    }
-
-    private HoldingSnapshot findSnapshot(List<HoldingSnapshot> snapshots, String symbol) {
-        if (symbol == null) return null;
-        for (HoldingSnapshot s : snapshots) {
-            if (symbol.equalsIgnoreCase(s.symbol)) return s;
-        }
-        return null;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -642,133 +613,6 @@ public class PortfolioAnalysisService {
         }
 
         return base;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // 응답 파싱
-
-    private PortfolioAnalysisResponse parseResult(String text) {
-        String json = extractJson(text);
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            PortfolioAnalysisResponse out = PortfolioAnalysisResponse.builder()
-                    .summary(text(root, "summary", ""))
-                    .sentiment(text(root, "sentiment", "중립"))
-                    .macroFit(text(root, "macroFit", null))
-                    .grades(parseGrades(root.path("grades")))
-                    .coreHolding(parseKeyHolding(root.path("coreHolding")))
-                    .weakestLink(parseKeyHolding(root.path("weakestLink")))
-                    .priorityActions(stringList(root.path("priorityActions")))
-                    .bullScenario(parseScenario(root.path("bullScenario")))
-                    .bearScenario(parseScenario(root.path("bearScenario")))
-                    .selfRebuttal(text(root, "selfRebuttal", null))
-                    .disclaimer(text(root, "disclaimer", null))
-                    .build();
-
-            List<HoldingAction> ha = new ArrayList<>();
-            for (JsonNode n : root.path("holdings")) {
-                ha.add(HoldingAction.builder()
-                        .symbol(text(n, "symbol", ""))
-                        .name(text(n, "name", ""))
-                        .market(text(n, "market", ""))
-                        .action(text(n, "action", "HOLD"))
-                        .reason(text(n, "reason", ""))
-                        .newsHint(text(n, "newsHint", ""))
-                        .build());
-            }
-            out.setHoldings(ha);
-
-            List<Recommendation> recs = new ArrayList<>();
-            for (JsonNode n : root.path("recommendations")) {
-                recs.add(Recommendation.builder()
-                        .source(text(n, "source", "NEWS"))
-                        .symbol(text(n, "symbol", ""))
-                        .name(text(n, "name", ""))
-                        .market(text(n, "market", ""))
-                        .newsBasis(text(n, "newsBasis", ""))
-                        .reason(text(n, "reason", ""))
-                        .risks(text(n, "risks", ""))
-                        .fitForPortfolio(text(n, "fitForPortfolio", ""))
-                        .build());
-                if (recs.size() >= 3) break;
-            }
-            out.setRecommendations(recs);
-            return out;
-        } catch (Exception e) {
-            log.warn("[Portfolio/Analysis] JSON 파싱 실패: {} (text head: {})",
-                    e.getMessage(), truncate(text, 200));
-            return PortfolioAnalysisResponse.builder()
-                    .summary(truncate(text, 200))
-                    .sentiment("중립")
-                    .holdings(List.of())
-                    .recommendations(List.of())
-                    .build();
-        }
-    }
-
-    private String extractJson(String text) {
-        if (text == null) return "{}";
-        String trimmed = text.trim();
-        Matcher m = JSON_FENCE.matcher(trimmed);
-        if (m.find()) return m.group(1);
-        Matcher m2 = FIRST_OBJECT.matcher(trimmed);
-        if (m2.find()) return m2.group();
-        return trimmed;
-    }
-
-    private String text(JsonNode n, String field, String fallback) {
-        JsonNode v = n.path(field);
-        return v.isMissingNode() || v.isNull() ? fallback : v.asText(fallback);
-    }
-
-    private Grades parseGrades(JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) return null;
-        return Grades.builder()
-                .diversification(parseGradeItem(node.path("diversification")))
-                .risk(parseGradeItem(node.path("risk")))
-                .growth(parseGradeItem(node.path("growth")))
-                .build();
-    }
-
-    private GradeItem parseGradeItem(JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) return null;
-        return GradeItem.builder()
-                .grade(text(node, "grade", ""))
-                .comment(text(node, "comment", ""))
-                .build();
-    }
-
-    private KeyHolding parseKeyHolding(JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) return null;
-        String sym = text(node, "symbol", "");
-        String name = text(node, "name", "");
-        String reason = text(node, "reason", "");
-        if ((sym == null || sym.isBlank()) && (name == null || name.isBlank())
-                && (reason == null || reason.isBlank())) {
-            return null;
-        }
-        return KeyHolding.builder().symbol(sym).name(name).reason(reason).build();
-    }
-
-    private Scenario parseScenario(JsonNode node) {
-        if (node == null || node.isMissingNode() || node.isNull()) return null;
-        String trigger = text(node, "trigger", "");
-        String outlook = text(node, "outlook", "");
-        if ((trigger == null || trigger.isBlank()) && (outlook == null || outlook.isBlank())) {
-            return null;
-        }
-        return Scenario.builder().trigger(trigger).outlook(outlook).build();
-    }
-
-    @SuppressWarnings("unused") // 추후 응답 본문에 List<String> 직접 채우는 경로에서 사용
-    private List<String> stringList(JsonNode arr) {
-        if (arr == null || !arr.isArray()) return List.of();
-        try { return objectMapper.convertValue(arr, new TypeReference<>() {}); }
-        catch (Exception e) {
-            List<String> out = new ArrayList<>();
-            arr.forEach(x -> out.add(x.asText()));
-            return Collections.unmodifiableList(out);
-        }
     }
 
     // ─────────────────────────────────────────────────────────────────────

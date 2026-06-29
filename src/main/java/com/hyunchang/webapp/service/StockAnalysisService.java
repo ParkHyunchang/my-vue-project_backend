@@ -1,10 +1,6 @@
 package com.hyunchang.webapp.service;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockAnalysisResponse;
-import com.hyunchang.webapp.dto.StockAnalysisResult;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
@@ -16,23 +12,19 @@ import org.springframework.stereotype.Service;
 
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * AI 종목 분석 오케스트레이션.
  *
  * 흐름:
- *   1. 종목명·시세·시장 뉴스를 모아서
- *   2. 프롬프트 조립 (한국어, JSON 응답 강제)
- *   3. AiProviderChain 으로 호출 (Gemini → Groq → Cloudflare)
- *   4. JSON 파싱 (모델별로 응답이 markdown 코드블록에 감싸여 올 수 있어 정리)
- *   5. 결과 + 참고 뉴스 + provider 메타데이터 반환
+ *   1. 종목명·시세·재무 데이터·뉴스 수집
+ *   2. 프롬프트 조립
+ *   3. AiProviderChain 호출 (Gemini → Groq → Cloudflare)
+ *   4. 마크다운 리포트 + 참고 뉴스 반환
  *
  * 캐싱 없음 — 누를 때마다 최신 데이터로 새 분석.
  */
@@ -40,16 +32,11 @@ import java.util.regex.Pattern;
 public class StockAnalysisService {
     private static final Logger log = LoggerFactory.getLogger(StockAnalysisService.class);
 
-    // Markdown 코드블록 안에 JSON 이 감싸여 오는 경우 (Cloudflare 등) 추출용
-    private static final Pattern JSON_FENCE = Pattern.compile("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```");
-    private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
-
     private final StockService stockService;
     private final StockSymbolNewsService stockSymbolNewsService;
     private final AiProviderChain aiProviderChain;
     private final AiPromptService aiPromptService;
     private final FinancialDataService financialDataService;
-    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public StockAnalysisService(StockService stockService,
                                 StockSymbolNewsService stockSymbolNewsService,
@@ -312,64 +299,6 @@ public class StockAnalysisService {
     }
 
     private boolean notBlank(String s) { return s != null && !s.isBlank(); }
-
-    // ─────────────────────────────────────────────────────────────────────
-    // JSON 파싱 (모델별 응답 차이 흡수)
-
-    private StockAnalysisResult parseResult(String text) {
-        String json = extractJson(text);
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            return StockAnalysisResult.builder()
-                    .sentiment(text(root, "sentiment", "중립"))
-                    .headline(text(root, "headline", ""))
-                    .keywords(stringList(root.path("keywords")))
-                    .positives(stringList(root.path("positives")))
-                    .risks(stringList(root.path("risks")))
-                    .comment(text(root, "comment", ""))
-                    .build();
-        } catch (Exception e) {
-            log.warn("[AI/Analysis] JSON 파싱 실패: {} (text head: {})",
-                    e.getMessage(), truncate(text, 200));
-            // 파싱 실패해도 raw 텍스트를 코멘트로 노출해 사용자가 볼 수 있게
-            return StockAnalysisResult.builder()
-                    .sentiment("중립")
-                    .headline("")
-                    .keywords(List.of())
-                    .positives(List.of())
-                    .risks(List.of())
-                    .comment(truncate(text, 500))
-                    .build();
-        }
-    }
-
-    private String extractJson(String text) {
-        if (text == null) return "{}";
-        String trimmed = text.trim();
-        // 1순위: ```json ... ``` 코드블록 안
-        Matcher m = JSON_FENCE.matcher(trimmed);
-        if (m.find()) return m.group(1);
-        // 2순위: 첫 { ... } 블록
-        Matcher m2 = FIRST_OBJECT.matcher(trimmed);
-        if (m2.find()) return m2.group();
-        return trimmed;
-    }
-
-    private String text(JsonNode node, String field, String fallback) {
-        JsonNode v = node.path(field);
-        return v.isMissingNode() || v.isNull() ? fallback : v.asText(fallback);
-    }
-
-    private List<String> stringList(JsonNode arr) {
-        if (arr == null || !arr.isArray()) return List.of();
-        try {
-            return objectMapper.convertValue(arr, new TypeReference<>() {});
-        } catch (Exception e) {
-            List<String> out = new ArrayList<>();
-            arr.forEach(n -> out.add(n.asText()));
-            return Collections.unmodifiableList(out);
-        }
-    }
 
     // ─────────────────────────────────────────────────────────────────────
     // 포맷터/유틸
