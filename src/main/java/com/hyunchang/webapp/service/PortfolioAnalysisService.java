@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
+import com.hyunchang.webapp.entity.GeneralHolding;
 import com.hyunchang.webapp.entity.IrpHolding;
 import com.hyunchang.webapp.entity.IsaHolding;
 import com.hyunchang.webapp.entity.StockHolding;
@@ -42,7 +43,7 @@ public class PortfolioAnalysisService {
 
     private static final String ACCOUNT_STOCK = "stock";
     private static final String ACCOUNT_ISA = "isa";
-    private static final String ACCOUNT_ISA_INFINITE = "isa_infinite";
+    private static final String ACCOUNT_GENERAL = "general";
     private static final String ACCOUNT_IRP = "irp";
     private static final String ASSET_CASH = "CASH";
     private static final String ASSET_STOCK = "STOCK";
@@ -52,6 +53,7 @@ public class PortfolioAnalysisService {
 
     private final StockHoldingService stockHoldingService;
     private final IsaHoldingService isaHoldingService;
+    private final GeneralHoldingService generalHoldingService;
     private final IrpHoldingService irpHoldingService;
     private final StockService stockService;
     private final StockSymbolNewsService stockSymbolNewsService;
@@ -61,6 +63,7 @@ public class PortfolioAnalysisService {
 
     public PortfolioAnalysisService(StockHoldingService stockHoldingService,
                                     IsaHoldingService isaHoldingService,
+                                    GeneralHoldingService generalHoldingService,
                                     IrpHoldingService irpHoldingService,
                                     StockService stockService,
                                     StockSymbolNewsService stockSymbolNewsService,
@@ -69,6 +72,7 @@ public class PortfolioAnalysisService {
                                     FinancialDataService financialDataService) {
         this.stockHoldingService = stockHoldingService;
         this.isaHoldingService = isaHoldingService;
+        this.generalHoldingService = generalHoldingService;
         this.irpHoldingService = irpHoldingService;
         this.stockService = stockService;
         this.stockSymbolNewsService = stockSymbolNewsService;
@@ -203,10 +207,10 @@ public class PortfolioAnalysisService {
                     AiPromptCatalog.PORTFOLIO_ISA_ANALYSIS,
                     str(rawNote)
             );
-            case ACCOUNT_ISA_INFINITE -> new AnalysisAccount(
-                    ACCOUNT_ISA_INFINITE,
-                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "ISA 무한매수법",
-                    AiPromptCatalog.PORTFOLIO_ISA_INFINITE_BUY_ANALYSIS,
+            case ACCOUNT_GENERAL -> new AnalysisAccount(
+                    ACCOUNT_GENERAL,
+                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "종합계좌",
+                    AiPromptCatalog.PORTFOLIO_GENERAL_ANALYSIS,
                     str(rawNote)
             );
             case ACCOUNT_IRP -> new AnalysisAccount(
@@ -225,9 +229,14 @@ public class PortfolioAnalysisService {
     }
 
     private List<PortfolioHoldingInput> loadHoldings(String userId, AnalysisAccount account) {
-        if (ACCOUNT_ISA.equals(account.type) || ACCOUNT_ISA_INFINITE.equals(account.type)) {
+        if (ACCOUNT_ISA.equals(account.type)) {
             return isaHoldingService.getHoldings(userId).stream()
                     .map(this::fromIsaHolding)
+                    .toList();
+        }
+        if (ACCOUNT_GENERAL.equals(account.type)) {
+            return generalHoldingService.getHoldings(userId).stream()
+                    .map(this::fromGeneralHolding)
                     .toList();
         }
         if (ACCOUNT_IRP.equals(account.type)) {
@@ -265,6 +274,18 @@ public class PortfolioAnalysisService {
     }
 
     private PortfolioHoldingInput fromIrpHolding(IrpHolding h) {
+        PortfolioHoldingInput out = new PortfolioHoldingInput();
+        out.symbol = h.getSymbol();
+        out.name = h.getName();
+        out.market = h.getMarket();
+        out.quantity = h.getQuantity();
+        out.avgPrice = h.getAvgPrice();
+        out.core = h.isCore();
+        out.assetType = normalizeAssetType(h.getAssetType());
+        return out;
+    }
+
+    private PortfolioHoldingInput fromGeneralHolding(GeneralHolding h) {
         PortfolioHoldingInput out = new PortfolioHoldingInput();
         out.symbol = h.getSymbol();
         out.name = h.getName();
@@ -537,34 +558,35 @@ public class PortfolioAnalysisService {
 
     private String defaultAccountNote(String accountType) {
         return switch (accountType) {
-            case ACCOUNT_ISA -> "ISA 계좌입니다. 2026-06-24 신규 개설한 서민형 ISA라는 기본정보는 내부 판단 기준으로만 사용하고, 세제·의무기간 판단에 직접 필요할 때만 언급합니다.";
-            case ACCOUNT_IRP -> "퇴직연금 IRP 계좌입니다. 위험자산 70% 한도와 안전자산 약 30% 필요 비중은 내부 판단 기준으로만 사용하고, 리밸런싱 판단에 직접 필요할 때만 언급합니다.";
-            default -> "일반 주식 포트폴리오입니다. 성장성, 리스크, 분산, 비중 조정을 중심으로 분석합니다.";
+            case ACCOUNT_ISA -> "신한투자증권 ISA 계좌입니다. 중장기 적립식 운용 전략으로 계속 모아가는 계좌입니다. 2026-06-24 신규 개설한 서민형 ISA 기본정보는 내부 판단 기준으로만 사용하고, 세제·의무기간 판단에 직접 필요할 때만 언급합니다.";
+            case ACCOUNT_GENERAL -> "신한투자증권 종합계좌입니다. 1종목당 200~300만원 소액으로 단기 스윙 매매를 하는 계좌입니다. 장기 보유 원칙 없이 모멘텀·뉴스 기반으로 익절·손절을 적극 활용합니다.";
+            case ACCOUNT_IRP -> "신한은행 IRP 계좌입니다. 은퇴자산 장기 적립 계좌로 계속 모아가는 전략입니다. 위험자산 70% 한도와 안전자산 약 30% 필요 비중은 내부 판단 기준으로만 사용하고, 리밸런싱 판단에 직접 필요할 때만 언급합니다.";
+            default -> "삼성증권 주식계좌입니다. 국내·미국 주식을 장기 보유하는 계좌입니다. 성장성, 리스크, 분산, 비중 조정을 중심으로 분석합니다.";
         };
     }
 
     private String additionalAccountInstruction(AnalysisAccount account, List<HoldingSnapshot> snapshots) {
-        if (ACCOUNT_ISA_INFINITE.equals(account.type)) {
-            return "추가 출력 지침: 이 보고서는 반드시 순수 마크다운 형식으로 작성하세요. "
-                    + "JSON, XML, 코드블록 등 마크다운 이외의 포맷은 절대 사용하지 마세요. "
-                    + "섹션 제목은 ## 형식으로 직접 작성하고, 내용은 그 아래에 바로 서술하세요. "
-                    + "무한매수법 사이클 진단 전문가 관점을 유지하세요. "
-                    + isaTaxMemo() + "\n"
-                    + accountAllocationMemo(account, snapshots);
-        }
         if (ACCOUNT_ISA.equals(account.type)) {
-            return "추가 출력 지침: 이 보고서는 반드시 ISA 계좌 진단으로 작성하세요. "
-                    + "국내 ISA 제도와 절세 계좌 운용을 다루는 최고 수준의 전문가 관점으로, 절세 계좌의 중장기 운용·현금성 자산 대기비중·과도한 매매 회전율을 함께 점검하세요. "
-                    + "CASH 자산은 손익률이 아니라 리밸런싱 재원과 방어적 완충 역할로 해석하세요. "
-                    + "ISA 개설일·의무가입기간·서민형 비과세 한도는 분석의 기본 전제로만 깔아두고, 매도/리밸런싱/세제 유의점 판단에 직접 필요할 때만 짧게 언급하세요. "
+            return "추가 출력 지침: 이 보고서는 반드시 신한투자증권 ISA 계좌의 중장기 적립식 진단으로 작성하세요. "
+                    + "절세 계좌 운용을 다루는 최고 수준의 전문가 관점으로, 중장기 적립·분할매수·세제 효율을 최우선으로 점검하세요. "
+                    + "단기 매매보다 정기 적립과 장기 보유를 원칙으로 조언하세요. "
+                    + "CASH 자산은 손익률이 아니라 추가 적립 대기 자금과 리밸런싱 재원으로 해석하세요. "
+                    + "ISA 개설일·의무가입기간·서민형 비과세 한도는 기본 전제로만 깔아두고, 매도/세제 유의점 판단에 직접 필요할 때만 짧게 언급하세요. "
                     + "필요하지 않으면 ISA 기본정보를 별도 문단으로 반복하지 마세요. "
-                    + "보고서 마지막 실전 섹션에는 ISA에 추가매수할 만한 후보와 손절/축소 검토 후보를 구분해 제시하세요. "
                     + "근거가 부족하면 억지로 채우지 말고 '해당 없음'이라고 쓰세요.\n"
                     + isaTaxMemo() + "\n"
                     + accountAllocationMemo(account, snapshots);
         }
+        if (ACCOUNT_GENERAL.equals(account.type)) {
+            return "추가 출력 지침: 이 보고서는 반드시 신한투자증권 종합계좌의 단기매매 진단으로 작성하세요. "
+                    + "장기 보유 원칙 없이, 뉴스 모멘텀·일변동률·평가손익률을 기준으로 익절·부분익절·손절·관망을 적극 권고하세요. "
+                    + "'장기 보유 시 회복 가능'이라는 논리로 손절을 미루지 마세요. "
+                    + "각 종목의 구체적인 손절가와 익절가 수준(평단 대비 %)을 반드시 제시하세요. "
+                    + "신규 매수 후보는 시장 뉴스에서 강한 단기 모멘텀이 보일 때만 제시하고, 근거가 없으면 '해당 없음'으로 쓰세요.\n"
+                    + accountAllocationMemo(account, snapshots);
+        }
         if (ACCOUNT_IRP.equals(account.type)) {
-            return "추가 출력 지침: 이 보고서는 반드시 퇴직연금 IRP 계좌 진단으로 작성하세요. "
+            return "추가 출력 지침: 이 보고서는 반드시 신한은행 IRP 퇴직연금 계좌 진단으로 작성하세요. "
                     + "퇴직연금 제도와 연금자산 배분을 관리하는 최고 수준의 전문가 관점으로, 은퇴자산의 장기 안정성·분산·변동성 방어·현금성 자산 비중을 최우선으로 평가하세요. "
                     + "CASH 자산은 손익률이 아니라 안전자산/대기자금/리밸런싱 완충 역할로 해석하세요. "
                     + "위험자산 70% 한도와 안전자산 약 30% 기준은 기본 전제로만 깔아두고, 추가매수 가능 여부나 리밸런싱 우선순위에 직접 영향을 줄 때만 짧게 언급하세요. "
@@ -573,8 +595,11 @@ public class PortfolioAnalysisService {
                     + "IRP 한도상 추가매수가 어려우면 그 후보는 관망 또는 대기 후보로 분류하고, 근거가 부족하면 '해당 없음'이라고 쓰세요.\n"
                     + accountAllocationMemo(account, snapshots);
         }
-        return "추가 출력 지침: 코어/위성, core/satellite, 코어 종목, 위성 종목이라는 표현과 기준은 사용하지 마세요. "
-                + "모든 판단은 현재 비중, 평가손익, 섹터/국가 집중도, 뉴스, 재무 데이터만 기준으로 설명하세요.";
+        // ACCOUNT_STOCK (삼성증권 주식계좌 — 장기 코어/위성 전략 그대로 활용)
+        return "추가 출력 지침: 이 보고서는 삼성증권 주식계좌(국내·미국 장기 투자) 진단입니다. "
+                + "코어 종목은 장기 적립 관점으로, 위성 종목은 단기 매매 관점으로 구분해 분석하세요. "
+                + "위 투자자 운용 기준(코어/위성 태그)에 따라 종목별 액션을 판단하세요.\n"
+                + accountAllocationMemo(account, snapshots);
     }
 
     private String isaTaxMemo() {

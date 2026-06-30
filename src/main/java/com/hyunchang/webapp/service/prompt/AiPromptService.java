@@ -79,14 +79,13 @@ public class AiPromptService {
 
     // ── 시드(앱 시작 시) ─────────────────────────────────────────────────────
 
-    /** 카탈로그 프롬프트 중 DB에 행이 없는 것을 기본 지침으로 시드한다(앱 시작 시 1회). */
+    /** 카탈로그 프롬프트 중 DB에 행이 없는 것을 빈 지침으로 시드한다(앱 시작 시 1회). */
     @Transactional
     public void seedDefaults() {
         int created = 0;
         for (PromptDefinition def : AiPromptCatalog.all()) {
             if (repository.existsByPromptKey(def.getKey())) continue;
-            AiPromptOverride row = new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system");
-            repository.save(row);
+            repository.save(new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system"));
             created++;
         }
         if (created > 0) {
