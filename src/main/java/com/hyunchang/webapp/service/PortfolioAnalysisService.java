@@ -86,6 +86,14 @@ public class PortfolioAnalysisService {
         AnalysisAccount account = parseAnalysisAccount(requestBody);
         List<PortfolioHoldingInput> holdings = loadHoldings(userId, account);
 
+        // 마켓 필터 적용 (프론트 선택에 따라 KR/US만 진단)
+        String marketFilter = parseMarketFilter(requestBody);
+        if ("KR".equals(marketFilter)) {
+            holdings = holdings.stream().filter(h -> "KR".equals(h.market)).toList();
+        } else if ("US".equals(marketFilter)) {
+            holdings = holdings.stream().filter(h -> "US".equals(h.market)).toList();
+        }
+
         if (holdings.isEmpty()) {
             return PortfolioAnalysisResponse.builder()
                     .blocked(false)
@@ -296,6 +304,17 @@ public class PortfolioAnalysisService {
             out.put(symbol.toUpperCase(Locale.ROOT), c);
         }
         return out;
+    }
+
+    private String parseMarketFilter(Map<String, Object> requestBody) {
+        Object raw = requestBody == null ? null : requestBody.get("marketFilter");
+        if (raw == null && requestBody != null && requestBody.get("portfolio") instanceof Map<?, ?> p) {
+            raw = p.get("marketFilter");
+        }
+        String val = str(raw);
+        if ("KR".equalsIgnoreCase(val)) return "KR";
+        if ("US".equalsIgnoreCase(val)) return "US";
+        return null;
     }
 
     private List<HoldingSnapshot> buildSnapshots(List<PortfolioHoldingInput> holdings,
