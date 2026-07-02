@@ -51,10 +51,10 @@ public class CloudflareProvider implements AiProvider {
     }
 
     @Override
-    public AiProviderResult generate(String prompt) {
+    public AiProviderResult generate(String prompt, boolean expectJson) {
         Map<String, Object> body = Map.of(
                 "messages", List.of(
-                        Map.of("role", "system", "content", JSON_SYSTEM_MESSAGE),
+                        Map.of("role", "system", "content", expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
                         Map.of("role", "user", "content", prompt)
                 ),
                 "temperature", 0.4

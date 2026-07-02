@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -39,16 +40,17 @@ public class GroqProvider implements AiProvider {
     @Override public boolean isEnabled() { return apiKey != null && !apiKey.isBlank(); }
 
     @Override
-    public AiProviderResult generate(String prompt) {
-        Map<String, Object> body = Map.of(
-                "model", MODEL,
-                "messages", List.of(
-                        Map.of("role", "system", "content", JSON_SYSTEM_MESSAGE),
-                        Map.of("role", "user", "content", prompt)
-                ),
-                "response_format", Map.of("type", "json_object"),
-                "temperature", 0.4
-        );
+    public AiProviderResult generate(String prompt, boolean expectJson) {
+        // expectJson=false(자유리포트 마크다운) 인 경우 API 레벨 JSON 강제를 걸지 않는다 —
+        // 걸려 있으면 모델이 마크다운 대신 JSON 객체로 응답해 프론트 카드 UI가 깨진다.
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", MODEL);
+        body.put("messages", List.of(
+                Map.of("role", "system", "content", expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
+                Map.of("role", "user", "content", prompt)
+        ));
+        if (expectJson) body.put("response_format", Map.of("type", "json_object"));
+        body.put("temperature", 0.4);
 
         try {
             String response = restClient.post()

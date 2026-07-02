@@ -91,8 +91,8 @@ public class StockAnalysisService {
         // 2. 프롬프트
         String prompt = buildPrompt(name, symbol, mkt, price, relatedNews, financials);
 
-        // 3. chain 호출
-        AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt);
+        // 3. chain 호출 (자유리포트 마크다운 — API 레벨 JSON 강제 없이 요청)
+        AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt, false);
 
         if (!chainResult.success()) {
             return StockAnalysisResponse.builder()

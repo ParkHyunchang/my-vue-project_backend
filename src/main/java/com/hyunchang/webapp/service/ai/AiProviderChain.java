@@ -42,7 +42,16 @@ public class AiProviderChain {
         this.rateLimitTracker = rateLimitTracker;
     }
 
+    /** 기본값(expectJson=true) — 여행/부동산 등 구조화 JSON 응답이 필요한 기존 호출부 호환용. */
     public ChainResult analyze(String prompt) {
+        return analyze(prompt, true);
+    }
+
+    /**
+     * expectJson=false 면 API 레벨 JSON 강제 없이 순수 텍스트/마크다운 응답을 요청한다
+     * (주식·포트폴리오 자유리포트 — JSON 강제가 걸려 있으면 모델이 마크다운 대신 JSON 객체로 응답한다).
+     */
+    public ChainResult analyze(String prompt, boolean expectJson) {
         for (AiProvider p : providers) {
             if (!p.isEnabled()) {
                 log.debug("[AI/Chain] {} skip (disabled)", p.getName());
@@ -55,7 +64,7 @@ public class AiProviderChain {
             }
 
             log.info("[AI/Chain] {} 호출 시도", p.getName());
-            AiProviderResult r = p.generate(prompt);
+            AiProviderResult r = p.generate(prompt, expectJson);
             if (r.success()) {
                 log.info("[AI/Chain] {} 응답 성공 ({}자)", p.getName(), r.text().length());
                 return new ChainResult(true, p.getName(), p.getModel(), r.text(), null, currentStatus());

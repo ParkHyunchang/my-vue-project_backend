@@ -137,9 +137,9 @@ public class PortfolioAnalysisService {
             financials = "(재무 데이터 미수집)";
         }
 
-        // 4. 프롬프트 + chain 호출
+        // 4. 프롬프트 + chain 호출 (자유리포트 마크다운 — API 레벨 JSON 강제 없이 요청)
         String prompt = buildPrompt(account, snapshots, perSymbolNews, marketHeadlines, heldLabels, financials);
-        AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt);
+        AiProviderChain.ChainResult chainResult = aiProviderChain.analyze(prompt, false);
 
         int perSymbolTotal = perSymbolNews.values().stream().mapToInt(List::size).sum();
         long weightCount = snapshots.stream().filter(s -> s.weightPct != null).count();

@@ -11,6 +11,7 @@ import org.springframework.web.client.RestClientResponseException;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -41,23 +42,26 @@ public class GeminiProvider implements AiProvider {
     @Override public boolean isEnabled() { return apiKey != null && !apiKey.isBlank(); }
 
     @Override
-    public AiProviderResult generate(String prompt) {
+    public AiProviderResult generate(String prompt, boolean expectJson) {
+        Map<String, Object> generationConfig = new LinkedHashMap<>();
+        // expectJson=false(자유리포트 마크다운) 인 경우 API 레벨 JSON 강제를 걸지 않는다 —
+        // 걸려 있으면 모델이 마크다운 대신 JSON 객체로 응답해 프론트 카드 UI가 깨진다.
+        if (expectJson) generationConfig.put("responseMimeType", "application/json");
+        generationConfig.put("temperature", 0.4);
+        // 2.5 Flash 의 thinking 모드 — dynamic(-1)은 12~17초로 너무 느려서 제한.
+        // 256: 4~6초 (살짝 떨어지지만 빠름), 512: 6~9초 (절충), -1: dynamic(원본).
+        // 포트폴리오 진단 같은 큰 컨텍스트에서 응답 시간을 더 줄이려고 256으로 축소.
+        // ※ dynamic thinking 모드로 되돌리려면 아래 한 줄만 주석 처리하면 된다.
+        generationConfig.put("thinkingConfig", Map.of("thinkingBudget", 256));
+
         Map<String, Object> body = Map.of(
                 "systemInstruction", Map.of(
-                        "parts", List.of(Map.of("text", JSON_SYSTEM_MESSAGE))
+                        "parts", List.of(Map.of("text", expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE))
                 ),
                 "contents", List.of(Map.of(
                         "parts", List.of(Map.of("text", prompt))
                 )),
-                "generationConfig", Map.of(
-                        "responseMimeType", "application/json",
-                        "temperature", 0.4,
-                        // 2.5 Flash 의 thinking 모드 — dynamic(-1)은 12~17초로 너무 느려서 제한.
-                        // 256: 4~6초 (살짝 떨어지지만 빠름), 512: 6~9초 (절충), -1: dynamic(원본).
-                        // 포트폴리오 진단 같은 큰 컨텍스트에서 응답 시간을 더 줄이려고 256으로 축소.
-                        // ※ dynamic thinking 모드로 되돌리려면 아래 한 줄만 주석 처리하면 된다.
-                        "thinkingConfig", Map.of("thinkingBudget", 256)
-                )
+                "generationConfig", generationConfig
         );
 
         try {
