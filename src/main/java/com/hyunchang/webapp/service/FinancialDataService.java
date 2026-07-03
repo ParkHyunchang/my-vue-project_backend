@@ -1,12 +1,17 @@
 package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * AI 분석 프롬프트에 주입할 '재무 데이터' 블록을 만든다.
@@ -19,12 +24,22 @@ public class FinancialDataService {
 
     private static final Logger log = LoggerFactory.getLogger(FinancialDataService.class);
 
+    // 보유 종목 재무 요약 병렬 수집 전용 풀 (외부 API 왕복이 병목이라 I/O 병렬화)
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(6);
+    // 재무 요약 수집 전체 시간 예산 — 초과분은 "재무 데이터 없음"으로 분석 계속
+    private static final long HOLDINGS_SUMMARY_BUDGET_MS = 20_000L;
+
     private final YahooFinanceService yahoo;
     private final DartFinancialService dart;
 
     public FinancialDataService(YahooFinanceService yahoo, DartFinancialService dart) {
         this.yahoo = yahoo;
         this.dart = dart;
+    }
+
+    @PreDestroy
+    void shutdownPool() {
+        POOL.shutdown();
     }
 
     /** 단일 종목 재무 요약 (프롬프트 {{재무데이터}} 용). */
@@ -48,21 +63,40 @@ public class FinancialDataService {
         }
     }
 
-    /** 보유 종목들의 재무 한 줄 요약 묶음 (포트폴리오 {{재무데이터}} 용). */
+    /**
+     * 보유 종목들의 재무 한 줄 요약 묶음 (포트폴리오 {{재무데이터}} 용).
+     * 종목당 외부 API 왕복이 있어 순차 조회 시 종합(4계좌) 분석이 프록시 타임아웃을 넘길 수 있으므로
+     * 전용 풀에서 병렬 수집하고, 전체 시간 예산 초과분은 "재무 데이터 없음"으로 처리한다.
+     */
     public String holdingsSummary(List<Holding> holdings) {
         if (holdings == null || holdings.isEmpty()) {
             return "(보유 종목 없음)";
         }
+        List<CompletableFuture<String>> futures = holdings.stream()
+                .map(h -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        return "US".equalsIgnoreCase(h.market()) ? usOneLine(h.symbol()) : krOneLine(h.symbol());
+                    } catch (Exception e) {
+                        return "재무 데이터 없음";
+                    }
+                }, POOL))
+                .toList();
+
+        long deadline = System.currentTimeMillis() + HOLDINGS_SUMMARY_BUDGET_MS;
         StringBuilder sb = new StringBuilder();
-        int i = 1;
-        for (Holding h : holdings) {
-            sb.append(i++).append(". ").append(h.name()).append(" (").append(h.symbol()).append("): ");
+        for (int i = 0; i < holdings.size(); i++) {
+            Holding h = holdings.get(i);
+            String line;
             try {
-                sb.append("US".equalsIgnoreCase(h.market()) ? usOneLine(h.symbol()) : krOneLine(h.symbol()));
+                long remaining = Math.max(1, deadline - System.currentTimeMillis());
+                line = futures.get(i).get(remaining, TimeUnit.MILLISECONDS);
             } catch (Exception e) {
-                sb.append("재무 데이터 없음");
+                futures.get(i).cancel(true);
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                line = "재무 데이터 없음";
             }
-            sb.append("\n");
+            sb.append(i + 1).append(". ").append(h.name()).append(" (").append(h.symbol()).append("): ")
+              .append(line).append("\n");
         }
         return sb.toString().strip();
     }

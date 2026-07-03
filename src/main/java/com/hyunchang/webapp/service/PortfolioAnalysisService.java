@@ -13,6 +13,7 @@ import com.hyunchang.webapp.service.news.NewsPromptFormatter;
 import com.hyunchang.webapp.service.portfolio.PortfolioAccountType;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.Texts;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,7 +27,10 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 포트폴리오 AI 진단.
@@ -48,6 +52,11 @@ public class PortfolioAnalysisService {
     private static final double IRP_RISKY_ASSET_LIMIT_PCT = 70.0;
     private static final double IRP_SAFE_ASSET_TARGET_PCT = 30.0;
     private static final LocalDate ISA_OPENED_ON = LocalDate.of(2026, 6, 24);
+
+    // 종목별 뉴스 병렬 수집 전용 풀 — 공용 ForkJoinPool은 NAS(저코어)에서 병렬도가 급감함
+    private static final ExecutorService NEWS_POOL = Executors.newFixedThreadPool(8);
+    // 종목별 뉴스 수집 전체 시간 예산 — 초과 시 남은 종목은 뉴스 없이 분석 진행
+    private static final long PER_SYMBOL_NEWS_BUDGET_MS = 25_000L;
 
     private final StockHoldingService stockHoldingService;
     private final IsaHoldingService isaHoldingService;
@@ -77,6 +86,11 @@ public class PortfolioAnalysisService {
         this.aiProviderChain = aiProviderChain;
         this.aiPromptService = aiPromptService;
         this.financialDataService = financialDataService;
+    }
+
+    @PreDestroy
+    void shutdownNewsPool() {
+        NEWS_POOL.shutdown();
     }
 
     public PortfolioAnalysisResponse analyze() {
@@ -373,6 +387,10 @@ public class PortfolioAnalysisService {
      * 보유 종목 각각에 대해 종목별 뉴스 5건까지 병렬 수집.
      * StockSymbolNewsService 가 Google News + Yahoo Finance + AlphaVantage 합산해서 돌려준 결과 중 상위만 채택.
      * 종목별 컨텍스트를 차별화해서 LLM 응답이 "추세 양호" 같은 균일 문구로 수렴하는 것을 방지한다.
+     *
+     * 공용 ForkJoinPool 은 NAS 처럼 코어가 적은 환경에서 병렬도가 1~3으로 떨어져
+     * 종합(4계좌) 분석이 리버스 프록시 타임아웃(60s)을 넘길 수 있으므로 전용 풀을 사용하고,
+     * 수집 전체에 시간 예산을 걸어 초과분은 뉴스 없이 분석을 계속 진행한다.
      */
     private Map<String, List<String>> fetchPerSymbolNewsParallel(List<HoldingSnapshot> snapshots) {
         List<CompletableFuture<Map.Entry<String, List<String>>>> futures = new ArrayList<>();
@@ -399,12 +417,17 @@ public class PortfolioAnalysisService {
                     log.warn("[Portfolio/Analysis] 종목별 뉴스 fetch 실패 {}: {}", s.symbol, e.getMessage());
                     return Map.entry(s.symbol, List.<String>of());
                 }
-            }));
+            }, NEWS_POOL));
         }
+        long deadline = System.currentTimeMillis() + PER_SYMBOL_NEWS_BUDGET_MS;
         for (CompletableFuture<Map.Entry<String, List<String>>> f : futures) {
             try {
-                Map.Entry<String, List<String>> entry = f.get(8, TimeUnit.SECONDS);
+                long remaining = Math.max(1, deadline - System.currentTimeMillis());
+                Map.Entry<String, List<String>> entry = f.get(remaining, TimeUnit.MILLISECONDS);
                 result.put(entry.getKey(), entry.getValue());
+            } catch (TimeoutException e) {
+                f.cancel(true);
+                log.warn("[Portfolio/Analysis] 종목별 뉴스 수집 시간 예산 초과 — 남은 종목은 뉴스 없이 진행");
             } catch (Exception e) {
                 log.warn("[Portfolio/Analysis] 종목별 뉴스 future 실패: {}", e.getMessage());
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
