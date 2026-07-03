@@ -3,6 +3,8 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockNewsDto;
+import com.hyunchang.webapp.service.news.NewsPromptFormatter;
+import com.hyunchang.webapp.service.news.RssClient;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,14 +15,7 @@ import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import java.io.StringReader;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -68,6 +63,7 @@ public class StockSymbolNewsService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final RssClient rssClient;
     private final String alphaVantageKey;
 
     // AlphaVantage 무료 한도(25/일, 초당 1회 burst) 메시지를 한 번 받으면 6시간 동안 호출 자체를 skip.
@@ -81,9 +77,11 @@ public class StockSymbolNewsService {
     public StockSymbolNewsService(
             RestTemplate restTemplate,
             ObjectMapper objectMapper,
+            RssClient rssClient,
             @Value("${alphavantage.api-key:}") String alphaVantageKey) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
+        this.rssClient = rssClient;
         this.alphaVantageKey = alphaVantageKey;
     }
 
@@ -144,7 +142,9 @@ public class StockSymbolNewsService {
         }
 
         List<StockNewsDto> deduped = dedupe(all);
-        deduped.sort((a, b) -> Long.compare(parsePubDateEpoch(b), parsePubDateEpoch(a)));
+        deduped.sort((a, b) -> Long.compare(
+                RssClient.parsePubDateEpoch(b.getPubDate()),
+                RssClient.parsePubDateEpoch(a.getPubDate())));
         return deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
     }
 
@@ -161,11 +161,12 @@ public class StockSymbolNewsService {
 
     // ─────────────────────────────────────────────────────────────
     // Yahoo Finance RSS (US ticker 전용)
-    // https://finance.yahoo.com/rss/headline?s=NVDA
+    // https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA&region=US&lang=en-US
 
     private List<StockNewsDto> fetchYahooFinance(String ticker) {
-        String url = "https://finance.yahoo.com/rss/headline?s="
-                + URLEncoder.encode(ticker, StandardCharsets.UTF_8);
+        String url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s="
+                + URLEncoder.encode(ticker, StandardCharsets.UTF_8)
+                + "&region=US&lang=en-US";
         return parseRss(url, "Yahoo Finance", "US");
     }
 
@@ -273,32 +274,18 @@ public class StockSymbolNewsService {
 
     private List<StockNewsDto> parseRss(String url, String sourceName, String market) {
         try {
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "Mozilla/5.0 (compatible; RSS Reader/1.0)");
-            ResponseEntity<String> resp = restTemplate.exchange(
-                    url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-            String xml = resp.getBody();
-            if (xml == null || xml.isBlank()) return List.of();
-
-            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-            factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-            DocumentBuilder builder = factory.newDocumentBuilder();
-            Document doc = builder.parse(new InputSource(new StringReader(xml)));
-
-            NodeList items = doc.getElementsByTagName("item");
+            List<RssClient.RssItem> items = rssClient.fetchItems(url);
             List<StockNewsDto> news = new ArrayList<>();
-            for (int i = 0; i < items.getLength() && news.size() < PER_SOURCE_LIMIT; i++) {
-                if (items.item(i).getNodeType() != org.w3c.dom.Node.ELEMENT_NODE) continue;
-                Element el = (Element) items.item(i);
-                String title   = textOf(el, "title");
-                String link    = textOf(el, "link");
-                String desc    = textOf(el, "description");
-                String pubDate = textOf(el, "pubDate");
-                String itemSource = textOf(el, "source");
+            for (RssClient.RssItem item : items) {
+                if (news.size() >= PER_SOURCE_LIMIT) break;
+                String title   = item.title();
+                String link    = item.link();
+                String desc    = item.description();
+                String pubDate = item.pubDate();
+                String itemSource = item.itemSource();
                 if (title.isBlank() || link.isBlank()) continue;
 
-                desc = desc.replaceAll("<[^>]*>", "").trim();
+                desc = RssClient.stripHtml(desc).trim();
                 if (desc.length() > DESC_LIMIT) desc = desc.substring(0, DESC_LIMIT) + "…";
 
                 news.add(StockNewsDto.builder()
@@ -306,7 +293,7 @@ public class StockSymbolNewsService {
                         .link(link)
                         .description(desc)
                         .pubDate(pubDate)
-                        .source(mergeSource(sourceName, itemSource))
+                        .source(RssClient.mergeSource(sourceName, itemSource))
                         .market(market)
                         .build());
             }
@@ -320,47 +307,15 @@ public class StockSymbolNewsService {
     // ─────────────────────────────────────────────────────────────
     // 유틸
 
-    private String textOf(Element el, String tag) {
-        NodeList nodes = el.getElementsByTagName(tag);
-        if (nodes.getLength() == 0) return "";
-        String txt = nodes.item(0).getTextContent();
-        return txt == null ? "" : txt.trim();
-    }
-
     private List<StockNewsDto> dedupe(List<StockNewsDto> input) {
         Map<String, StockNewsDto> seen = new LinkedHashMap<>();
         for (StockNewsDto n : input) {
             if (n == null) continue;
-            String key = dedupeKey(n);
+            String key = NewsPromptFormatter.dedupeKey(n);
             if (key.isBlank()) continue;
             seen.putIfAbsent(key, n);
         }
         return new ArrayList<>(seen.values());
-    }
-
-    private String mergeSource(String sourceName, String itemSource) {
-        if (!notBlank(itemSource)) return sourceName;
-        if (!notBlank(sourceName)) return itemSource;
-        if (sourceName.toLowerCase(Locale.ROOT).contains(itemSource.toLowerCase(Locale.ROOT))) {
-            return sourceName;
-        }
-        return sourceName + " · " + itemSource;
-    }
-
-    private long parsePubDateEpoch(StockNewsDto news) {
-        String pubDate = news == null ? null : news.getPubDate();
-        if (pubDate == null || pubDate.isBlank()) return 0L;
-        try {
-            return ZonedDateTime.parse(pubDate.trim(), RFC_822).toEpochSecond();
-        } catch (Exception e) {
-            return 0L;
-        }
-    }
-
-    private String dedupeKey(StockNewsDto n) {
-        if (notBlank(n.getLink())) return n.getLink().trim().toLowerCase(Locale.ROOT);
-        if (notBlank(n.getTitle())) return n.getTitle().trim().toLowerCase(Locale.ROOT);
-        return "";
     }
 
     private CompletableFuture<List<StockNewsDto>> asyncSafe(Supplier<List<StockNewsDto>> task) {

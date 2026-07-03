@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hyunchang.webapp.dto.StockHeatmapItemDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.dto.StockSearchResultDto;
+import com.hyunchang.webapp.util.TtlCache;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,6 +21,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -68,6 +70,8 @@ public class YahooFinanceService {
     private volatile String cachedCookieHeader = null;
     private volatile long   crumbCachedAt      = 0;
     private final Object crumbLock = new Object();
+    private final TtlCache<String, JsonNode> fundamentalsCache =
+        new TtlCache<>(Duration.ofMinutes(30), Duration.ofMinutes(5));
 
     public YahooFinanceService(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
@@ -573,15 +577,34 @@ public class YahooFinanceService {
      */
     public JsonNode fetchFundamentals(String symbol) {
         if (symbol == null || symbol.isBlank()) return null;
+        String requestedSymbol = symbol.trim();
+        String cacheKey = requestedSymbol.toUpperCase(Locale.ROOT);
+        TtlCache.Hit<JsonNode> cached = fundamentalsCache.lookup(cacheKey);
+        if (cached != null) {
+            if (cached.negative()) {
+                log.debug("Yahoo fundamentals negative cache hit [{}] - retry skipped", requestedSymbol);
+            }
+            return cached.value();
+        }
+
         boolean authed = refreshYahooAuth();
         if (!authed) {
-            log.info("Yahoo 인증 토큰 없이 v7/quote 재무 폴백 시도 [{}]", symbol);
-            return fetchFundamentalsFromQuote(symbol, false);
+            log.debug("Yahoo 인증 토큰 없이 v7/quote 재무 폴백 시도 [{}]", requestedSymbol);
+            JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, false);
+            if (fallback != null) {
+                fundamentalsCache.put(cacheKey, fallback);
+                return fallback;
+            }
+            fundamentalsCache.putNegative(cacheKey);
+            log.warn("Yahoo fundamentals lookup failed [{}] (auth unavailable and v7 fallback empty) - retry skipped for 5 minutes", requestedSymbol);
+            return null;
         }
+
+        String failureCause = "empty response";
         try {
             String modules = "summaryDetail,defaultKeyStatistics,financialData,price";
             String url = "https://query2.finance.yahoo.com/v10/finance/quoteSummary/"
-                + URLEncoder.encode(symbol, StandardCharsets.UTF_8)
+                + URLEncoder.encode(requestedSymbol, StandardCharsets.UTF_8)
                 + "?modules=" + URLEncoder.encode(modules, StandardCharsets.UTF_8)
                 + "&lang=en-US&region=US&crumb="
                 + URLEncoder.encode(cachedCrumb, StandardCharsets.UTF_8);
@@ -594,28 +617,35 @@ public class YahooFinanceService {
 
             JsonNode result = objectMapper.readTree(resp.getBody())
                 .path("quoteSummary").path("result").path(0);
-            if (!result.isMissingNode() && !result.isNull()) return result;
+            if (!result.isMissingNode() && !result.isNull()) {
+                fundamentalsCache.put(cacheKey, result);
+                return result;
+            }
 
-            JsonNode fallback = fetchFundamentalsFromQuote(symbol, true);
+            JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, true);
             if (fallback != null) {
-                log.info("Yahoo quoteSummary 결과 없음 [{}] → v7/quote 폴백 사용", symbol);
+                log.debug("Yahoo quoteSummary 결과 없음 [{}] → v7/quote 폴백 사용", requestedSymbol);
+                fundamentalsCache.put(cacheKey, fallback);
                 return fallback;
             }
-            return null;
+            failureCause = "quoteSummary empty and v7 fallback empty";
 
         } catch (RestClientException | IOException e) {
-            JsonNode fallback = fetchFundamentalsFromQuote(symbol, true);
+            JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, true);
             if (fallback != null) {
-                log.info("Yahoo quoteSummary 재무 조회 실패 [{}] → v7/quote 폴백 사용", symbol);
+                log.debug("Yahoo quoteSummary 재무 조회 실패 [{}] → v7/quote 폴백 사용", requestedSymbol);
+                fundamentalsCache.put(cacheKey, fallback);
                 return fallback;
             }
-            log.warn("Yahoo quoteSummary 재무 조회 실패 [{}]: {}", symbol, e.getMessage());
+            failureCause = e.getMessage();
             if (e instanceof HttpStatusCodeException hsce
                     && hsce.getStatusCode().value() == 401) {
                 synchronized (crumbLock) { cachedCrumb = null; }
             }
-            return null;
         }
+        fundamentalsCache.putNegative(cacheKey);
+        log.warn("Yahoo fundamentals lookup failed [{}] ({}) - retry skipped for 5 minutes", requestedSymbol, failureCause);
+        return null;
     }
 
     /**
@@ -672,11 +702,11 @@ public class YahooFinanceService {
             if (useAuth) {
                 JsonNode noAuthFallback = fetchFundamentalsFromQuote(symbol, false);
                 if (noAuthFallback != null) {
-                    log.info("Yahoo v7/quote 인증 폴백 실패 [{}] → 비인증 v7/quote 사용", symbol);
+                    log.debug("Yahoo v7/quote 인증 폴백 실패 [{}] → 비인증 v7/quote 사용", symbol);
                     return noAuthFallback;
                 }
             }
-            log.info("Yahoo v7/quote 재무 폴백 조회 실패 [{}]: {}", symbol, e.getMessage());
+            log.debug("Yahoo v7/quote 재무 폴백 조회 실패 [{}]: {}", symbol, e.getMessage());
             if (e instanceof HttpStatusCodeException hsce
                     && hsce.getStatusCode().value() == 401) {
                 synchronized (crumbLock) { cachedCrumb = null; }

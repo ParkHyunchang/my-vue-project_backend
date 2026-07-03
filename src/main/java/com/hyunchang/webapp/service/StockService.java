@@ -39,6 +39,7 @@ public class StockService {
 
     private static final long TOP10_CACHE_TTL_MS    = 2 * 60 * 1000L;      // 2분 (Top10 실시간 갱신)
     private static final long PORTFOLIO_PRICE_TTL_MS = 2 * 60 * 1000L;      // 2분 (포트폴리오 개별 시세)
+    private static final long QUOTE_FAIL_TTL_MS = 60 * 1000L;
     private static final String BASE_RANKS_FILE = "data/base-ranks.json";
     private static final String TOP10_SNAPSHOTS_FILE = "data/top10-snapshots.json";
     private static final int US_TOP10_DISCOVERY_SIZE = 100;
@@ -55,6 +56,8 @@ public class StockService {
     private final Map<String, Long>                 singlePriceTimes = new ConcurrentHashMap<>();
 
     // ── 히트맵 캐시 ──────────────────────────────────────────────
+    private final Map<String, Long>                 quoteFailTimes   = new ConcurrentHashMap<>();
+
     private volatile List<StockHeatmapSectorDto> heatmapCache     = null;
     private volatile String                       heatmapUpdatedAt = null;
 
@@ -208,39 +211,83 @@ public class StockService {
      * 포트폴리오 실시간 시세에는 사용하지 않습니다.
      */
     public StockPriceDto getQuote(String symbol, String market) {
+        if (symbol == null || symbol.isBlank()) return null;
+        String requestedSymbol = symbol.trim();
         String currency = "KR".equalsIgnoreCase(market) ? "KRW" : "USD";
+        long now = System.currentTimeMillis();
 
         // 1) 개별 캐시 (포트폴리오용: 2분 TTL)
-        Long cachedAt = singlePriceTimes.get(symbol);
-        if (cachedAt != null && (System.currentTimeMillis() - cachedAt) < PORTFOLIO_PRICE_TTL_MS) {
-            StockPriceDto cached = singlePriceCache.get(symbol);
+        Long cachedAt = singlePriceTimes.get(requestedSymbol);
+        if (cachedAt != null && (now - cachedAt) < PORTFOLIO_PRICE_TTL_MS) {
+            StockPriceDto cached = singlePriceCache.get(requestedSymbol);
             if (cached != null) return cached;
         }
 
-        // 2) Yahoo Finance (KR/US 공통 — 실시간 인트라데이)
-        StockPriceDto dto = yahooService.fetchQuote(symbol, currency);
-        if (dto != null) {
-            singlePriceCache.put(symbol, dto);
-            singlePriceTimes.put(symbol, System.currentTimeMillis());
-            return dto;
+        Long failedAt = quoteFailTimes.get(requestedSymbol);
+        if (failedAt != null && (now - failedAt) < QUOTE_FAIL_TTL_MS) {
+            return null;
         }
+        if (failedAt != null) quoteFailTimes.remove(requestedSymbol);
 
-        // 3) Yahoo 실패 시 KRX Open API 폴백 (.KS/.KQ 전일 종가)
-        String upperSym = symbol.toUpperCase();
-        if (upperSym.endsWith(".KS") || upperSym.endsWith(".KQ")) {
-            NaverFinanceService.NaverStockData krx = krxApiService.getKrPrice(symbol);
-            if (krx != null) {
-                StockPriceDto fallback = StockPriceDto.builder()
-                    .symbol(symbol).price(krx.price())
-                    .change(krx.change()).changePercent(krx.changePercent())
-                    .currency("KRW").build();
-                singlePriceCache.put(symbol, fallback);
-                singlePriceTimes.put(symbol, System.currentTimeMillis());
-                return fallback;
+        // 2) Yahoo Finance (KR/US 공통 — 실시간 인트라데이)
+        List<String> candidates = quoteCandidates(requestedSymbol, market);
+        for (String candidate : candidates) {
+            StockPriceDto dto = yahooService.fetchQuote(candidate, currency);
+            if (dto != null) {
+                StockPriceDto normalized = withRequestedSymbol(dto, requestedSymbol, currency);
+                cacheQuote(requestedSymbol, normalized);
+                return normalized;
             }
         }
 
+        // 3) Yahoo 실패 시 KRX Open API 폴백 (.KS/.KQ 전일 종가)
+        for (String candidate : candidates) {
+            if (hasKrSuffix(candidate)) {
+                NaverFinanceService.NaverStockData krx = krxApiService.getKrPrice(candidate);
+                if (krx != null) {
+                    StockPriceDto fallback = StockPriceDto.builder()
+                        .symbol(requestedSymbol).price(krx.price())
+                        .change(krx.change()).changePercent(krx.changePercent())
+                        .currency("KRW").build();
+                    cacheQuote(requestedSymbol, fallback);
+                    return fallback;
+                }
+            }
+        }
+
+        quoteFailTimes.put(requestedSymbol, now);
         return null;
+    }
+
+    private List<String> quoteCandidates(String symbol, String market) {
+        String upperSym = symbol.toUpperCase(Locale.ROOT);
+        if ("KR".equalsIgnoreCase(market)) {
+            if (hasKrSuffix(upperSym)) return List.of(upperSym);
+            return List.of(upperSym + ".KS", upperSym + ".KQ");
+        }
+        return List.of(symbol);
+    }
+
+    private boolean hasKrSuffix(String symbol) {
+        if (symbol == null) return false;
+        String upperSym = symbol.toUpperCase(Locale.ROOT);
+        return upperSym.endsWith(".KS") || upperSym.endsWith(".KQ");
+    }
+
+    private StockPriceDto withRequestedSymbol(StockPriceDto dto, String symbol, String currency) {
+        return StockPriceDto.builder()
+            .symbol(symbol)
+            .price(dto.getPrice())
+            .change(dto.getChange())
+            .changePercent(dto.getChangePercent())
+            .currency(dto.getCurrency() != null ? dto.getCurrency() : currency)
+            .build();
+    }
+
+    private void cacheQuote(String symbol, StockPriceDto dto) {
+        singlePriceCache.put(symbol, dto);
+        singlePriceTimes.put(symbol, System.currentTimeMillis());
+        quoteFailTimes.remove(symbol);
     }
 
     /**

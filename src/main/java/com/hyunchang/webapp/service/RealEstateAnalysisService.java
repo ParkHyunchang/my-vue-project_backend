@@ -7,6 +7,8 @@ import com.hyunchang.webapp.dto.*;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
+import com.hyunchang.webapp.util.SafeCalls;
+import com.hyunchang.webapp.util.Texts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -58,8 +60,8 @@ public class RealEstateAnalysisService {
         String sigungu = region != null ? region.getSigungu() : lawdCd;
         String regionName = region != null ? region.getName() : lawdCd;
 
-        List<RealEstateDealDto> deals = safe(
-            () -> realEstateService.search(lawdCd, dt, ANALYSIS_MONTHS), List.of());
+        List<RealEstateDealDto> deals = SafeCalls.get(
+            () -> realEstateService.search(lawdCd, dt, ANALYSIS_MONTHS), List.of(), log, "[AI/RealEstate] context collection failed");
 
         if (deals.isEmpty()) {
             return RealEstateAnalysisResponse.builder()
@@ -72,7 +74,7 @@ public class RealEstateAnalysisService {
 
         RealEstateStatsDto stats = computeStats(deals, dt, sigungu);
 
-        List<RealEstateNewsDto> news = safe(() -> realEstateNewsService.getNews(false), List.of());
+        List<RealEstateNewsDto> news = SafeCalls.get(() -> realEstateNewsService.getNews(false), List.of(), log, "[AI/RealEstate] context collection failed");
         List<RealEstateNewsDto> topNews = news.stream().limit(5).collect(Collectors.toList());
 
         String prompt = buildPrompt(regionName, dt, stats, deals, topNews);
@@ -106,8 +108,8 @@ public class RealEstateAnalysisService {
         String sigungu = region != null ? region.getSigungu() : lawdCd;
         String regionName = region != null ? region.getName() : lawdCd;
 
-        List<LandDealDto> deals = safe(
-            () -> realEstateService.searchLand(lawdCd, ANALYSIS_MONTHS), List.of());
+        List<LandDealDto> deals = SafeCalls.get(
+            () -> realEstateService.searchLand(lawdCd, ANALYSIS_MONTHS), List.of(), log, "[AI/RealEstate] context collection failed");
 
         if (deals.isEmpty()) {
             return LandAnalysisResponse.builder()
@@ -120,7 +122,7 @@ public class RealEstateAnalysisService {
 
         LandStatsDto stats = computeLandStats(deals, sigungu);
 
-        List<RealEstateNewsDto> news = safe(() -> realEstateNewsService.getNews(false), List.of());
+        List<RealEstateNewsDto> news = SafeCalls.get(() -> realEstateNewsService.getNews(false), List.of(), log, "[AI/RealEstate] context collection failed");
         List<RealEstateNewsDto> topNews = news.stream().limit(5).collect(Collectors.toList());
 
         String prompt = buildLandPrompt(regionName, stats, deals, topNews);
@@ -202,8 +204,8 @@ public class RealEstateAnalysisService {
         int i = 1;
         for (LandDealDto d : deals.stream().limit(10).collect(Collectors.toList())) {
             dealBlock.append(i++).append(". ")
-                .append(nullSafe(d.getDong())).append(" ")
-                .append(nullSafe(d.getJimok())).append(" / ").append(nullSafe(d.getUseZone()))
+                .append(Texts.nullSafe(d.getDong())).append(" ")
+                .append(Texts.nullSafe(d.getJimok())).append(" / ").append(Texts.nullSafe(d.getUseZone()))
                 .append(" — ").append(d.getAreaM2()).append("㎡, ").append(money(d.getDealAmount()))
                 .append(" (단가 ").append(unit(d.getPricePerM2())).append(", ")
                 .append(d.getDealDate()).append(")\n");
@@ -217,13 +219,13 @@ public class RealEstateAnalysisService {
         } else {
             int n = 1;
             for (RealEstateNewsDto a : news) {
-                newsBlock.append(n++).append(". ").append(nullSafe(a.getTitle())).append("\n");
+                newsBlock.append(n++).append(". ").append(Texts.nullSafe(a.getTitle())).append("\n");
             }
             newsInstruction = "아래 뉴스는 일반 부동산 시황 참고용입니다. 이 지역 토지와 직접 관련될 때만 신중히 인용하세요.";
         }
 
         Map<String, String> vars = new LinkedHashMap<>();
-        vars.put("지역", nullSafe(regionName));
+        vars.put("지역", Texts.nullSafe(regionName));
         vars.put("분석개월수", String.valueOf(ANALYSIS_MONTHS));
         vars.put("거래건수", String.valueOf(stats.getTotalCount()));
         vars.put("평균단가", unit(stats.getAvgPricePerM2()));
@@ -349,13 +351,13 @@ public class RealEstateAnalysisService {
         } else {
             int n = 1;
             for (RealEstateNewsDto a : news) {
-                newsBlock.append(n++).append(". ").append(nullSafe(a.getTitle())).append("\n");
+                newsBlock.append(n++).append(". ").append(Texts.nullSafe(a.getTitle())).append("\n");
             }
             newsInstruction = "아래 뉴스는 일반 부동산 시황 참고용입니다. 이 지역과 직접 관련될 때만 신중히 인용하세요.";
         }
 
         Map<String, String> vars = new LinkedHashMap<>();
-        vars.put("지역", nullSafe(regionName));
+        vars.put("지역", Texts.nullSafe(regionName));
         vars.put("거래유형", dealLabel);
         vars.put("분석개월수", String.valueOf(ANALYSIS_MONTHS));
         vars.put("거래건수", String.valueOf(stats.getTotalCount()));
@@ -387,11 +389,11 @@ public class RealEstateAnalysisService {
                 .comment(text(root, "comment", ""))
                 .build();
         } catch (Exception e) {
-            log.warn("[AI/RealEstate] JSON 파싱 실패: {} (head: {})", e.getMessage(), truncate(text, 200));
+            log.warn("[AI/RealEstate] JSON 파싱 실패: {} (head: {})", e.getMessage(), Texts.truncate(text, 200));
             return RealEstateAnalysisResult.builder()
                 .trend("보합").headline("").priceLevel("")
                 .keywords(List.of()).watchPoints(List.of())
-                .comment(truncate(text, 500))
+                .comment(Texts.truncate(text, 500))
                 .build();
         }
     }
@@ -435,17 +437,4 @@ public class RealEstateAnalysisService {
         }
     }
 
-    private String nullSafe(String s) { return s == null ? "" : s; }
-
-    private String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() <= max ? s : s.substring(0, max) + "...";
-    }
-
-    private <T> T safe(java.util.function.Supplier<T> sup, T fallback) {
-        try { return sup.get(); } catch (Exception e) {
-            log.warn("[AI/RealEstate] 컨텍스트 수집 실패: {}", e.getMessage());
-            return fallback;
-        }
-    }
 }

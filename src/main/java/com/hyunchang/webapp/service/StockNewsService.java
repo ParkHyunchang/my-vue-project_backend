@@ -3,27 +3,18 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockNewsDto;
+import com.hyunchang.webapp.service.news.RssClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
 
 import jakarta.annotation.PreDestroy;
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
-import java.io.StringReader;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeParseException;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
 import org.springframework.web.client.RestClientException;
@@ -46,10 +37,6 @@ public class StockNewsService {
 
     // #5 공유 스레드풀 — 요청마다 새 풀 생성하지 않음
     private static final ExecutorService SHARED_POOL = Executors.newFixedThreadPool(10);
-
-    // RFC 822 날짜 파싱 (RSS 표준 pubDate 형식)
-    private static final DateTimeFormatter RSS_DATE_FMT =
-        DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
 
     // ── 주식 관련성 필터 키워드 ─────────────────────────────
     // 판별 로직: ① 제목 제외패턴 → ② 제목 키워드 1개↑ 즉시통과 → ③ 설명 키워드 2개↑ 통과
@@ -123,10 +110,12 @@ public class StockNewsService {
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final RssClient rssClient;
 
-    public StockNewsService(RestTemplate restTemplate, ObjectMapper objectMapper) {
+    public StockNewsService(RestTemplate restTemplate, ObjectMapper objectMapper, RssClient rssClient) {
         this.restTemplate = restTemplate;
         this.objectMapper  = objectMapper;
+        this.rssClient = rssClient;
     }
 
     @PreDestroy
@@ -246,21 +235,7 @@ public class StockNewsService {
     }
 
     private List<StockNewsDto> parseRss(String url, String sourceName, String market) throws Exception {
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("User-Agent", "Mozilla/5.0 (compatible; RSS Reader/1.0)");
-        ResponseEntity<String> resp = restTemplate.exchange(
-            url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-
-        String xml = resp.getBody();
-        if (xml == null || xml.isBlank()) return Collections.emptyList();
-
-        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
-        factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
-        factory.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-        DocumentBuilder builder = factory.newDocumentBuilder();
-        Document doc = builder.parse(new InputSource(new StringReader(xml)));
-
-        NodeList items = doc.getElementsByTagName("item");
+        List<RssClient.RssItem> items = rssClient.fetchItems(url);
         List<StockNewsDto> news = new ArrayList<>();
 
         long maxAgeSeconds = (long) MAX_ARTICLE_AGE_DAYS * 24 * 3600;
@@ -270,16 +245,13 @@ public class StockNewsService {
         int descLimit = "US".equalsIgnoreCase(market) ? 600 : 300;
 
         // PER_SOURCE_LIMIT개의 주식 관련 기사를 채울 때까지 피드 전체를 순회
-        for (int i = 0; i < items.getLength(); i++) {
+        for (RssClient.RssItem item : items) {
             if (news.size() >= PER_SOURCE_LIMIT) break;
-            if (items.item(i).getNodeType() != org.w3c.dom.Node.ELEMENT_NODE) continue;
-
-            Element el      = (Element) items.item(i);
-            String  title   = normalizeText(getNodeText(el, "title"));
-            String  link    = getNodeText(el, "link");
-            String  desc    = normalizeText(getNodeText(el, "description"));
-            String  pubDate = getNodeText(el, "pubDate");
-            String  itemSource = getNodeText(el, "source");
+            String  title   = normalizeText(item.title());
+            String  link    = item.link();
+            String  desc    = normalizeText(item.description());
+            String  pubDate = item.pubDate();
+            String  itemSource = item.itemSource();
 
             if (title.isBlank()) continue;
 
@@ -298,16 +270,13 @@ public class StockNewsService {
             }
 
             // HTML 태그 제거 후 길이 제한 (#6 시장별 한도 다르게)
-            desc = desc.replaceAll("<[^>]*>", "").trim();
+            desc = RssClient.stripHtml(desc).trim();
             if (desc.length() > descLimit) desc = desc.substring(0, descLimit) + "…";
-
-            // #8 이미지 URL 파싱
-            String imageUrl = getImageUrl(el);
 
             news.add(StockNewsDto.builder()
                 .title(title).link(link).description(desc)
-                .pubDate(pubDate).source(mergeSource(sourceName, itemSource)).market(market)
-                .imageUrl(imageUrl)
+                .pubDate(pubDate).source(RssClient.mergeSource(sourceName, itemSource)).market(market)
+                .imageUrl(item.imageUrl())
                 .build());
         }
         return news;
@@ -340,24 +309,7 @@ public class StockNewsService {
     }
 
     private long parsePubDateStringEpoch(String pubDate) {
-        if (pubDate == null || pubDate.isBlank()) return 0L;
-        String normalized = pubDate.trim();
-        try {
-            return ZonedDateTime.parse(normalized, RSS_DATE_FMT).toEpochSecond();
-        } catch (DateTimeParseException ignore) {}
-        try {
-            return ZonedDateTime.parse(normalized, DateTimeFormatter.RFC_1123_DATE_TIME).toEpochSecond();
-        } catch (DateTimeParseException ignore) {}
-        return 0L;
-    }
-
-    private String mergeSource(String sourceName, String itemSource) {
-        if (itemSource == null || itemSource.isBlank()) return sourceName;
-        if (sourceName == null || sourceName.isBlank()) return itemSource;
-        if (sourceName.toLowerCase(Locale.ROOT).contains(itemSource.toLowerCase(Locale.ROOT))) {
-            return sourceName;
-        }
-        return sourceName + " · " + itemSource;
+        return RssClient.parsePubDateEpoch(pubDate);
     }
 
     private String translateToKorean(String text) {
@@ -415,40 +367,4 @@ public class StockNewsService {
             .replace("&amp;", "&").replace("&nbsp;", " ");
     }
 
-    // #8 RSS에서 이미지 URL 추출 (media:content → media:thumbnail → enclosure 순)
-    private String getImageUrl(Element el) {
-        // 1. <media:content url="..." medium="image">
-        NodeList mc = el.getElementsByTagName("media:content");
-        for (int i = 0; i < mc.getLength(); i++) {
-            if (mc.item(i).getNodeType() != org.w3c.dom.Node.ELEMENT_NODE) continue;
-            Element e = (Element) mc.item(i);
-            String urlAttr = e.getAttribute("url");
-            String medium  = e.getAttribute("medium");
-            String type    = e.getAttribute("type");
-            if (!urlAttr.isBlank() && (medium.isBlank() || "image".equals(medium)
-                    || type.startsWith("image/"))) {
-                return urlAttr;
-            }
-        }
-        // 2. <media:thumbnail url="...">
-        NodeList mt = el.getElementsByTagName("media:thumbnail");
-        if (mt.getLength() > 0 && mt.item(0).getNodeType() == org.w3c.dom.Node.ELEMENT_NODE) {
-            String urlAttr = ((Element) mt.item(0)).getAttribute("url");
-            if (!urlAttr.isBlank()) return urlAttr;
-        }
-        // 3. <enclosure url="..." type="image/...">
-        NodeList enc = el.getElementsByTagName("enclosure");
-        for (int i = 0; i < enc.getLength(); i++) {
-            if (enc.item(i).getNodeType() != org.w3c.dom.Node.ELEMENT_NODE) continue;
-            Element e = (Element) enc.item(i);
-            if (e.getAttribute("type").startsWith("image/")) return e.getAttribute("url");
-        }
-        return null;
-    }
-
-    private String getNodeText(Element el, String tagName) {
-        NodeList nodes = el.getElementsByTagName(tagName);
-        if (nodes.getLength() == 0) return "";
-        return nodes.item(0).getTextContent().trim();
-    }
 }

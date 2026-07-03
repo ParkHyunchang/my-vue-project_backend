@@ -4,14 +4,16 @@ import com.hyunchang.webapp.dto.StockAnalysisResponse;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
+import com.hyunchang.webapp.service.news.NewsPromptFormatter;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
+import com.hyunchang.webapp.util.SafeCalls;
+import com.hyunchang.webapp.util.Texts;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -57,19 +59,19 @@ public class StockAnalysisService {
         String mkt = (market == null || market.isBlank()) ? "KR" : market.toUpperCase(Locale.ROOT);
 
         // 1. 컨텍스트 수집
-        String name = safe(() -> stockService.resolveStockName(symbol), symbol);
-        StockPriceDto price = safe(() -> stockService.getQuote(symbol, mkt), null);
+        String name = SafeCalls.get(() -> stockService.resolveStockName(symbol), symbol, log, "[AI/Analysis] context collection failed");
+        StockPriceDto price = SafeCalls.get(() -> stockService.getQuote(symbol, mkt), null, log, "[AI/Analysis] context collection failed");
         String enName = "US".equalsIgnoreCase(mkt)
-                ? safe(() -> stockService.getUsEnNames().get(symbol.toUpperCase(Locale.ROOT)), null)
+                ? SafeCalls.get(() -> stockService.getUsEnNames().get(symbol.toUpperCase(Locale.ROOT)), null, log, "[AI/Analysis] context collection failed")
                 : null;
 
         // 1-1. 종목별 직접 검색 뉴스 (KR: Google News / US: Yahoo Finance + AlphaVantage + Google News)
-        List<StockNewsDto> symbolNews = safe(
+        List<StockNewsDto> symbolNews = SafeCalls.get(
                 () -> stockSymbolNewsService.fetchForSymbol(symbol, mkt, name, enName),
-                List.<StockNewsDto>of());
+                List.<StockNewsDto>of(), log, "[AI/Analysis] context collection failed");
 
         // 1-2. 시장 단위 뉴스에서 종목 관련 항목만 필터링 (보조 — 거시 뉴스 보충용)
-        List<StockNewsDto> allMarketNews = safe(() -> stockService.getNews(mkt, false), List.<StockNewsDto>of());
+        List<StockNewsDto> allMarketNews = SafeCalls.get(() -> stockService.getNews(mkt, false), List.<StockNewsDto>of(), log, "[AI/Analysis] context collection failed");
         List<StockNewsDto> marketFiltered = allMarketNews == null
                 ? List.<StockNewsDto>of()
                 : allMarketNews.stream()
@@ -86,7 +88,7 @@ public class StockAnalysisService {
                 relatedNews.size());
 
         // 1-4. 재무 데이터 (US: Yahoo, KR: 추후 DART) — 실패해도 분석 진행
-        String financials = safe(() -> financialDataService.stockSummary(symbol, mkt), "(재무 데이터 미수집)");
+        String financials = SafeCalls.get(() -> financialDataService.stockSummary(symbol, mkt), "(재무 데이터 미수집)", log, "[AI/Analysis] context collection failed");
 
         // 2. 프롬프트
         String prompt = buildPrompt(name, symbol, mkt, price, relatedNews, financials);
@@ -103,7 +105,7 @@ public class StockAnalysisService {
         }
 
         // 4. 마크다운 리포트 (자유리포트 — JSON 파싱 없이 AI 원문 사용)
-        String report = cleanReport(chainResult.text());
+        String report = Texts.cleanAiReport(chainResult.text());
 
         // 5. 응답 조립 (참고 뉴스는 종목 관련 뉴스 상위 5개)
         List<StockNewsDto> sources = relatedNews.stream().limit(5).toList();
@@ -126,7 +128,7 @@ public class StockAnalysisService {
                                StockPriceDto price, List<StockNewsDto> news, String financials) {
         StringBuilder priceBlock = new StringBuilder();
         if (price != null) {
-            priceBlock.append("현재가: ").append(formatPrice(price)).append(" ").append(nullSafe(price.getCurrency())).append("\n");
+            priceBlock.append("현재가: ").append(formatPrice(price)).append(" ").append(Texts.nullSafe(price.getCurrency())).append("\n");
             priceBlock.append("등락률: ").append(formatChangePct(price)).append("%\n");
         } else {
             priceBlock.append("(시세 조회 실패)\n");
@@ -144,7 +146,7 @@ public class StockAnalysisService {
         } else {
             int i = 1;
             for (StockNewsDto n : news) {
-                String formatted = formatNewsForPrompt(n, 220);
+                String formatted = NewsPromptFormatter.format(n, 220);
                 if (!formatted.isBlank()) {
                     newsBlock.append(i++).append(". ").append(formatted).append("\n");
                 }
@@ -157,9 +159,9 @@ public class StockAnalysisService {
         }
 
         Map<String, String> vars = new LinkedHashMap<>();
-        vars.put("종목명", nullSafe(name));
-        vars.put("티커", nullSafe(symbol));
-        vars.put("시장", nullSafe(market));
+        vars.put("종목명", Texts.nullSafe(name));
+        vars.put("티커", Texts.nullSafe(symbol));
+        vars.put("시장", Texts.nullSafe(market));
         vars.put("시세정보", priceBlock.toString());
         vars.put("재무데이터", financials == null || financials.isBlank() ? "(재무 데이터 미수집)" : financials);
         vars.put("뉴스지침", newsInstruction.strip());
@@ -245,24 +247,17 @@ public class StockAnalysisService {
         java.util.LinkedHashMap<String, StockNewsDto> seen = new java.util.LinkedHashMap<>();
         if (primary != null) {
             for (StockNewsDto n : primary) {
-                String key = dedupeKey(n);
+                String key = NewsPromptFormatter.dedupeKey(n);
                 if (!key.isBlank()) seen.putIfAbsent(key, n);
             }
         }
         if (secondary != null) {
             for (StockNewsDto n : secondary) {
-                String key = dedupeKey(n);
+                String key = NewsPromptFormatter.dedupeKey(n);
                 if (!key.isBlank()) seen.putIfAbsent(key, n);
             }
         }
         return seen.values().stream().limit(limit).toList();
-    }
-
-    private String dedupeKey(StockNewsDto n) {
-        if (n == null) return "";
-        if (notBlank(n.getLink())) return n.getLink().trim().toLowerCase(Locale.ROOT);
-        if (notBlank(n.getTitle())) return n.getTitle().trim().toLowerCase(Locale.ROOT);
-        return "";
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -292,10 +287,10 @@ public class StockAnalysisService {
 
     private String combinedText(StockNewsDto n) {
         return String.join(" ",
-                nullSafe(n.getTitle()),
-                nullSafe(n.getDescription()),
-                nullSafe(n.getOriginalTitle()),
-                nullSafe(n.getOriginalDescription()));
+                Texts.nullSafe(n.getTitle()),
+                Texts.nullSafe(n.getDescription()),
+                Texts.nullSafe(n.getOriginalTitle()),
+                Texts.nullSafe(n.getOriginalDescription()));
     }
 
     private boolean notBlank(String s) { return s != null && !s.isBlank(); }
@@ -319,48 +314,4 @@ public class StockAnalysisService {
         return "KRW".equalsIgnoreCase(currency) ? "KR" : "US";
     }
 
-    private String nullSafe(String s) { return s == null ? "" : s; }
-
-    private String formatNewsForPrompt(StockNewsDto n, int descLimit) {
-        if (n == null || nullSafe(n.getTitle()).isBlank()) return "";
-        List<String> meta = new ArrayList<>();
-        if (!nullSafe(n.getSource()).isBlank()) meta.add("출처: " + n.getSource().trim());
-        if (!nullSafe(n.getPubDate()).isBlank()) meta.add("날짜: " + n.getPubDate().trim());
-
-        StringBuilder sb = new StringBuilder();
-        if (!meta.isEmpty()) {
-            sb.append("[").append(String.join(", ", meta)).append("] ");
-        }
-        sb.append(n.getTitle().trim());
-        if (!nullSafe(n.getDescription()).isBlank()) {
-            sb.append(" — 요약: ").append(truncate(n.getDescription().trim(), descLimit));
-        }
-        return sb.toString();
-    }
-
-    private String truncate(String s, int max) {
-        if (s == null) return "";
-        return s.length() <= max ? s : s.substring(0, max) + "...";
-    }
-
-    /** AI 마크다운 리포트 정리 — 전체를 감싼 ``` 코드펜스가 있으면 벗긴다. */
-    private String cleanReport(String text) {
-        if (text == null) return "";
-        String t = text.strip();
-        if (t.startsWith("```")) {
-            int nl = t.indexOf('\n');
-            if (nl > 0) t = t.substring(nl + 1);
-            if (t.endsWith("```")) t = t.substring(0, t.length() - 3);
-            t = t.strip();
-        }
-        return t;
-    }
-
-    /** 외부 호출 실패해도 분석은 계속 진행할 수 있게 fallback 으로 감싼다. */
-    private <T> T safe(java.util.function.Supplier<T> sup, T fallback) {
-        try { return sup.get(); } catch (Exception e) {
-            log.warn("[AI/Analysis] 컨텍스트 수집 부분 실패: {}", e.getMessage());
-            return fallback;
-        }
-    }
 }
