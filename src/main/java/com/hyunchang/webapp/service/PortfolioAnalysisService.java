@@ -45,6 +45,7 @@ public class PortfolioAnalysisService {
     private static final String ACCOUNT_ISA = "isa";
     private static final String ACCOUNT_GENERAL = "general";
     private static final String ACCOUNT_IRP = "irp";
+    private static final String ACCOUNT_ALL = "all";
     private static final String ASSET_CASH = "CASH";
     private static final String ASSET_STOCK = "STOCK";
     private static final double IRP_RISKY_ASSET_LIMIT_PCT = 70.0;
@@ -201,6 +202,12 @@ public class PortfolioAnalysisService {
         type = type == null ? ACCOUNT_STOCK : type.trim().toLowerCase(Locale.ROOT);
 
         return switch (type) {
+            case ACCOUNT_ALL -> new AnalysisAccount(
+                    ACCOUNT_ALL,
+                    notBlank(str(rawLabel)) ? str(rawLabel).trim() : "전체 계좌(종합)",
+                    AiPromptCatalog.PORTFOLIO_ALL_ANALYSIS,
+                    str(rawNote)
+            );
             case ACCOUNT_ISA -> new AnalysisAccount(
                     ACCOUNT_ISA,
                     notBlank(str(rawLabel)) ? str(rawLabel).trim() : "ISA",
@@ -229,6 +236,18 @@ public class PortfolioAnalysisService {
     }
 
     private List<PortfolioHoldingInput> loadHoldings(String userId, AnalysisAccount account) {
+        if (ACCOUNT_ALL.equals(account.type)) {
+            List<PortfolioHoldingInput> all = new ArrayList<>();
+            stockHoldingService.getHoldings(userId).stream().map(this::fromStockHolding)
+                    .forEach(h -> { h.accountLabel = "장기 주식계좌"; all.add(h); });
+            generalHoldingService.getHoldings(userId).stream().map(this::fromGeneralHolding)
+                    .forEach(h -> { h.accountLabel = "단기 주식계좌"; all.add(h); });
+            isaHoldingService.getHoldings(userId).stream().map(this::fromIsaHolding)
+                    .forEach(h -> { h.accountLabel = "ISA 계좌"; all.add(h); });
+            irpHoldingService.getHoldings(userId).stream().map(this::fromIrpHolding)
+                    .forEach(h -> { h.accountLabel = "IRP 계좌"; all.add(h); });
+            return all;
+        }
         if (ACCOUNT_ISA.equals(account.type)) {
             return isaHoldingService.getHoldings(userId).stream()
                     .map(this::fromIsaHolding)
@@ -350,6 +369,7 @@ public class PortfolioAnalysisService {
             s.avgPrice = h.avgPrice;
             s.core = h.core;
             s.assetType = normalizeAssetType(h.assetType);
+            s.accountLabel = h.accountLabel;
 
             if (s.isCash()) {
                 s.currentPrice = 1.0;
@@ -491,8 +511,11 @@ public class PortfolioAnalysisService {
         int i = 1;
         for (HoldingSnapshot s : snapshots) {
             holdingsBlock.append(i++).append(". ")
-                    .append(s.name).append(" (").append(s.symbol).append(", ").append(s.market).append(") ")
-                    .append("\n");
+                    .append(s.name).append(" (").append(s.symbol).append(", ").append(s.market).append(") ");
+            if (notBlank(s.accountLabel)) {
+                holdingsBlock.append("— [").append(s.accountLabel).append("] ");
+            }
+            holdingsBlock.append("\n");
 
             if (s.isCash()) {
                 holdingsBlock
@@ -566,6 +589,16 @@ public class PortfolioAnalysisService {
     }
 
     private String additionalAccountInstruction(AnalysisAccount account, List<HoldingSnapshot> snapshots) {
+        if (ACCOUNT_ALL.equals(account.type)) {
+            return "추가 출력 지침: 이 보고서는 장기(삼성증권)·단기(신한종합)·ISA(신한투자증권)·IRP(신한은행) 4개 계좌를 합친 통합 진단입니다. "
+                    + "각 계좌는 서로 다른 운용 전략을 따릅니다 — 장기: 코어/위성 장기보유, 단기: 스윙 매매(적극적 손절·익절), "
+                    + "ISA: 절세 중장기 적립식, IRP: 은퇴자산 안정성(위험자산 70% 한도, 안전자산 30% 목표). "
+                    + "한 계좌의 판단 기준을 다른 계좌 보유분에 그대로 적용하지 마세요 (예: 단기계좌 기준 손절 논리를 장기계좌 동일 종목에 적용 금지). "
+                    + "종목별 분석에서는 반드시 각 종목이 어느 계좌 소속인지 표기하고, 그 계좌의 전략 기준으로만 판단하세요. "
+                    + "동일 종목 또는 동일 섹터가 여러 계좌에 걸쳐 있으면 전체 자산 기준 노출 비중이 과도한지 별도 섹션에서 짚으세요. "
+                    + "근거가 부족하면 억지로 채우지 말고 '해당 없음'이라고 쓰세요.\n"
+                    + accountAllocationMemo(account, snapshots);
+        }
         if (ACCOUNT_ISA.equals(account.type)) {
             return "추가 출력 지침: 이 보고서는 반드시 신한투자증권 ISA 계좌의 중장기 적립식 진단으로 작성하세요. "
                     + "절세 계좌 운용을 다루는 최고 수준의 전문가 관점으로, 중장기 적립·분할매수·세제 효율을 최우선으로 점검하세요. "
@@ -741,6 +774,7 @@ public class PortfolioAnalysisService {
         boolean core;
         Long quantity;
         Double avgPrice;
+        String accountLabel;
     }
 
     private static class HoldingSnapshot {
@@ -758,6 +792,7 @@ public class PortfolioAnalysisService {
         Double marketValue;
         Double marketValueKRW;
         Double weightPct;
+        String accountLabel;
 
         boolean isCash() {
             return ASSET_CASH.equalsIgnoreCase(assetType);

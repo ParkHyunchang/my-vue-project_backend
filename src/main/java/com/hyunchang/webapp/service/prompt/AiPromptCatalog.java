@@ -20,6 +20,7 @@ public final class AiPromptCatalog {
     public static final String PORTFOLIO_ISA_ANALYSIS = "PORTFOLIO_ISA_ANALYSIS";
     public static final String PORTFOLIO_GENERAL_ANALYSIS = "PORTFOLIO_GENERAL_ANALYSIS";
     public static final String PORTFOLIO_IRP_ANALYSIS = "PORTFOLIO_IRP_ANALYSIS";
+    public static final String PORTFOLIO_ALL_ANALYSIS = "PORTFOLIO_ALL_ANALYSIS";
     public static final String TRAVEL_CREATE = "TRAVEL_CREATE";
     public static final String TRAVEL_REFINE = "TRAVEL_REFINE";
     public static final String REALESTATE_TRADE = "REALESTATE_TRADE";
@@ -47,6 +48,7 @@ public final class AiPromptCatalog {
         register(portfolioIsaAnalysis());
         register(portfolioGeneralAnalysis());
         register(portfolioIrpAnalysis());
+        register(portfolioAllAnalysis());
         // 여행 그룹
         register(travelCreate());
         register(travelRefine());
@@ -340,6 +342,58 @@ public final class AiPromptCatalog {
             ## 추가매수·비중축소 후보
             - 추가매수: 안정성·배당·밸류에이션 근거가 있는 경우만 1~3개. 없으면 '해당 없음'.
             - 비중축소: 명확한 안정성 위험(급변동·이익의 질·악재 공시)이 있는 경우만. 없으면 '해당 없음'.
+
+            ## 참고 고지
+            이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
+            """
+        );
+    }
+
+    private static PromptDefinition portfolioAllAnalysis() {
+        return new PromptDefinition(
+            PORTFOLIO_ALL_ANALYSIS,
+            "전체 계좌 종합 진단",
+            "주식",
+            "장기·단기·ISA·IRP 4개 계좌를 합친 통합 포트폴리오 진단 — 계좌별로 다른 운용 전략을 존중하면서 전체 자산배분과 계좌간 중복 노출을 점검합니다.",
+            List.of(
+                new PromptVariable("보유종목", "4개 계좌를 합친 보유 자산 상세 (계좌 라벨 포함, 현재가·평단가·손익률·관련 뉴스)"),
+                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                new PromptVariable("보유종목목록", "현재 보유 중인 전체 자산 라벨 목록")
+            ),
+            "",
+            """
+            ── 보유 종목 (전체 계좌 통합, 각 항목에 소속 계좌 표기) ──
+            {{보유종목}}
+            ── 보유 종목 재무·퀀트·공시 데이터 ──
+            {{재무데이터}}
+            ── 최근 시장 뉴스 (참고 자료) ──
+            {{시장뉴스}}
+            ── 현재 보유 중인 전체 자산 (참고) ──
+            {{보유종목목록}}
+            """,
+            """
+            ── 출력 형식 ──
+            한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
+            다음 섹션을 반드시 포함하세요:
+
+            ## 전체 자산 종합 진단
+            4개 계좌(장기/단기/ISA/IRP)를 합친 현재 포트폴리오 상태를 2~3문장으로 요약. 가장 시급한 판단이 필요한 종목·계좌를 명시.
+
+            ## 계좌간 중복·과집중 점검
+            동일 종목 또는 동일 섹터가 여러 계좌에 걸쳐 있는 경우, 전체 노출 비중 관점에서 과집중 여부를 점검하세요. 해당 사항 없으면 '해당 없음'.
+
+            ## 종목별 분석
+            보유 종목 전부에 대해 아래 형식으로 개별 섹션을 작성하세요. 계좌마다 전략이 다르므로 반드시 소속 계좌에 맞는 판단 기준을 적용하세요(장기=코어/위성 장기보유, 단기=스윙 손절/익절, ISA=절세 적립식, IRP=은퇴자산 안정성·위험자산 70% 한도):
+
+            ### [종목명 (티커)] — [소속 계좌] — 판단: ADD / HOLD / WATCH / TAKE_PROFIT / CUT_LOSS
+            - **현황**: 평단가 대비 손익률 N%, 일변동률 N%
+            - **밸류에이션·재무**: PER N배, PBR N배, ROE N% (없으면 '데이터 없음')
+            - **공시·뉴스**: 이 종목의 가장 임팩트 있는 뉴스 또는 공시 1건 인용 (없으면 '해당 없음')
+            - **계좌별 판단**: 소속 계좌의 전략 기준에 맞춘 판단 1~2문장. 구체적 수치 또는 뉴스 키워드 필수 포함.
+
+            ## 전체 자산배분 우선순위 액션
+            계좌를 가로질러 지금 당장 점검·실행할 행동 3~5개 (가장 시급한 순, 각 항목에 해당 계좌 명시)
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
