@@ -50,6 +50,36 @@ public class NaverFinanceService {
         long   volume         // 거래량
     ) {}
 
+    /** 네이버 금융 ETF/ETN 상세 페이지에서 보강한 상품 지표 */
+    public record NaverEtfData(
+        String symbol,
+        String name,
+        String nav,
+        String divergenceRate,
+        String trackingError,
+        String expenseRatio,
+        String distribution,
+        String dividendYield,
+        String underlyingIndex,
+        String netAssetValue,
+        String tradeValue
+    ) {
+        public boolean hasMetric() {
+            return notBlank(nav)
+                || notBlank(divergenceRate)
+                || notBlank(trackingError)
+                || notBlank(expenseRatio)
+                || notBlank(distribution)
+                || notBlank(underlyingIndex)
+                || notBlank(netAssetValue)
+                || notBlank(tradeValue);
+        }
+
+        private static boolean notBlank(String value) {
+            return value != null && !value.isBlank();
+        }
+    }
+
     private final KrxOpenApiService krxOpenApiService;
 
     public NaverFinanceService(KrxOpenApiService krxOpenApiService) {
@@ -132,10 +162,131 @@ public class NaverFinanceService {
         return name;
     }
 
+    /**
+     * 국내 ETF/ETN 상세 지표 보강.
+     * DART 기업 재무제표 대상이 아닌 ETF/ETN 분석에서 NAV, 괴리율, 보수, 분배금 같은 상품 지표를 사용한다.
+     */
+    public NaverEtfData fetchEtfData(String symbol) {
+        if (symbol == null) return null;
+        String code = extractListedCode(symbol);
+        if (code == null) return null;
+
+        try {
+            String url = "https://finance.naver.com/item/main.naver?code=" + code;
+            Document doc = Jsoup.connect(url)
+                .userAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+                           "AppleWebKit/537.36 (KHTML, like Gecko) " +
+                           "Chrome/122.0.0.0 Safari/537.36")
+                .header("Referer", "https://finance.naver.com/")
+                .header("Accept-Language", "ko-KR,ko;q=0.9")
+                .timeout(10_000)
+                .get();
+
+            Map<String, String> facts = extractLabelValueFacts(doc);
+            String name = Optional.ofNullable(doc.selectFirst(".wrap_company h2 a"))
+                .map(Element::text)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .orElse(null);
+
+            NaverEtfData data = new NaverEtfData(
+                symbol,
+                name,
+                pickFact(facts, "NAV", "순자산가치"),
+                pickFact(facts, "괴리율"),
+                pickFact(facts, "추적오차"),
+                pickFact(facts, "총보수", "보수", "운용보수"),
+                pickFact(facts, "분배금", "최근분배금"),
+                pickFact(facts, "배당수익률", "분배금수익률"),
+                pickFact(facts, "기초지수", "추종지수", "비교지수", "기초자산"),
+                pickFact(facts, "순자산총액", "순자산"),
+                pickFact(facts, "거래대금")
+            );
+            return data.hasMetric() ? data : null;
+
+        } catch (IOException e) {
+            log.debug("Naver ETF 상세 지표 조회 실패 [{}]: {}", code, e.getMessage());
+            return null;
+        }
+    }
+
     private String extractCode(String symbol) {
         int dot = symbol.indexOf('.');
         String code = (dot >= 0) ? symbol.substring(0, dot) : symbol;
         return code.length() == 6 && code.chars().allMatch(Character::isDigit) ? code : null;
+    }
+
+    private String extractListedCode(String symbol) {
+        int dot = symbol.indexOf('.');
+        String code = (dot >= 0) ? symbol.substring(0, dot) : symbol;
+        return code.length() == 6 && code.chars().allMatch(Character::isLetterOrDigit) ? code : null;
+    }
+
+    private Map<String, String> extractLabelValueFacts(Document doc) {
+        Map<String, String> facts = new LinkedHashMap<>();
+        for (Element row : doc.select("tr")) {
+            Elements labels = row.select("th");
+            Elements values = row.select("td");
+            if (!labels.isEmpty() && labels.size() == values.size()) {
+                for (int i = 0; i < labels.size(); i++) {
+                    putFact(facts, labels.get(i).text(), values.get(i).text());
+                }
+                continue;
+            }
+
+            Elements cells = row.select("th,td");
+            for (int i = 0; i + 1 < cells.size(); i++) {
+                putFact(facts, cells.get(i).text(), cells.get(i + 1).text());
+            }
+        }
+
+        for (Element dl : doc.select("dl")) {
+            Elements labels = dl.select("dt");
+            Elements values = dl.select("dd");
+            int n = Math.min(labels.size(), values.size());
+            for (int i = 0; i < n; i++) {
+                putFact(facts, labels.get(i).text(), values.get(i).text());
+            }
+        }
+        return facts;
+    }
+
+    private void putFact(Map<String, String> facts, String rawLabel, String rawValue) {
+        String label = cleanLabel(rawLabel);
+        String value = cleanValue(rawValue);
+        if (label == null || value == null) return;
+        if (label.length() > 30 || value.length() > 80) return;
+        if (label.equals(value)) return;
+        facts.putIfAbsent(label, value);
+    }
+
+    private String pickFact(Map<String, String> facts, String... keys) {
+        for (Map.Entry<String, String> entry : facts.entrySet()) {
+            String label = entry.getKey();
+            for (String key : keys) {
+                if (label.contains(key)) return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private String cleanLabel(String text) {
+        if (text == null) return null;
+        String clean = text.replace('\u00a0', ' ')
+            .replaceAll("\\s+", "")
+            .replaceAll("[:：]+$", "")
+            .trim();
+        if (clean.isBlank() || clean.equals("-")) return null;
+        return clean;
+    }
+
+    private String cleanValue(String text) {
+        if (text == null) return null;
+        String clean = text.replace('\u00a0', ' ')
+            .replaceAll("\\s+", " ")
+            .trim();
+        if (clean.isBlank() || clean.equals("-") || clean.equalsIgnoreCase("N/A")) return null;
+        return clean;
     }
 
     private String fetchStockNameFromNaver(String code) {

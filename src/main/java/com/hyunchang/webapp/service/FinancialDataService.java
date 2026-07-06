@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
@@ -31,10 +32,17 @@ public class FinancialDataService {
 
     private final YahooFinanceService yahoo;
     private final DartFinancialService dart;
+    private final NaverFinanceService naverFinanceService;
+    private final KrxOpenApiService krxOpenApiService;
 
-    public FinancialDataService(YahooFinanceService yahoo, DartFinancialService dart) {
+    public FinancialDataService(YahooFinanceService yahoo,
+                                DartFinancialService dart,
+                                NaverFinanceService naverFinanceService,
+                                KrxOpenApiService krxOpenApiService) {
         this.yahoo = yahoo;
         this.dart = dart;
+        this.naverFinanceService = naverFinanceService;
+        this.krxOpenApiService = krxOpenApiService;
     }
 
     @PreDestroy
@@ -54,6 +62,8 @@ public class FinancialDataService {
                 String disclosures = dart.disclosureSummary(symbol);
                 return kr + (disclosures == null || disclosures.isBlank() ? "" : "\n\n" + disclosures);
             }
+            String fallback = krFallbackSummary(symbol);
+            if (fallback != null) return fallback;
             return dart.enabled()
                 ? "(국내 종목 재무 데이터를 DART에서 찾지 못함 — 시세·뉴스 기반으로 분석하세요)"
                 : "(국내 종목 재무 데이터 미연동 — 시세·뉴스 기반으로 분석하세요)";
@@ -166,8 +176,13 @@ public class FinancialDataService {
     }
 
     private String usOneLine(String symbol) {
+        String line = yahooOneLineOrNull(symbol);
+        return line == null ? "재무 데이터 없음" : line;
+    }
+
+    private String yahooOneLineOrNull(String symbol) {
         JsonNode root = yahoo.fetchFundamentals(symbol);
-        if (root == null) return "재무 데이터 없음";
+        if (root == null) return null;
         JsonNode sd = root.path("summaryDetail");
         JsonNode ks = root.path("defaultKeyStatistics");
         JsonNode fd = root.path("financialData");
@@ -183,12 +198,16 @@ public class FinancialDataService {
         appendInline(sb, "매출성장", pctStr(num(fd.path("revenueGrowth"))));
         appendInline(sb, "CFO/NI", qualityRatioStr(firstNum(fd.path("operatingCashflow")), firstNum(ks.path("netIncomeToCommon"), fd.path("netIncomeToCommon"))));
         appendInline(sb, "ShortRatio", ratioStr(num(ks.path("shortRatio")), ""));
-        return sb.length() == 0 ? "재무 데이터 없음" : sb.toString();
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     private String krOneLine(String symbol) {
         String block = dart.summary(symbol);
-        if (block == null) return dart.enabled() ? "국내 재무 미수집" : "국내 재무 미연동";
+        if (block == null) {
+            String fallback = krFallbackOneLine(symbol);
+            if (fallback != null) return fallback;
+            return dart.enabled() ? "국내 재무 미수집" : "국내 재무 미연동";
+        }
         // 멀티라인 요약을 한 줄로 압축 (출처 줄 제외)
         String[] lines = block.split("\n");
         StringBuilder sb = new StringBuilder();
@@ -206,6 +225,88 @@ public class FinancialDataService {
             sb.append(disclosures);
         }
         return sb.length() == 0 ? "국내 재무 미수집" : sb.toString();
+    }
+
+    private String krFallbackSummary(String symbol) {
+        String line = krFallbackOneLine(symbol);
+        return line == null ? null : "(출처: KRX/Naver 보조 데이터)\n" + line;
+    }
+
+    private String krFallbackOneLine(String symbol) {
+        NaverFinanceService.NaverEtfData etfData = safeFetchEtfData(symbol);
+        boolean etp = etfData != null || isKrxEtp(symbol);
+
+        StringBuilder sb = new StringBuilder();
+        String etfLine = etfData == null ? null : etfDataLine(etfData);
+        appendInline(sb, "ETF/ETN 상품지표", etfLine);
+        appendInline(sb, "KRX 거래지표", krxTradeLine(symbol));
+        if (etp || etfData != null) {
+            appendInline(sb, "해석 기준",
+                    "ETF/ETN은 DART 기업 재무제표 비대상. PER/PBR/ROE가 없으면 NAV·괴리율·분배금/배당·총보수·거래량·기초지수 중심으로 판단");
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    private boolean isKrxEtp(String symbol) {
+        String normalized = normalizeSymbol(symbol);
+        if (normalized == null) return false;
+        String code = normalized.split("\\.")[0];
+        if (code.chars().anyMatch(Character::isLetter)) return true;
+        try {
+            return krxOpenApiService.getAllEtp().stream()
+                    .anyMatch(s -> normalized.equalsIgnoreCase(s.symbol()));
+        } catch (Exception e) {
+            log.debug("[Financial] KRX ETP 여부 조회 실패 [{}]: {}", symbol, e.getMessage());
+            return false;
+        }
+    }
+
+    private NaverFinanceService.NaverEtfData safeFetchEtfData(String symbol) {
+        try {
+            return naverFinanceService.fetchEtfData(symbol);
+        } catch (Exception e) {
+            log.debug("[Financial] Naver ETF 지표 조회 실패 [{}]: {}", symbol, e.getMessage());
+            return null;
+        }
+    }
+
+    private String etfDataLine(NaverFinanceService.NaverEtfData data) {
+        List<String> parts = new ArrayList<>();
+        addPart(parts, "NAV", data.nav());
+        addPart(parts, "괴리율", data.divergenceRate());
+        addPart(parts, "추적오차", data.trackingError());
+        addPart(parts, "총보수", data.expenseRatio());
+        addPart(parts, "분배금", data.distribution());
+        addPart(parts, "배당/분배수익률", data.dividendYield());
+        addPart(parts, "기초지수", data.underlyingIndex());
+        addPart(parts, "순자산", data.netAssetValue());
+        addPart(parts, "거래대금", data.tradeValue());
+        return parts.isEmpty() ? null : String.join(" · ", parts);
+    }
+
+    private String krxTradeLine(String symbol) {
+        try {
+            NaverFinanceService.NaverStockData data = krxOpenApiService.getKrPrice(symbol);
+            if (data == null) return null;
+            List<String> parts = new ArrayList<>();
+            if (data.price() > 0) parts.add("현재가 " + priceKrw(data.price()));
+            parts.add("일변동률 " + String.format(Locale.US, "%+.2f%%", data.changePercent()));
+            if (data.marketCap() > 0) parts.add("시가총액 " + moneyKrw(data.marketCap()));
+            if (data.volume() > 0) parts.add("거래량 " + String.format(Locale.KOREA, "%,d주", data.volume()));
+            return parts.isEmpty() ? null : String.join(" · ", parts);
+        } catch (Exception e) {
+            log.debug("[Financial] KRX 거래지표 조회 실패 [{}]: {}", symbol, e.getMessage());
+            return null;
+        }
+    }
+
+    private void addPart(List<String> parts, String label, String value) {
+        if (value != null && !value.isBlank()) parts.add(label + " " + value);
+    }
+
+    private String normalizeSymbol(String symbol) {
+        if (symbol == null || symbol.isBlank()) return null;
+        return symbol.trim().toUpperCase(Locale.ROOT);
     }
 
     // ── 포맷 헬퍼 ──────────────────────────────────────────────────────────
@@ -261,6 +362,20 @@ public class FinancialDataService {
         return fmt2(cfo / netIncome) + "배";
     }
     private String fmt2(double v) { return String.format(Locale.US, "%,.2f", v); }
+    private String priceKrw(double v) { return String.format(Locale.KOREA, "%,d원", Math.round(v)); }
+    private String moneyKrw(long v) {
+        if (v >= 1_0000_0000_0000L) {
+            long jo = v / 1_0000_0000_0000L;
+            long eok = (v % 1_0000_0000_0000L) / 1_0000_0000L;
+            return eok > 0
+                    ? String.format(Locale.KOREA, "%d조 %,d억", jo, eok)
+                    : String.format(Locale.KOREA, "%d조", jo);
+        }
+        if (v >= 1_0000_0000L) {
+            return String.format(Locale.KOREA, "%,d억", v / 1_0000_0000L);
+        }
+        return String.format(Locale.KOREA, "%,d원", v);
+    }
     private String moneyUsd(double v) {
         if (v >= 1e12) return String.format(Locale.US, "$%.2fT", v / 1e12);
         if (v >= 1e9)  return String.format(Locale.US, "$%.2fB", v / 1e9);

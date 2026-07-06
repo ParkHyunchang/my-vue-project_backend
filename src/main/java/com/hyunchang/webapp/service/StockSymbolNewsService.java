@@ -102,14 +102,8 @@ public class StockSymbolNewsService {
         List<CompletableFuture<List<StockNewsDto>>> tasks = new ArrayList<>();
 
         if ("KR".equals(mkt)) {
-            if (notBlank(name)) {
-                tasks.add(asyncSafe(() -> fetchGoogleNews(name, "ko", "KR", "ko-KR", "Google News · 종목")));
-                tasks.add(asyncSafe(() -> fetchGoogleNews(
-                        name + " (주가 OR 실적 OR 투자 OR 공시 OR 배당)",
-                        "ko", "KR", "ko-KR", "Google News · 투자키워드")));
-                tasks.add(asyncSafe(() -> fetchGoogleNews(
-                        name + " (site:hankyung.com OR site:mk.co.kr OR site:yna.co.kr OR site:sedaily.com OR site:edaily.co.kr OR site:news.mt.co.kr)",
-                        "ko", "KR", "ko-KR", "Google News · 주요경제지")));
+            for (NewsQuery q : buildKrNewsQueries(symbol, name)) {
+                tasks.add(asyncSafe(() -> fetchGoogleNews(q.query(), "ko", "KR", "ko-KR", q.sourceLabel())));
             }
         } else {
             String ticker = symbol == null ? "" : symbol.split("\\.")[0].toUpperCase(Locale.ROOT);
@@ -146,6 +140,52 @@ public class StockSymbolNewsService {
                 RssClient.parsePubDateEpoch(b.getPubDate()),
                 RssClient.parsePubDateEpoch(a.getPubDate())));
         return deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
+    }
+
+    private record NewsQuery(String query, String sourceLabel) {}
+
+    private List<NewsQuery> buildKrNewsQueries(String symbol, String name) {
+        Map<String, String> queries = new LinkedHashMap<>();
+        if (notBlank(name)) {
+            addQuery(queries, name, "Google News · 종목");
+            addQuery(queries, name + " (주가 OR 실적 OR 투자 OR 공시 OR 배당 OR 분배금)", "Google News · 투자키워드");
+            addQuery(queries,
+                    name + " (site:hankyung.com OR site:mk.co.kr OR site:yna.co.kr OR site:sedaily.com OR site:edaily.co.kr OR site:news.mt.co.kr)",
+                    "Google News · 주요경제지");
+
+            String simplified = simplifyKrEtfName(name);
+            if (notBlank(simplified) && !simplified.equals(name)) {
+                addQuery(queries, simplified + " ETF", "Google News · ETF키워드");
+                addQuery(queries, simplified + " (상장지수펀드 OR ETF OR 분배금 OR 운용보수)", "Google News · ETF상품");
+            }
+        }
+
+        String shortCode = symbol == null ? "" : symbol.split("\\.")[0].trim();
+        if (notBlank(shortCode) && notBlank(name)) {
+            addQuery(queries, shortCode + " " + name, "Google News · 코드");
+        }
+
+        return queries.entrySet().stream()
+                .limit(6)
+                .map(e -> new NewsQuery(e.getKey(), e.getValue()))
+                .toList();
+    }
+
+    private void addQuery(Map<String, String> queries, String query, String sourceLabel) {
+        if (!notBlank(query)) return;
+        String normalized = query.replaceAll("\\s+", " ").trim();
+        if (!normalized.isBlank()) queries.putIfAbsent(normalized, sourceLabel);
+    }
+
+    private String simplifyKrEtfName(String name) {
+        if (!notBlank(name)) return "";
+        String simplified = name.trim()
+                .replaceFirst("^(KODEX|TIGER|SOL|ACE|KBSTAR|RISE|PLUS|HANARO|ARIRANG|TIMEFOLIO|WON|KoAct)\\s*", "")
+                .replaceAll("([가-힣])([A-Za-z0-9])", "$1 $2")
+                .replaceAll("([A-Za-z0-9])([가-힣])", "$1 $2")
+                .replaceAll("\\s+", " ")
+                .trim();
+        return simplified;
     }
 
     // ─────────────────────────────────────────────────────────────

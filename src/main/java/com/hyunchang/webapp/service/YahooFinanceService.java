@@ -596,7 +596,7 @@ public class YahooFinanceService {
                 return fallback;
             }
             fundamentalsCache.putNegative(cacheKey);
-            log.warn("Yahoo fundamentals lookup failed [{}] (auth unavailable and v7 fallback empty) - retry skipped for 5 minutes", requestedSymbol);
+            logFundamentalsMiss(requestedSymbol, "auth unavailable and v7 fallback empty");
             return null;
         }
 
@@ -644,8 +644,26 @@ public class YahooFinanceService {
             }
         }
         fundamentalsCache.putNegative(cacheKey);
-        log.warn("Yahoo fundamentals lookup failed [{}] ({}) - retry skipped for 5 minutes", requestedSymbol, failureCause);
+        logFundamentalsMiss(requestedSymbol, failureCause);
         return null;
+    }
+
+    private void logFundamentalsMiss(String symbol, String cause) {
+        String msg = "Yahoo fundamentals lookup failed [{}] ({}) - retry skipped for 5 minutes";
+        if (isExpectedKrFundamentalsMiss(symbol, cause)) {
+            log.debug(msg, symbol, cause);
+        } else {
+            log.warn(msg, symbol, cause);
+        }
+    }
+
+    private boolean isExpectedKrFundamentalsMiss(String symbol, String cause) {
+        if (symbol == null || cause == null) return false;
+        String upper = symbol.toUpperCase(Locale.ROOT);
+        if (!upper.endsWith(".KS") && !upper.endsWith(".KQ")) return false;
+        return cause.contains("404")
+            || cause.contains("Not Found")
+            || cause.contains("No fundamentals data found");
     }
 
     /**
