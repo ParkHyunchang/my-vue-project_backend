@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.GeneralHoldingResponse;
 import com.hyunchang.webapp.entity.GeneralHolding;
 import com.hyunchang.webapp.entity.PortfolioAssetType;
 import com.hyunchang.webapp.entity.User;
@@ -21,20 +22,34 @@ public class GeneralHoldingService {
 
     private final GeneralHoldingRepository generalHoldingRepository;
     private final UserRepository userRepository;
+    private final StockService stockService;
 
     public GeneralHoldingService(GeneralHoldingRepository generalHoldingRepository,
-                                 UserRepository userRepository) {
+                                 UserRepository userRepository,
+                                 StockService stockService) {
         this.generalHoldingRepository = generalHoldingRepository;
         this.userRepository = userRepository;
+        this.stockService = stockService;
     }
 
     @Transactional(readOnly = true)
-    public List<GeneralHolding> getHoldings(String userId) {
-        return generalHoldingRepository.findByUserUserIdOrderByIdAsc(userId);
+    public List<GeneralHoldingResponse> getHoldings(String userId) {
+        return generalHoldingRepository.findByUserUserIdOrderByIdAsc(userId).stream()
+            .map(this::toResponseWithKoreanName)
+            .toList();
     }
 
-    public GeneralHolding addHolding(String userId, PortfolioAssetType assetType, String market, String name,
-                                     String symbol, Long quantity, Double avgPrice) {
+    private GeneralHoldingResponse toResponseWithKoreanName(GeneralHolding holding) {
+        GeneralHoldingResponse response = GeneralHoldingResponse.from(holding);
+        if (PortfolioAssetType.STOCK.name().equals(holding.getAssetType())) {
+            String kor = stockService.resolveStockName(holding.getSymbol());
+            if (kor != null && !kor.isBlank()) response.setName(kor);
+        }
+        return response;
+    }
+
+    public GeneralHoldingResponse addHolding(String userId, PortfolioAssetType assetType, String market, String name,
+                                             String symbol, Long quantity, Double avgPrice) {
         User user = userRepository.findByUserId(userId)
             .orElseThrow(() -> new IllegalStateException("User not found: " + userId));
 
@@ -53,10 +68,10 @@ public class GeneralHoldingService {
         log.info("[STOCK/GENERAL] user={}({}), CREATE id={} symbol={} assetType={} market={} quantity={} avgPrice={}",
             userId, SecurityUtils.getCurrentUserRoleName(),
             saved.getId(), saved.getSymbol(), saved.getAssetType(), saved.getMarket(), saved.getQuantity(), saved.getAvgPrice());
-        return saved;
+        return GeneralHoldingResponse.from(saved);
     }
 
-    public GeneralHolding updateHolding(String userId, Long id, Long quantity, Double avgPrice) {
+    public GeneralHoldingResponse updateHolding(String userId, Long id, Long quantity, Double avgPrice) {
         GeneralHolding holding = generalHoldingRepository.findByIdAndUserUserId(id, userId)
             .orElseThrow(() -> new IllegalArgumentException("General holding not found."));
 
@@ -67,10 +82,10 @@ public class GeneralHoldingService {
         log.info("[STOCK/GENERAL] user={}({}), UPDATE id={} symbol={} quantity={} avgPrice={}",
             userId, SecurityUtils.getCurrentUserRoleName(),
             saved.getId(), saved.getSymbol(), saved.getQuantity(), saved.getAvgPrice());
-        return saved;
+        return GeneralHoldingResponse.from(saved);
     }
 
-    public GeneralHolding updateCore(String userId, Long id, boolean core) {
+    public GeneralHoldingResponse updateCore(String userId, Long id, boolean core) {
         GeneralHolding holding = generalHoldingRepository.findByIdAndUserUserId(id, userId)
             .orElseThrow(() -> new IllegalArgumentException("General holding not found."));
 
@@ -80,7 +95,7 @@ public class GeneralHoldingService {
         log.info("[STOCK/GENERAL] user={}({}), CORE id={} symbol={} core={}",
             userId, SecurityUtils.getCurrentUserRoleName(),
             saved.getId(), saved.getSymbol(), core);
-        return saved;
+        return GeneralHoldingResponse.from(saved);
     }
 
     public void deleteHolding(String userId, Long id) {

@@ -1,9 +1,9 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.GeneralHoldingResponse;
 import com.hyunchang.webapp.dto.PortfolioAnalysisResponse;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.dto.StockPriceDto;
-import com.hyunchang.webapp.entity.GeneralHolding;
 import com.hyunchang.webapp.entity.IrpHolding;
 import com.hyunchang.webapp.entity.IsaHolding;
 import com.hyunchang.webapp.entity.StockHolding;
@@ -245,7 +245,7 @@ public class PortfolioAnalysisService {
                 h.getQuantity(), h.getAvgPrice(), h.isCore(), h.getAssetType());
     }
 
-    private PortfolioHoldingInput fromGeneralHolding(GeneralHolding h) {
+    private PortfolioHoldingInput fromGeneralHolding(GeneralHoldingResponse h) {
         return mapHolding(h.getSymbol(), h.getName(), h.getMarket(),
                 h.getQuantity(), h.getAvgPrice(), h.isCore(), h.getAssetType());
     }

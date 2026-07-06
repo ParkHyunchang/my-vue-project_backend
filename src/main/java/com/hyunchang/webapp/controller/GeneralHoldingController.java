@@ -2,10 +2,9 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
-import com.hyunchang.webapp.entity.GeneralHolding;
+import com.hyunchang.webapp.dto.GeneralHoldingResponse;
 import com.hyunchang.webapp.entity.PortfolioAssetType;
 import com.hyunchang.webapp.service.GeneralHoldingService;
-import com.hyunchang.webapp.service.StockService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -24,14 +23,11 @@ public class GeneralHoldingController {
 
     private final GeneralHoldingService generalHoldingService;
     private final MenuAccessGuard menuAccessGuard;
-    private final StockService stockService;
 
     public GeneralHoldingController(GeneralHoldingService generalHoldingService,
-                                    MenuAccessGuard menuAccessGuard,
-                                    StockService stockService) {
+                                    MenuAccessGuard menuAccessGuard) {
         this.generalHoldingService = generalHoldingService;
         this.menuAccessGuard = menuAccessGuard;
-        this.stockService = stockService;
     }
 
     private boolean hasAccess() {
@@ -46,14 +42,7 @@ public class GeneralHoldingController {
     @GetMapping("/holdings")
     public ResponseEntity<?> getHoldings() {
         if (!hasAccess()) return forbidden();
-        String userId = SecurityUtils.getCurrentUserId();
-        List<GeneralHolding> holdings = generalHoldingService.getHoldings(userId);
-        holdings.forEach(h -> {
-            if (PortfolioAssetType.STOCK.name().equals(h.getAssetType())) {
-                String kor = stockService.resolveStockName(h.getSymbol());
-                if (kor != null && !kor.isBlank()) h.setName(kor);
-            }
-        });
+        List<GeneralHoldingResponse> holdings = generalHoldingService.getHoldings(SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(holdings);
     }
 
@@ -74,7 +63,7 @@ public class GeneralHoldingController {
         ResponseEntity<?> invalid = validateRequest(request, assetType);
         if (invalid != null) return invalid;
 
-        GeneralHolding created = generalHoldingService.addHolding(
+        GeneralHoldingResponse created = generalHoldingService.addHolding(
             SecurityUtils.getCurrentUserId(),
             assetType,
             normalizedMarket(request.market(), assetType),
@@ -97,7 +86,7 @@ public class GeneralHoldingController {
         }
 
         Double avgPrice = numberAsDouble(body.get("avgPrice"));
-        GeneralHolding updated = generalHoldingService.updateHolding(SecurityUtils.getCurrentUserId(), id, quantity, avgPrice);
+        GeneralHoldingResponse updated = generalHoldingService.updateHolding(SecurityUtils.getCurrentUserId(), id, quantity, avgPrice);
         return ResponseEntity.ok(updated);
     }
 
@@ -111,7 +100,7 @@ public class GeneralHoldingController {
             return ResponseEntity.badRequest().body("core must be true or false.");
         }
 
-        GeneralHolding updated = generalHoldingService.updateCore(SecurityUtils.getCurrentUserId(), id, core);
+        GeneralHoldingResponse updated = generalHoldingService.updateCore(SecurityUtils.getCurrentUserId(), id, core);
         return ResponseEntity.ok(updated);
     }
 
