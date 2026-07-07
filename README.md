@@ -26,6 +26,12 @@ Spring Boot + MySQL 기반 백엔드 API 서버입니다.
 
 `.env` 파일의 환경변수를 읽어 Spring Boot를 실행합니다.
 
+### 코드 스타일
+
+Google Java Style(AOSP 변형, 4칸 들여쓰기)을 Spotless로 강제합니다.
+커밋 전 `mvn spotless:apply`로 정리하세요 (`verify` 페이즈에서 자동 검사됨).
+전면 리포맷 커밋을 blame에서 제외하려면: `git config blame.ignoreRevsFile .git-blame-ignore-revs`
+
 ### .env 설정
 
 | 변수 | 기본값 | 설명 |
