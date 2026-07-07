@@ -5,10 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -16,18 +12,21 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
 
 /**
- * AI 여행 플래너 — 목적지·기간·동행·스타일·예산을 받아 일자별 추천 일정을 생성한다.
- * 부동산/주식 AI 시황과 동일하게 AiProviderChain(Gemini → Groq → Cloudflare)을 재사용한다.
- * AI 제공자가 모두 차단/실패하면 blocked=true 와 다음 가능 시각을 반환한다.
+ * AI 여행 플래너 — 목적지·기간·동행·스타일·예산을 받아 일자별 추천 일정을 생성한다. 부동산/주식 AI 시황과 동일하게 AiProviderChain(Gemini →
+ * Groq → Cloudflare)을 재사용한다. AI 제공자가 모두 차단/실패하면 blocked=true 와 다음 가능 시각을 반환한다.
  */
 @Service
 public class TravelPlannerService {
 
     private static final Logger log = LoggerFactory.getLogger(TravelPlannerService.class);
 
-    private static final Pattern JSON_FENCE = Pattern.compile("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```");
+    private static final Pattern JSON_FENCE =
+            Pattern.compile("```(?:json)?\\s*(\\{[\\s\\S]*?\\})\\s*```");
     private static final Pattern FIRST_OBJECT = Pattern.compile("\\{[\\s\\S]*\\}");
 
     private final AiProviderChain aiProviderChain;
@@ -39,10 +38,17 @@ public class TravelPlannerService {
         this.aiPromptService = aiPromptService;
     }
 
-    public Map<String, Object> plan(String destination, int days, String companions,
-                                    String style, String budget,
-                                    boolean includeFlight, boolean includeStay) {
-        String prompt = buildPrompt(destination, days, companions, style, budget, includeFlight, includeStay);
+    public Map<String, Object> plan(
+            String destination,
+            int days,
+            String companions,
+            String style,
+            String budget,
+            boolean includeFlight,
+            boolean includeStay) {
+        String prompt =
+                buildPrompt(
+                        destination, days, companions, style, budget, includeFlight, includeStay);
         AiProviderChain.ChainResult chain = aiProviderChain.analyze(prompt);
 
         Map<String, Object> res = new LinkedHashMap<>();
@@ -65,7 +71,8 @@ public class TravelPlannerService {
     }
 
     /** 채팅 기반 일정 수정 — 현재 일정 + 사용자 요청을 받아 같은 스키마로 다시 출력. */
-    public Map<String, Object> refine(String destination, int days, Object currentPlan, String instruction) {
+    public Map<String, Object> refine(
+            String destination, int days, Object currentPlan, String instruction) {
         String prompt = buildRefinePrompt(currentPlan, instruction);
         AiProviderChain.ChainResult chain = aiProviderChain.analyze(prompt);
 
@@ -105,14 +112,20 @@ public class TravelPlannerService {
         }
     }
 
-    private String buildPrompt(String destination, int days, String companions, String style, String budget,
-                               boolean includeFlight, boolean includeStay) {
+    private String buildPrompt(
+            String destination,
+            int days,
+            String companions,
+            String style,
+            String budget,
+            boolean includeFlight,
+            boolean includeStay) {
         int nights = Math.max(0, days - 1);
         String companionsText = (companions == null || companions.isBlank()) ? "미지정" : companions;
         String styleText = (style == null || style.isBlank()) ? "미지정" : style;
         String budgetText = (budget == null || budget.isBlank()) ? "미지정" : budget;
-        String budgetScope = "항공권 " + (includeFlight ? "포함" : "불포함")
-            + ", 숙박 " + (includeStay ? "포함" : "불포함");
+        String budgetScope =
+                "항공권 " + (includeFlight ? "포함" : "불포함") + ", 숙박 " + (includeStay ? "포함" : "불포함");
 
         Map<String, String> vars = new LinkedHashMap<>();
         vars.put("목적지", nullSafe(destination));
@@ -195,7 +208,9 @@ public class TravelPlannerService {
         return out;
     }
 
-    private String nullSafe(String s) { return s == null ? "" : s; }
+    private String nullSafe(String s) {
+        return s == null ? "" : s;
+    }
 
     private String truncate(String s, int max) {
         if (s == null) return "";

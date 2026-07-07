@@ -15,14 +15,11 @@ public class MenuPermissionInitializer implements ApplicationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(MenuPermissionInitializer.class);
 
-    @Autowired
-    private MenuPermissionService menuPermissionService;
+    @Autowired private MenuPermissionService menuPermissionService;
 
-    @Autowired
-    private RoleInfoService roleInfoService;
+    @Autowired private RoleInfoService roleInfoService;
 
-    @Autowired
-    private MenuDefinitionService menuDefinitionService;
+    @Autowired private MenuDefinitionService menuDefinitionService;
 
     @Override
     public void run(ApplicationArguments args) throws Exception {

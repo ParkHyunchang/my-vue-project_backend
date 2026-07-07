@@ -4,6 +4,8 @@ import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.service.TodoService;
+import java.util.List;
+import java.util.Map;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -15,9 +17,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
 
 @RestController
 @RequestMapping("/api/todos")
@@ -52,12 +51,12 @@ public class TodoController {
             @RequestParam(defaultValue = "desc") String dir) {
         if (!hasAccess()) return forbidden();
 
-        Page<Todo> todoPage = todoService.search(q, status, priority, category, sort, dir, page, size);
+        Page<Todo> todoPage =
+                todoService.search(q, status, priority, category, sort, dir, page, size);
 
-        return ResponseEntity
-            .ok()
-            .header("X-Total-Count", String.valueOf(todoPage.getTotalElements()))
-            .body(todoPage.getContent());
+        return ResponseEntity.ok()
+                .header("X-Total-Count", String.valueOf(todoPage.getTotalElements()))
+                .body(todoPage.getContent());
     }
 
     @GetMapping("/categories")
@@ -98,5 +97,4 @@ public class TodoController {
         int deleted = todoService.deleteAllCompleted();
         return ResponseEntity.ok(Map.of("deleted", deleted));
     }
-
 }

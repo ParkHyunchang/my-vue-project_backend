@@ -10,18 +10,14 @@ import com.hyunchang.webapp.repository.TravelLogRepository;
 import com.hyunchang.webapp.repository.TravelWishlistRepository;
 import com.hyunchang.webapp.repository.UserRepository;
 import com.hyunchang.webapp.util.SecurityUtils;
+import java.time.LocalDate;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.LocalDate;
-import java.util.List;
-
-/**
- * 여행 기능의 데이터 CRUD — 버킷리스트(가고 싶은 곳)와 다녀온 곳(여행 기록).
- * AI 플래너는 별도 서비스(TravelPlannerService)에서 처리한다.
- */
+/** 여행 기능의 데이터 CRUD — 버킷리스트(가고 싶은 곳)와 다녀온 곳(여행 기록). AI 플래너는 별도 서비스(TravelPlannerService)에서 처리한다. */
 @Service
 @Transactional
 public class TravelService {
@@ -34,10 +30,11 @@ public class TravelService {
     private final UserRepository userRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public TravelService(TravelWishlistRepository wishlistRepository,
-                         TravelLogRepository logRepository,
-                         TravelItineraryRepository itineraryRepository,
-                         UserRepository userRepository) {
+    public TravelService(
+            TravelWishlistRepository wishlistRepository,
+            TravelLogRepository logRepository,
+            TravelItineraryRepository itineraryRepository,
+            UserRepository userRepository) {
         this.wishlistRepository = wishlistRepository;
         this.logRepository = logRepository;
         this.itineraryRepository = itineraryRepository;
@@ -45,8 +42,9 @@ public class TravelService {
     }
 
     private User requireUser(String userId) {
-        return userRepository.findByUserId(userId)
-            .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다: " + userId));
+        return userRepository
+                .findByUserId(userId)
+                .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다: " + userId));
     }
 
     private static Integer clampPriority(Integer p) {
@@ -66,8 +64,15 @@ public class TravelService {
         return wishlistRepository.findByUserUserIdOrderByPriorityAscIdDesc(userId);
     }
 
-    public TravelWishlist addWishlist(String userId, String title, String country, String city,
-                                      Integer priority, String targetPeriod, Long estBudget, String memo) {
+    public TravelWishlist addWishlist(
+            String userId,
+            String title,
+            String country,
+            String city,
+            Integer priority,
+            String targetPeriod,
+            Long estBudget,
+            String memo) {
         TravelWishlist w = new TravelWishlist();
         w.setUser(requireUser(userId));
         w.setTitle(title);
@@ -78,15 +83,29 @@ public class TravelService {
         w.setEstBudget(estBudget);
         w.setMemo(memo);
         TravelWishlist saved = wishlistRepository.save(w);
-        log.info("[TRAVEL/WISHLIST] user={}({}), CREATE id={} title={}",
-            userId, SecurityUtils.getCurrentUserRoleName(), saved.getId(), saved.getTitle());
+        log.info(
+                "[TRAVEL/WISHLIST] user={}({}), CREATE id={} title={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getTitle());
         return saved;
     }
 
-    public TravelWishlist updateWishlist(String userId, Long id, String title, String country, String city,
-                                         Integer priority, String targetPeriod, Long estBudget, String memo) {
-        TravelWishlist w = wishlistRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("버킷리스트 항목을 찾을 수 없습니다."));
+    public TravelWishlist updateWishlist(
+            String userId,
+            Long id,
+            String title,
+            String country,
+            String city,
+            Integer priority,
+            String targetPeriod,
+            Long estBudget,
+            String memo) {
+        TravelWishlist w =
+                wishlistRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("버킷리스트 항목을 찾을 수 없습니다."));
         if (title != null && !title.isBlank()) w.setTitle(title);
         w.setCountry(country);
         w.setCity(city);
@@ -98,11 +117,17 @@ public class TravelService {
     }
 
     public void deleteWishlist(String userId, Long id) {
-        TravelWishlist w = wishlistRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("버킷리스트 항목을 찾을 수 없습니다."));
+        TravelWishlist w =
+                wishlistRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("버킷리스트 항목을 찾을 수 없습니다."));
         wishlistRepository.delete(w);
-        log.info("[TRAVEL/WISHLIST] user={}({}), DELETE id={} title={}",
-            userId, SecurityUtils.getCurrentUserRoleName(), w.getId(), w.getTitle());
+        log.info(
+                "[TRAVEL/WISHLIST] user={}({}), DELETE id={} title={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                w.getId(),
+                w.getTitle());
     }
 
     // ── 다녀온 곳 ──────────────────────────────────────────────────
@@ -114,14 +139,22 @@ public class TravelService {
 
     /** 기간 정규화: 도착일이 비었으면 출발일과 동일(당일), 도착<출발이면 두 값 교환. */
     private static LocalDate[] normalizeRange(LocalDate start, LocalDate end) {
-        if (start == null) return new LocalDate[]{null, null};
-        if (end == null) return new LocalDate[]{start, start};
-        return end.isBefore(start) ? new LocalDate[]{end, start} : new LocalDate[]{start, end};
+        if (start == null) return new LocalDate[] {null, null};
+        if (end == null) return new LocalDate[] {start, start};
+        return end.isBefore(start) ? new LocalDate[] {end, start} : new LocalDate[] {start, end};
     }
 
-    public TravelLog addVisited(String userId, String title, String country, String city,
-                                Double lat, Double lng, LocalDate startDate, LocalDate endDate,
-                                Integer rating, String memo) {
+    public TravelLog addVisited(
+            String userId,
+            String title,
+            String country,
+            String city,
+            Double lat,
+            Double lng,
+            LocalDate startDate,
+            LocalDate endDate,
+            Integer rating,
+            String memo) {
         LocalDate[] range = normalizeRange(startDate, endDate);
         TravelLog t = new TravelLog();
         t.setUser(requireUser(userId));
@@ -135,16 +168,33 @@ public class TravelService {
         t.setRating(clampRating(rating));
         t.setMemo(memo);
         TravelLog saved = logRepository.save(t);
-        log.info("[TRAVEL/LOG] user={}({}), CREATE id={} title={} lat={} lng={}",
-            userId, SecurityUtils.getCurrentUserRoleName(), saved.getId(), saved.getTitle(), saved.getLat(), saved.getLng());
+        log.info(
+                "[TRAVEL/LOG] user={}({}), CREATE id={} title={} lat={} lng={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getTitle(),
+                saved.getLat(),
+                saved.getLng());
         return saved;
     }
 
-    public TravelLog updateVisited(String userId, Long id, String title, String country, String city,
-                                   Double lat, Double lng, LocalDate startDate, LocalDate endDate,
-                                   Integer rating, String memo) {
-        TravelLog t = logRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("여행 기록을 찾을 수 없습니다."));
+    public TravelLog updateVisited(
+            String userId,
+            Long id,
+            String title,
+            String country,
+            String city,
+            Double lat,
+            Double lng,
+            LocalDate startDate,
+            LocalDate endDate,
+            Integer rating,
+            String memo) {
+        TravelLog t =
+                logRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("여행 기록을 찾을 수 없습니다."));
         LocalDate[] range = normalizeRange(startDate, endDate);
         if (title != null && !title.isBlank()) t.setTitle(title);
         t.setCountry(country);
@@ -159,11 +209,17 @@ public class TravelService {
     }
 
     public void deleteVisited(String userId, Long id) {
-        TravelLog t = logRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("여행 기록을 찾을 수 없습니다."));
+        TravelLog t =
+                logRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("여행 기록을 찾을 수 없습니다."));
         logRepository.delete(t);
-        log.info("[TRAVEL/LOG] user={}({}), DELETE id={} title={}",
-            userId, SecurityUtils.getCurrentUserRoleName(), t.getId(), t.getTitle());
+        log.info(
+                "[TRAVEL/LOG] user={}({}), DELETE id={} title={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                t.getId(),
+                t.getTitle());
     }
 
     // ── 예정 일정 ──────────────────────────────────────────────────
@@ -183,9 +239,15 @@ public class TravelService {
         return itineraryRepository.findByUserUserIdOrderByStartDateAscIdDesc(userId);
     }
 
-    public TravelItinerary addItinerary(String userId, String title, String destination,
-                                        LocalDate startDate, LocalDate endDate, Integer days,
-                                        Object itinerary, String memo) {
+    public TravelItinerary addItinerary(
+            String userId,
+            String title,
+            String destination,
+            LocalDate startDate,
+            LocalDate endDate,
+            Integer days,
+            Object itinerary,
+            String memo) {
         LocalDate[] range = normalizeRange(startDate, endDate);
         TravelItinerary it = new TravelItinerary();
         it.setUser(requireUser(userId));
@@ -197,16 +259,30 @@ public class TravelService {
         it.setItinerary(toJson(itinerary));
         it.setMemo(memo);
         TravelItinerary saved = itineraryRepository.save(it);
-        log.info("[TRAVEL/ITINERARY] user={}({}), CREATE id={} title={} days={}",
-            userId, SecurityUtils.getCurrentUserRoleName(), saved.getId(), saved.getTitle(), saved.getDays());
+        log.info(
+                "[TRAVEL/ITINERARY] user={}({}), CREATE id={} title={} days={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getTitle(),
+                saved.getDays());
         return saved;
     }
 
-    public TravelItinerary updateItinerary(String userId, Long id, String title, String destination,
-                                           LocalDate startDate, LocalDate endDate, Integer days,
-                                           Object itinerary, String memo) {
-        TravelItinerary it = itineraryRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("예정 일정을 찾을 수 없습니다."));
+    public TravelItinerary updateItinerary(
+            String userId,
+            Long id,
+            String title,
+            String destination,
+            LocalDate startDate,
+            LocalDate endDate,
+            Integer days,
+            Object itinerary,
+            String memo) {
+        TravelItinerary it =
+                itineraryRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("예정 일정을 찾을 수 없습니다."));
         LocalDate[] range = normalizeRange(startDate, endDate);
         if (title != null && !title.isBlank()) it.setTitle(title);
         it.setDestination(destination);
@@ -219,10 +295,16 @@ public class TravelService {
     }
 
     public void deleteItinerary(String userId, Long id) {
-        TravelItinerary it = itineraryRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("예정 일정을 찾을 수 없습니다."));
+        TravelItinerary it =
+                itineraryRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("예정 일정을 찾을 수 없습니다."));
         itineraryRepository.delete(it);
-        log.info("[TRAVEL/ITINERARY] user={}({}), DELETE id={} title={}",
-            userId, SecurityUtils.getCurrentUserRoleName(), it.getId(), it.getTitle());
+        log.info(
+                "[TRAVEL/ITINERARY] user={}({}), DELETE id={} title={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                it.getId(),
+                it.getTitle());
     }
 }

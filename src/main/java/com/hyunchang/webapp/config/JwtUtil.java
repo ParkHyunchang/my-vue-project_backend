@@ -4,16 +4,15 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.stereotype.Component;
-
-import javax.crypto.SecretKey;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import javax.crypto.SecretKey;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
 
 @Component
 public class JwtUtil {
@@ -34,7 +33,8 @@ public class JwtUtil {
 
     private SecretKey getSigningKey() {
         if (secret == null || secret.getBytes().length < 32) {
-            throw new IllegalStateException("jwt.secret must be at least 32 bytes (256 bits) for HS256");
+            throw new IllegalStateException(
+                    "jwt.secret must be at least 32 bytes (256 bits) for HS256");
         }
         return Keys.hmacShaKeyFor(secret.getBytes());
     }

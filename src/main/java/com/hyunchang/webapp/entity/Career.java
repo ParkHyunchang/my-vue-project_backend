@@ -52,33 +52,83 @@ public class Career {
         updatedAt = LocalDateTime.now();
     }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public Long getId() {
+        return id;
+    }
 
-    public String getIcon() { return icon; }
-    public void setIcon(String icon) { this.icon = icon; }
+    public void setId(Long id) {
+        this.id = id;
+    }
 
-    public String getCompany() { return company; }
-    public void setCompany(String company) { this.company = company; }
+    public String getIcon() {
+        return icon;
+    }
 
-    public String getPeriod() { return period; }
-    public void setPeriod(String period) { this.period = period; }
+    public void setIcon(String icon) {
+        this.icon = icon;
+    }
 
-    public String getBadge() { return badge; }
-    public void setBadge(String badge) { this.badge = badge; }
+    public String getCompany() {
+        return company;
+    }
 
-    public String getRoleDesc() { return roleDesc; }
-    public void setRoleDesc(String roleDesc) { this.roleDesc = roleDesc; }
+    public void setCompany(String company) {
+        this.company = company;
+    }
 
-    public String getProjects() { return projects; }
-    public void setProjects(String projects) { this.projects = projects; }
+    public String getPeriod() {
+        return period;
+    }
 
-    public String getTags() { return tags; }
-    public void setTags(String tags) { this.tags = tags; }
+    public void setPeriod(String period) {
+        this.period = period;
+    }
 
-    public Integer getSortOrder() { return sortOrder; }
-    public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
+    public String getBadge() {
+        return badge;
+    }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setBadge(String badge) {
+        this.badge = badge;
+    }
+
+    public String getRoleDesc() {
+        return roleDesc;
+    }
+
+    public void setRoleDesc(String roleDesc) {
+        this.roleDesc = roleDesc;
+    }
+
+    public String getProjects() {
+        return projects;
+    }
+
+    public void setProjects(String projects) {
+        this.projects = projects;
+    }
+
+    public String getTags() {
+        return tags;
+    }
+
+    public void setTags(String tags) {
+        this.tags = tags;
+    }
+
+    public Integer getSortOrder() {
+        return sortOrder;
+    }
+
+    public void setSortOrder(Integer sortOrder) {
+        this.sortOrder = sortOrder;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
 }

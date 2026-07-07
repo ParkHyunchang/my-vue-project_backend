@@ -2,6 +2,11 @@ package com.hyunchang.webapp.service.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,15 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
 /**
- * Google Gemini Flash provider (1차).
- * 무료 한도: 분 15회 / 일 1500회 (gemini-2.0-flash 기준)
+ * Google Gemini Flash provider (1차). 무료 한도: 분 15회 / 일 1500회 (gemini-2.0-flash 기준)
  * https://ai.google.dev/gemini-api/docs/rate-limits
  */
 @Component
@@ -37,9 +35,20 @@ public class GeminiProvider implements AiProvider {
         this.restClient = RestClient.builder().baseUrl(BASE_URL).build();
     }
 
-    @Override public String getName() { return "Gemini Flash"; }
-    @Override public String getModel() { return MODEL; }
-    @Override public boolean isEnabled() { return apiKey != null && !apiKey.isBlank(); }
+    @Override
+    public String getName() {
+        return "Gemini Flash";
+    }
+
+    @Override
+    public String getModel() {
+        return MODEL;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return apiKey != null && !apiKey.isBlank();
+    }
 
     @Override
     public AiProviderResult generate(String prompt, boolean expectJson) {
@@ -54,30 +63,37 @@ public class GeminiProvider implements AiProvider {
         // ※ dynamic thinking 모드로 되돌리려면 아래 한 줄만 주석 처리하면 된다.
         generationConfig.put("thinkingConfig", Map.of("thinkingBudget", 256));
 
-        Map<String, Object> body = Map.of(
-                "systemInstruction", Map.of(
-                        "parts", List.of(Map.of("text", expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE))
-                ),
-                "contents", List.of(Map.of(
-                        "parts", List.of(Map.of("text", prompt))
-                )),
-                "generationConfig", generationConfig
-        );
+        Map<String, Object> body =
+                Map.of(
+                        "systemInstruction",
+                                Map.of(
+                                        "parts",
+                                        List.of(
+                                                Map.of(
+                                                        "text",
+                                                        expectJson
+                                                                ? JSON_SYSTEM_MESSAGE
+                                                                : TEXT_SYSTEM_MESSAGE))),
+                        "contents", List.of(Map.of("parts", List.of(Map.of("text", prompt)))),
+                        "generationConfig", generationConfig);
 
         try {
-            String response = restClient.post()
-                    .uri("/v1beta/models/{model}:generateContent?key={key}", MODEL, apiKey)
-                    .header("Content-Type", "application/json")
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
+            String response =
+                    restClient
+                            .post()
+                            .uri("/v1beta/models/{model}:generateContent?key={key}", MODEL, apiKey)
+                            .header("Content-Type", "application/json")
+                            .body(body)
+                            .retrieve()
+                            .body(String.class);
 
             JsonNode root = objectMapper.readTree(response);
             JsonNode candidates = root.path("candidates");
             if (!candidates.isArray() || candidates.isEmpty()) {
                 return AiProviderResult.error("응답에 candidate가 없습니다.");
             }
-            String text = candidates.get(0).path("content").path("parts").get(0).path("text").asText();
+            String text =
+                    candidates.get(0).path("content").path("parts").get(0).path("text").asText();
             if (text.isBlank()) return AiProviderResult.error("응답 텍스트가 비어있습니다.");
             return AiProviderResult.success(text);
 
@@ -87,14 +103,19 @@ public class GeminiProvider implements AiProvider {
             if (status == 429) {
                 Instant retryAt = parseRetryAfter(e, Duration.ofMinutes(1));
                 // 본문에 RESOURCE_EXHAUSTED / quota / billing 같은 reason 이 들어있어 진단에 결정적
-                log.warn("[AI/Gemini] 429 rate limited, retryAt={}, reason={}", retryAt, errSummary);
+                log.warn(
+                        "[AI/Gemini] 429 rate limited, retryAt={}, reason={}", retryAt, errSummary);
                 return AiProviderResult.rateLimited(retryAt);
             }
             if (status >= 500 && status < 600) {
                 // 503(UNAVAILABLE)·502 등 일시적 서버 과부하 — 60초 backoff 등록해서 잠시 다른 provider 우선
                 // (Retry-After 헤더가 있으면 그 값 우선, 없으면 기본 60초)
                 Instant retryAt = parseRetryAfter(e, Duration.ofSeconds(60));
-                log.warn("[AI/Gemini] HTTP {} (일시 장애) — backoff until {}: {}", status, retryAt, errSummary);
+                log.warn(
+                        "[AI/Gemini] HTTP {} (일시 장애) — backoff until {}: {}",
+                        status,
+                        retryAt,
+                        errSummary);
                 return AiProviderResult.rateLimited(retryAt);
             }
             log.warn("[AI/Gemini] HTTP {} — {}", status, errSummary);
@@ -116,7 +137,9 @@ public class GeminiProvider implements AiProvider {
             if (!status.isBlank() || !message.isBlank()) {
                 return (status.isBlank() ? "" : status + " — ") + truncate(message, 300);
             }
-        } catch (Exception ignore) { /* fallthrough */ }
+        } catch (Exception ignore) {
+            /* fallthrough */
+        }
         return truncate(body, 300);
     }
 
@@ -129,7 +152,9 @@ public class GeminiProvider implements AiProvider {
                     long seconds = Long.parseLong(values.get(0).trim());
                     return Instant.now().plusSeconds(seconds);
                 }
-            } catch (Exception ignore) { /* fallthrough */ }
+            } catch (Exception ignore) {
+                /* fallthrough */
+            }
         }
         return Instant.now().plus(fallback);
     }

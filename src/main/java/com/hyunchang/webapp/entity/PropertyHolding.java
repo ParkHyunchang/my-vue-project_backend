@@ -12,17 +12,15 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
-
 /**
- * 보유 부동산. 사용자가 수동 입력한다. propertyType 으로 아파트/토지를 구분한다.
- * - APT(아파트):  lawdCd + name(단지명) + areaM2(전용면적) 로 실거래가와 매칭해 시세 추정.
- * - LAND(토지):   lawdCd + jimok(지목) + useZone(용도지역) 로 단가(원/㎡)를 추정하고
- *                 areaM2(토지면적)·officialPrice(공시지가) 를 함께 사용한다.
+ * 보유 부동산. 사용자가 수동 입력한다. propertyType 으로 아파트/토지를 구분한다. - APT(아파트): lawdCd + name(단지명) + areaM2(전용면적)
+ * 로 실거래가와 매칭해 시세 추정. - LAND(토지): lawdCd + jimok(지목) + useZone(용도지역) 로 단가(원/㎡)를 추정하고
+ * areaM2(토지면적)·officialPrice(공시지가) 를 함께 사용한다.
  */
 @Entity
 @Table(name = "property")
@@ -48,29 +46,29 @@ public class PropertyHolding {
     private String dealType; // SALE / JEONSE / MONTHLY (토지는 항상 SALE)
 
     @Column(nullable = false)
-    private String name;     // 아파트=단지명 / 토지=별칭·지번 라벨 (예: 역삼동 123-4)
+    private String name; // 아파트=단지명 / 토지=별칭·지번 라벨 (예: 역삼동 123-4)
 
     @Column(name = "lawd_cd", nullable = false, length = 5)
-    private String lawdCd;   // 법정동 시군구 코드
+    private String lawdCd; // 법정동 시군구 코드
 
     @Column(length = 60)
-    private String sigungu;  // 시군구 표시명 (예: 강남구)
+    private String sigungu; // 시군구 표시명 (예: 강남구)
 
     @Column(name = "area_m2")
-    private Double areaM2;    // 아파트=전용면적 / 토지=토지면적 (㎡)
+    private Double areaM2; // 아파트=전용면적 / 토지=토지면적 (㎡)
 
     // ── 토지(LAND) 전용 필드 ──────────────────────────────────────
     @Column(length = 20)
-    private String jimok;     // 지목 (전/답/대/임야 등)
+    private String jimok; // 지목 (전/답/대/임야 등)
 
     @Column(name = "use_zone", length = 40)
-    private String useZone;   // 용도지역 (계획관리/주거지역/농림 등)
+    private String useZone; // 용도지역 (계획관리/주거지역/농림 등)
 
     @Column(name = "umd_name", length = 60)
-    private String umdName;   // 읍면동 (예: 역삼동) — 공시지가 조회/표시용
+    private String umdName; // 읍면동 (예: 역삼동) — 공시지가 조회/표시용
 
     @Column(length = 30)
-    private String jibun;     // 지번 (본번-부번, 예: 123-4 / 산 12-3)
+    private String jibun; // 지번 (본번-부번, 예: 123-4 / 산 12-3)
 
     @Column(name = "bdong_code", length = 10)
     private String bdongCode; // 법정동코드(10자리) — PNU 조합·공시지가 재조회용

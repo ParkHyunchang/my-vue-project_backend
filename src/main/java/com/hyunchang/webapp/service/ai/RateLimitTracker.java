@@ -1,16 +1,14 @@
 package com.hyunchang.webapp.service.ai;
 
-import org.springframework.stereotype.Component;
-
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.stereotype.Component;
 
 /**
  * Provider별 rate-limit 상태 메모리 추적기.
  *
- * 429 응답에서 받은 Retry-After 시각까지는 해당 provider 를 skip 한다.
- * 서버 재시작 시 초기화 (DB 저장 X). 개인 프로젝트라 충분.
+ * <p>429 응답에서 받은 Retry-After 시각까지는 해당 provider 를 skip 한다. 서버 재시작 시 초기화 (DB 저장 X). 개인 프로젝트라 충분.
  */
 @Component
 public class RateLimitTracker {

@@ -12,9 +12,8 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * 감사 로그 전용 엔드포인트.
- * 프론트엔드가 "사용자가 메뉴/탭에 진입했다" 같은 데이터 호출이 없는 행동을 기록하기 위해 호출.
- * 비즈니스 로직 없이 로그 한 줄만 찍고 204를 반환한다.
+ * 감사 로그 전용 엔드포인트. 프론트엔드가 "사용자가 메뉴/탭에 진입했다" 같은 데이터 호출이 없는 행동을 기록하기 위해 호출. 비즈니스 로직 없이 로그 한 줄만 찍고 204를
+ * 반환한다.
  */
 @Tag(name = "Audit", description = "사용자 행동 감사 로그")
 @RestController
@@ -34,19 +33,20 @@ public class AuditController {
         if (event == null) return ResponseEntity.noContent().build();
 
         String category = sanitize(event.category());
-        String action   = sanitize(event.action());
+        String action = sanitize(event.action());
         if (category.isBlank() || action.isBlank()) {
             return ResponseEntity.noContent().build();
         }
 
         String details = event.details() != null ? sanitize(event.details()) : "";
 
-        log.info("[{}] user={}({}), {}{}",
-            category,
-            SecurityUtils.getCurrentUserId(),
-            SecurityUtils.getCurrentUserRoleName(),
-            action,
-            details.isBlank() ? "" : " " + details);
+        log.info(
+                "[{}] user={}({}), {}{}",
+                category,
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                action,
+                details.isBlank() ? "" : " " + details);
 
         return ResponseEntity.noContent().build();
     }

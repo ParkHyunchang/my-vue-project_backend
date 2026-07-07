@@ -4,6 +4,7 @@ import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.Subscription;
 import com.hyunchang.webapp.service.SubscriptionService;
+import java.util.List;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,8 +15,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.List;
-
 @RestController
 @RequestMapping("/api/subscriptions")
 public class SubscriptionController {
@@ -24,8 +23,8 @@ public class SubscriptionController {
     private final SubscriptionService subscriptionService;
     private final MenuAccessGuard menuAccessGuard;
 
-    public SubscriptionController(SubscriptionService subscriptionService,
-                                  MenuAccessGuard menuAccessGuard) {
+    public SubscriptionController(
+            SubscriptionService subscriptionService, MenuAccessGuard menuAccessGuard) {
         this.subscriptionService = subscriptionService;
         this.menuAccessGuard = menuAccessGuard;
     }

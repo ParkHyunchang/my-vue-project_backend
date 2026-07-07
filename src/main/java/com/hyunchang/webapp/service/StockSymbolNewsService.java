@@ -6,16 +6,6 @@ import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.service.news.NewsPromptFormatter;
 import com.hyunchang.webapp.service.news.RssClient;
 import jakarta.annotation.PreDestroy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -34,28 +24,34 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.Supplier;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 /**
  * 종목별 뉴스 검색.
  *
- * AI 분석에서 시장 단위 RSS 의 키워드 필터링만으로는 무관 뉴스가 섞이는 문제가 있어,
- * 종목명·티커로 직접 검색하는 소스들을 병렬 호출하고 합쳐서 반환한다.
+ * <p>AI 분석에서 시장 단위 RSS 의 키워드 필터링만으로는 무관 뉴스가 섞이는 문제가 있어, 종목명·티커로 직접 검색하는 소스들을 병렬 호출하고 합쳐서 반환한다.
  *
- * 소스:
- *   - KR: Google News RSS (종목명/투자 키워드/주요 경제지 검색)
- *   - US: Yahoo Finance RSS (ticker) + AlphaVantage News & Sentiment
- *         + Google News RSS (영어 회사명/티커/주요 금융매체 검색)
+ * <p>소스: - KR: Google News RSS (종목명/투자 키워드/주요 경제지 검색) - US: Yahoo Finance RSS (ticker) +
+ * AlphaVantage News & Sentiment + Google News RSS (영어 회사명/티커/주요 금융매체 검색)
  *
- * 캐싱은 하지 않는다 — StockAnalysisService 의 "매번 최신" 정책 일관성 유지.
+ * <p>캐싱은 하지 않는다 — StockAnalysisService 의 "매번 최신" 정책 일관성 유지.
  */
 @Service
 public class StockSymbolNewsService {
     private static final Logger log = LoggerFactory.getLogger(StockSymbolNewsService.class);
 
-    private static final int  FETCH_TIMEOUT_SEC = 6;
-    private static final int  PER_SOURCE_LIMIT  = 6;
-    private static final int  TOTAL_NEWS_LIMIT  = 24;
-    private static final int  DESC_LIMIT        = 400;
+    private static final int FETCH_TIMEOUT_SEC = 6;
+    private static final int PER_SOURCE_LIMIT = 6;
+    private static final int TOTAL_NEWS_LIMIT = 24;
+    private static final int DESC_LIMIT = 400;
     private static final DateTimeFormatter RFC_822 =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH);
 
@@ -92,33 +88,61 @@ public class StockSymbolNewsService {
 
     /**
      * 종목 하나에 대한 직접 검색 뉴스 합산.
-     * @param symbol  티커 (.KS / .KQ 포함 가능)
-     * @param market  "KR" | "US"
-     * @param name    한글 종목명 (KR 검색용)
-     * @param enName  영문 회사명 (US Google News 보조용, 없으면 null)
+     *
+     * @param symbol 티커 (.KS / .KQ 포함 가능)
+     * @param market "KR" | "US"
+     * @param name 한글 종목명 (KR 검색용)
+     * @param enName 영문 회사명 (US Google News 보조용, 없으면 null)
      */
-    public List<StockNewsDto> fetchForSymbol(String symbol, String market, String name, String enName) {
+    public List<StockNewsDto> fetchForSymbol(
+            String symbol, String market, String name, String enName) {
         String mkt = market != null ? market.toUpperCase(Locale.ROOT) : "KR";
         List<CompletableFuture<List<StockNewsDto>>> tasks = new ArrayList<>();
 
         if ("KR".equals(mkt)) {
             for (NewsQuery q : buildKrNewsQueries(symbol, name)) {
-                tasks.add(asyncSafe(() -> fetchGoogleNews(q.query(), "ko", "KR", "ko-KR", q.sourceLabel())));
+                tasks.add(
+                        asyncSafe(
+                                () ->
+                                        fetchGoogleNews(
+                                                q.query(), "ko", "KR", "ko-KR", q.sourceLabel())));
             }
         } else {
             String ticker = symbol == null ? "" : symbol.split("\\.")[0].toUpperCase(Locale.ROOT);
             if (notBlank(ticker)) {
                 tasks.add(asyncSafe(() -> fetchYahooFinance(ticker)));
                 tasks.add(asyncSafe(() -> fetchAlphaVantage(ticker)));
-                tasks.add(asyncSafe(() -> fetchGoogleNews(
-                        ticker + " (stock OR shares OR earnings OR analyst)",
-                        "en", "US", "en-US", "Google News · Ticker")));
+                tasks.add(
+                        asyncSafe(
+                                () ->
+                                        fetchGoogleNews(
+                                                ticker
+                                                        + " (stock OR shares OR earnings OR analyst)",
+                                                "en",
+                                                "US",
+                                                "en-US",
+                                                "Google News · Ticker")));
             }
             if (notBlank(enName)) {
-                tasks.add(asyncSafe(() -> fetchGoogleNews(enName, "en", "US", "en-US", "Google News · Company")));
-                tasks.add(asyncSafe(() -> fetchGoogleNews(
-                        enName + " (site:reuters.com OR site:cnbc.com OR site:marketwatch.com OR site:barrons.com OR site:fool.com)",
-                        "en", "US", "en-US", "Google News · Financial Press")));
+                tasks.add(
+                        asyncSafe(
+                                () ->
+                                        fetchGoogleNews(
+                                                enName,
+                                                "en",
+                                                "US",
+                                                "en-US",
+                                                "Google News · Company")));
+                tasks.add(
+                        asyncSafe(
+                                () ->
+                                        fetchGoogleNews(
+                                                enName
+                                                        + " (site:reuters.com OR site:cnbc.com OR site:marketwatch.com OR site:barrons.com OR site:fool.com)",
+                                                "en",
+                                                "US",
+                                                "en-US",
+                                                "Google News · Financial Press")));
             }
         }
 
@@ -136,9 +160,11 @@ public class StockSymbolNewsService {
         }
 
         List<StockNewsDto> deduped = dedupe(all);
-        deduped.sort((a, b) -> Long.compare(
-                RssClient.parsePubDateEpoch(b.getPubDate()),
-                RssClient.parsePubDateEpoch(a.getPubDate())));
+        deduped.sort(
+                (a, b) ->
+                        Long.compare(
+                                RssClient.parsePubDateEpoch(b.getPubDate()),
+                                RssClient.parsePubDateEpoch(a.getPubDate())));
         return deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
     }
 
@@ -149,14 +175,19 @@ public class StockSymbolNewsService {
         if (notBlank(name)) {
             addQuery(queries, name, "Google News · 종목");
             addQuery(queries, name + " (주가 OR 실적 OR 투자 OR 공시 OR 배당 OR 분배금)", "Google News · 투자키워드");
-            addQuery(queries,
-                    name + " (site:hankyung.com OR site:mk.co.kr OR site:yna.co.kr OR site:sedaily.com OR site:edaily.co.kr OR site:news.mt.co.kr)",
+            addQuery(
+                    queries,
+                    name
+                            + " (site:hankyung.com OR site:mk.co.kr OR site:yna.co.kr OR site:sedaily.com OR site:edaily.co.kr OR site:news.mt.co.kr)",
                     "Google News · 주요경제지");
 
             String simplified = simplifyKrEtfName(name);
             if (notBlank(simplified) && !simplified.equals(name)) {
                 addQuery(queries, simplified + " ETF", "Google News · ETF키워드");
-                addQuery(queries, simplified + " (상장지수펀드 OR ETF OR 분배금 OR 운용보수)", "Google News · ETF상품");
+                addQuery(
+                        queries,
+                        simplified + " (상장지수펀드 OR ETF OR 분배금 OR 운용보수)",
+                        "Google News · ETF상품");
             }
         }
 
@@ -179,12 +210,15 @@ public class StockSymbolNewsService {
 
     private String simplifyKrEtfName(String name) {
         if (!notBlank(name)) return "";
-        String simplified = name.trim()
-                .replaceFirst("^(KODEX|TIGER|SOL|ACE|KBSTAR|RISE|PLUS|HANARO|ARIRANG|TIMEFOLIO|WON|KoAct)\\s*", "")
-                .replaceAll("([가-힣])([A-Za-z0-9])", "$1 $2")
-                .replaceAll("([A-Za-z0-9])([가-힣])", "$1 $2")
-                .replaceAll("\\s+", " ")
-                .trim();
+        String simplified =
+                name.trim()
+                        .replaceFirst(
+                                "^(KODEX|TIGER|SOL|ACE|KBSTAR|RISE|PLUS|HANARO|ARIRANG|TIMEFOLIO|WON|KoAct)\\s*",
+                                "")
+                        .replaceAll("([가-힣])([A-Za-z0-9])", "$1 $2")
+                        .replaceAll("([A-Za-z0-9])([가-힣])", "$1 $2")
+                        .replaceAll("\\s+", " ")
+                        .trim();
         return simplified;
     }
 
@@ -192,10 +226,20 @@ public class StockSymbolNewsService {
     // Google News RSS 검색
     // https://news.google.com/rss/search?q={query}&hl=ko-KR&gl=KR&ceid=KR:ko
 
-    private List<StockNewsDto> fetchGoogleNews(String query, String langPrefix, String gl, String hl, String sourceLabel) {
+    private List<StockNewsDto> fetchGoogleNews(
+            String query, String langPrefix, String gl, String hl, String sourceLabel) {
         String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
-        String url = "https://news.google.com/rss/search?q=" + encoded
-                + "&hl=" + hl + "&gl=" + gl + "&ceid=" + gl + ":" + langPrefix;
+        String url =
+                "https://news.google.com/rss/search?q="
+                        + encoded
+                        + "&hl="
+                        + hl
+                        + "&gl="
+                        + gl
+                        + "&ceid="
+                        + gl
+                        + ":"
+                        + langPrefix;
         return parseRss(url, sourceLabel, gl);
     }
 
@@ -204,9 +248,10 @@ public class StockSymbolNewsService {
     // https://feeds.finance.yahoo.com/rss/2.0/headline?s=NVDA&region=US&lang=en-US
 
     private List<StockNewsDto> fetchYahooFinance(String ticker) {
-        String url = "https://feeds.finance.yahoo.com/rss/2.0/headline?s="
-                + URLEncoder.encode(ticker, StandardCharsets.UTF_8)
-                + "&region=US&lang=en-US";
+        String url =
+                "https://feeds.finance.yahoo.com/rss/2.0/headline?s="
+                        + URLEncoder.encode(ticker, StandardCharsets.UTF_8)
+                        + "&region=US&lang=en-US";
         return parseRss(url, "Yahoo Finance", "US");
     }
 
@@ -237,26 +282,36 @@ public class StockSymbolNewsService {
     }
 
     private List<StockNewsDto> doFetchAlphaVantage(String ticker) {
-        String url = "https://www.alphavantage.co/query"
-                + "?function=NEWS_SENTIMENT"
-                + "&tickers=" + URLEncoder.encode(ticker, StandardCharsets.UTF_8)
-                + "&limit=10"
-                + "&apikey=" + alphaVantageKey;
+        String url =
+                "https://www.alphavantage.co/query"
+                        + "?function=NEWS_SENTIMENT"
+                        + "&tickers="
+                        + URLEncoder.encode(ticker, StandardCharsets.UTF_8)
+                        + "&limit=10"
+                        + "&apikey="
+                        + alphaVantageKey;
         try {
             HttpHeaders headers = new HttpHeaders();
             headers.set("User-Agent", "Mozilla/5.0");
-            ResponseEntity<String> resp = restTemplate.exchange(
-                    url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+            ResponseEntity<String> resp =
+                    restTemplate.exchange(
+                            url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
             String body = resp.getBody();
             if (body == null || body.isBlank()) return List.of();
 
             JsonNode root = objectMapper.readTree(body);
             // 한도 초과 또는 정보 메시지면 feed 가 비어있음 — 이후 호출은 backoff 동안 skip
             if (root.has("Note") || root.has("Information")) {
-                String msg = root.has("Note") ? root.path("Note").asText() : root.path("Information").asText();
+                String msg =
+                        root.has("Note")
+                                ? root.path("Note").asText()
+                                : root.path("Information").asText();
                 alphaVantageBlockedUntil = Instant.now().plus(ALPHAVANTAGE_BACKOFF);
-                log.info("[SymbolNews/AV] {} — {}분 동안 차단 (until {})",
-                        msg, ALPHAVANTAGE_BACKOFF.toMinutes(), alphaVantageBlockedUntil);
+                log.info(
+                        "[SymbolNews/AV] {} — {}분 동안 차단 (until {})",
+                        msg,
+                        ALPHAVANTAGE_BACKOFF.toMinutes(),
+                        alphaVantageBlockedUntil);
                 return List.of();
             }
             JsonNode feed = root.path("feed");
@@ -265,7 +320,7 @@ public class StockSymbolNewsService {
             List<StockNewsDto> out = new ArrayList<>();
             for (JsonNode item : feed) {
                 String title = item.path("title").asText("").trim();
-                String link  = item.path("url").asText("").trim();
+                String link = item.path("url").asText("").trim();
                 if (title.isBlank() || link.isBlank()) continue;
 
                 String summary = item.path("summary").asText("").trim();
@@ -274,16 +329,17 @@ public class StockSymbolNewsService {
                 String source = item.path("source").asText("AlphaVantage");
                 String pubDate = formatAvDate(item.path("time_published").asText(""));
 
-                out.add(StockNewsDto.builder()
-                        .title(title)
-                        .originalTitle(title)
-                        .link(link)
-                        .description(summary)
-                        .originalDescription(summary)
-                        .pubDate(pubDate)
-                        .source("AlphaVantage · " + source)
-                        .market("US")
-                        .build());
+                out.add(
+                        StockNewsDto.builder()
+                                .title(title)
+                                .originalTitle(title)
+                                .link(link)
+                                .description(summary)
+                                .originalDescription(summary)
+                                .pubDate(pubDate)
+                                .source("AlphaVantage · " + source)
+                                .market("US")
+                                .build());
                 if (out.size() >= 10) break;
             }
             return out;
@@ -297,13 +353,14 @@ public class StockSymbolNewsService {
     private String formatAvDate(String raw) {
         if (raw == null || raw.length() < 8) return "";
         try {
-            int year  = Integer.parseInt(raw.substring(0, 4));
+            int year = Integer.parseInt(raw.substring(0, 4));
             int month = Integer.parseInt(raw.substring(4, 6));
-            int day   = Integer.parseInt(raw.substring(6, 8));
-            int hour  = raw.length() >= 11 ? Integer.parseInt(raw.substring(9, 11)) : 0;
-            int min   = raw.length() >= 13 ? Integer.parseInt(raw.substring(11, 13)) : 0;
-            int sec   = raw.length() >= 15 ? Integer.parseInt(raw.substring(13, 15)) : 0;
-            return ZonedDateTime.of(year, month, day, hour, min, sec, 0, ZoneOffset.UTC).format(RFC_822);
+            int day = Integer.parseInt(raw.substring(6, 8));
+            int hour = raw.length() >= 11 ? Integer.parseInt(raw.substring(9, 11)) : 0;
+            int min = raw.length() >= 13 ? Integer.parseInt(raw.substring(11, 13)) : 0;
+            int sec = raw.length() >= 15 ? Integer.parseInt(raw.substring(13, 15)) : 0;
+            return ZonedDateTime.of(year, month, day, hour, min, sec, 0, ZoneOffset.UTC)
+                    .format(RFC_822);
         } catch (Exception e) {
             return "";
         }
@@ -318,9 +375,9 @@ public class StockSymbolNewsService {
             List<StockNewsDto> news = new ArrayList<>();
             for (RssClient.RssItem item : items) {
                 if (news.size() >= PER_SOURCE_LIMIT) break;
-                String title   = item.title();
-                String link    = item.link();
-                String desc    = item.description();
+                String title = item.title();
+                String link = item.link();
+                String desc = item.description();
                 String pubDate = item.pubDate();
                 String itemSource = item.itemSource();
                 if (title.isBlank() || link.isBlank()) continue;
@@ -328,14 +385,15 @@ public class StockSymbolNewsService {
                 desc = RssClient.stripHtml(desc).trim();
                 if (desc.length() > DESC_LIMIT) desc = desc.substring(0, DESC_LIMIT) + "…";
 
-                news.add(StockNewsDto.builder()
-                        .title(title)
-                        .link(link)
-                        .description(desc)
-                        .pubDate(pubDate)
-                        .source(RssClient.mergeSource(sourceName, itemSource))
-                        .market(market)
-                        .build());
+                news.add(
+                        StockNewsDto.builder()
+                                .title(title)
+                                .link(link)
+                                .description(desc)
+                                .pubDate(pubDate)
+                                .source(RssClient.mergeSource(sourceName, itemSource))
+                                .market(market)
+                                .build());
             }
             return news;
         } catch (Exception e) {
@@ -359,15 +417,21 @@ public class StockSymbolNewsService {
     }
 
     private CompletableFuture<List<StockNewsDto>> asyncSafe(Supplier<List<StockNewsDto>> task) {
-        return CompletableFuture.supplyAsync(() -> {
-            try { return task.get(); } catch (Exception e) {
-                log.warn("[SymbolNews] task 실패: {}", summarize(e));
-                return List.of();
-            }
-        }, POOL);
+        return CompletableFuture.supplyAsync(
+                () -> {
+                    try {
+                        return task.get();
+                    } catch (Exception e) {
+                        log.warn("[SymbolNews] task 실패: {}", summarize(e));
+                        return List.of();
+                    }
+                },
+                POOL);
     }
 
-    private boolean notBlank(String s) { return s != null && !s.isBlank(); }
+    private boolean notBlank(String s) {
+        return s != null && !s.isBlank();
+    }
 
     private static String summarize(Throwable t) {
         if (t == null) return "(null)";

@@ -4,11 +4,10 @@ import com.hyunchang.webapp.entity.ChatRecord;
 import com.hyunchang.webapp.entity.ChatSession;
 import com.hyunchang.webapp.repository.ChatRecordRepository;
 import com.hyunchang.webapp.repository.ChatSessionRepository;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.stereotype.Service;
 
 @Service
 public class ChatHistoryService {
@@ -16,14 +15,19 @@ public class ChatHistoryService {
     private final ChatSessionRepository sessionRepository;
     private final ChatRecordRepository recordRepository;
 
-    public ChatHistoryService(ChatSessionRepository sessionRepository, ChatRecordRepository recordRepository) {
+    public ChatHistoryService(
+            ChatSessionRepository sessionRepository, ChatRecordRepository recordRepository) {
         this.sessionRepository = sessionRepository;
         this.recordRepository = recordRepository;
     }
 
     public ChatSession getOrCreateSession(String sessionKey, String username, String anonId) {
-        return sessionRepository.findBySessionKey(sessionKey)
-                .orElseGet(() -> sessionRepository.save(new ChatSession(sessionKey, username, anonId)));
+        return sessionRepository
+                .findBySessionKey(sessionKey)
+                .orElseGet(
+                        () ->
+                                sessionRepository.save(
+                                        new ChatSession(sessionKey, username, anonId)));
     }
 
     public Optional<ChatSession> findSession(String sessionKey) {
@@ -45,31 +49,55 @@ public class ChatHistoryService {
     }
 
     public List<MessageDto> getHistory(String sessionKey) {
-        return sessionRepository.findBySessionKey(sessionKey)
-                .map(session -> recordRepository.findByChatSessionOrderByCreatedAtAsc(session).stream()
-                        .map(r -> new MessageDto(r.getRole(), r.getContent(), r.getCreatedAt()))
-                        .toList())
+        return sessionRepository
+                .findBySessionKey(sessionKey)
+                .map(
+                        session ->
+                                recordRepository
+                                        .findByChatSessionOrderByCreatedAtAsc(session)
+                                        .stream()
+                                        .map(
+                                                r ->
+                                                        new MessageDto(
+                                                                r.getRole(),
+                                                                r.getContent(),
+                                                                r.getCreatedAt()))
+                                        .toList())
                 .orElse(List.of());
     }
 
     public List<SessionSummaryDto> getSessionsByUsername(String username) {
         return sessionRepository.findByUsernameOrderByUpdatedAtDesc(username).stream()
-                .map(s -> new SessionSummaryDto(
-                        s.getSessionKey(), s.getUsername(),
-                        recordRepository.countByChatSession(s),
-                        s.getUpdatedAt(), s.getTitle()))
+                .map(
+                        s ->
+                                new SessionSummaryDto(
+                                        s.getSessionKey(),
+                                        s.getUsername(),
+                                        recordRepository.countByChatSession(s),
+                                        s.getUpdatedAt(),
+                                        s.getTitle()))
                 .toList();
     }
 
     public List<SessionSummaryDto> getAllSessionSummaries() {
         return sessionRepository.findAllByOrderByUpdatedAtDesc().stream()
-                .map(s -> new SessionSummaryDto(
-                        s.getSessionKey(), s.getUsername(),
-                        recordRepository.countByChatSession(s),
-                        s.getUpdatedAt(), s.getTitle()))
+                .map(
+                        s ->
+                                new SessionSummaryDto(
+                                        s.getSessionKey(),
+                                        s.getUsername(),
+                                        recordRepository.countByChatSession(s),
+                                        s.getUpdatedAt(),
+                                        s.getTitle()))
                 .toList();
     }
 
     public record MessageDto(String role, String content, LocalDateTime createdAt) {}
-    public record SessionSummaryDto(String sessionKey, String username, long messageCount, LocalDateTime lastActivity, String title) {}
+
+    public record SessionSummaryDto(
+            String sessionKey,
+            String username,
+            long messageCount,
+            LocalDateTime lastActivity,
+            String title) {}
 }

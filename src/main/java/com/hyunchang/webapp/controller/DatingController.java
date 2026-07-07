@@ -6,6 +6,12 @@ import com.hyunchang.webapp.entity.Dating;
 import com.hyunchang.webapp.service.DatingService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.UploadPathUtil;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -20,13 +26,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.util.Set;
-import java.util.UUID;
-
 @RestController
 @RequestMapping("/api/dating")
 public class DatingController {
@@ -35,8 +34,10 @@ public class DatingController {
     private final DatingService datingService;
     private final MenuAccessGuard menuAccessGuard;
     private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("dating");
-    private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif");
-    private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
+    private static final Set<String> IMAGE_EXTENSIONS =
+            Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif");
+    private static final Set<String> VIDEO_EXTENSIONS =
+            Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
 
     public DatingController(DatingService datingService, MenuAccessGuard menuAccessGuard) {
         this.datingService = datingService;
@@ -78,7 +79,8 @@ public class DatingController {
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Dating dating) {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        return ResponseEntity.ok(datingService.update(id, dating, SecurityUtils.getCurrentUserId(), roleName));
+        return ResponseEntity.ok(
+                datingService.update(id, dating, SecurityUtils.getCurrentUserId(), roleName));
     }
 
     @DeleteMapping("/{id}")
@@ -95,8 +97,10 @@ public class DatingController {
 
         try {
             datingService.deleteImageFile(imagePath);
-            log.info("[DATING] user={}, action=DELETE_IMAGE, path={}",
-                    SecurityUtils.getCurrentUserId(), imagePath);
+            log.info(
+                    "[DATING] user={}, action=DELETE_IMAGE, path={}",
+                    SecurityUtils.getCurrentUserId(),
+                    imagePath);
             return ResponseEntity.ok("미디어가 삭제되었습니다.");
         } catch (Exception e) {
             log.error("dating 미디어 삭제 실패: path={}", imagePath, e);
@@ -129,8 +133,10 @@ public class DatingController {
             Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
 
             String fileUrl = "/uploads/images/dating/" + uniqueFilename;
-            log.info("[DATING] user={}, action=UPLOAD_IMAGE, filename={}",
-                    SecurityUtils.getCurrentUserId(), uniqueFilename);
+            log.info(
+                    "[DATING] user={}, action=UPLOAD_IMAGE, filename={}",
+                    SecurityUtils.getCurrentUserId(),
+                    uniqueFilename);
             return ResponseEntity.ok(fileUrl);
 
         } catch (IOException e) {

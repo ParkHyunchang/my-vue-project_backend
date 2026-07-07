@@ -9,4 +9,3 @@ public class FindIdResponse {
     private final String maskedUserId;
     private final String message;
 }
-

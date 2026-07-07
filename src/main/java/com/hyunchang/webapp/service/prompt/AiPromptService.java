@@ -2,25 +2,23 @@ package com.hyunchang.webapp.service.prompt;
 
 import com.hyunchang.webapp.entity.AiPromptOverride;
 import com.hyunchang.webapp.repository.AiPromptOverrideRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * AI 프롬프트 조립·지침 오버라이드 저장 담당.
  *
- * 최종 프롬프트 = [지침(instruction)] + [고정 데이터(fixedContext)] + [고정 응답스키마(fixedSchema)].
- *  - 지침은 관리자가 화면에서 수정하는 유일한 부분. 오버라이드(비어있지 않으면) 우선, 없으면 코드 기본 지침.
- *  - 데이터/스키마는 코드 고정. {{변수}} 는 서비스가 넘긴 값으로 치환된다(조립 후 전체에 대해 1회 치환).
- *  - 지침은 자유 텍스트라 별도 검증 없음. 비어 있으면 기본 지침으로 동작.
+ * <p>최종 프롬프트 = [지침(instruction)] + [고정 데이터(fixedContext)] + [고정 응답스키마(fixedSchema)]. - 지침은 관리자가
+ * 화면에서 수정하는 유일한 부분. 오버라이드(비어있지 않으면) 우선, 없으면 코드 기본 지침. - 데이터/스키마는 코드 고정. {{변수}} 는 서비스가 넘긴 값으로
+ * 치환된다(조립 후 전체에 대해 1회 치환). - 지침은 자유 텍스트라 별도 검증 없음. 비어 있으면 기본 지침으로 동작.
  */
 @Service
 public class AiPromptService {
@@ -44,9 +42,12 @@ public class AiPromptService {
         if (def == null) {
             throw new IllegalArgumentException("알 수 없는 프롬프트 키: " + key);
         }
-        String assembled = nz(effectiveInstruction(def)).strip()
-            + "\n\n" + nz(def.getFixedContext()).strip()
-            + "\n\n" + nz(def.getFixedSchema()).strip();
+        String assembled =
+                nz(effectiveInstruction(def)).strip()
+                        + "\n\n"
+                        + nz(def.getFixedContext()).strip()
+                        + "\n\n"
+                        + nz(def.getFixedSchema()).strip();
         return substitute(assembled, vars);
     }
 
@@ -75,7 +76,9 @@ public class AiPromptService {
         return def.getDefaultInstruction();
     }
 
-    private String nz(String s) { return s == null ? "" : s; }
+    private String nz(String s) {
+        return s == null ? "" : s;
+    }
 
     // ── 시드(앱 시작 시) ─────────────────────────────────────────────────────
 
@@ -85,7 +88,8 @@ public class AiPromptService {
         int created = 0;
         for (PromptDefinition def : AiPromptCatalog.all()) {
             if (repository.existsByPromptKey(def.getKey())) continue;
-            repository.save(new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system"));
+            repository.save(
+                    new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system"));
             created++;
         }
         if (created > 0) {
@@ -105,8 +109,8 @@ public class AiPromptService {
     }
 
     /**
-     * 지침 저장. 모든 카탈로그 프롬프트를 DB 행으로 관리하므로 행을 삭제하지 않고 항상 갱신한다.
-     * 내용이 비어 있으면 기본 지침으로 채워 저장한다. 지침은 자유 텍스트라 변수 검증은 하지 않는다.
+     * 지침 저장. 모든 카탈로그 프롬프트를 DB 행으로 관리하므로 행을 삭제하지 않고 항상 갱신한다. 내용이 비어 있으면 기본 지침으로 채워 저장한다. 지침은 자유 텍스트라
+     * 변수 검증은 하지 않는다.
      */
     @Transactional
     public PromptAdminView saveOverride(String key, String content, String updatedBy) {
@@ -114,7 +118,8 @@ public class AiPromptService {
         if (def == null) {
             throw new IllegalArgumentException("알 수 없는 프롬프트 키: " + key);
         }
-        String toStore = (content == null || content.isBlank()) ? def.getDefaultInstruction() : content;
+        String toStore =
+                (content == null || content.isBlank()) ? def.getDefaultInstruction() : content;
         AiPromptOverride entity = repository.findByPromptKey(key).orElseGet(AiPromptOverride::new);
         entity.setPromptKey(key);
         entity.setContent(toStore);
@@ -142,22 +147,23 @@ public class AiPromptService {
         String current = override == null ? null : override.getContent();
         boolean hasContent = current != null && !current.isBlank();
         // 커스텀 여부 = 저장된 지침이 코드 기본 지침과 다른가
-        boolean customized = hasContent && !current.strip().equals(nz(def.getDefaultInstruction()).strip());
+        boolean customized =
+                hasContent && !current.strip().equals(nz(def.getDefaultInstruction()).strip());
         return new PromptAdminView(
-            def,
-            hasContent ? current : null,
-            customized,
-            override == null || override.getUpdatedAt() == null ? null : override.getUpdatedAt().toString(),
-            override == null ? null : override.getUpdatedBy()
-        );
+                def,
+                hasContent ? current : null,
+                customized,
+                override == null || override.getUpdatedAt() == null
+                        ? null
+                        : override.getUpdatedAt().toString(),
+                override == null ? null : override.getUpdatedBy());
     }
 
     /** 관리 화면 1행(프롬프트 정의 + 현재 지침 상태). currentContent 는 지침 오버라이드(없으면 null). */
     public record PromptAdminView(
-        PromptDefinition definition,
-        String currentContent,
-        boolean customized,
-        String updatedAt,
-        String updatedBy
-    ) {}
+            PromptDefinition definition,
+            String currentContent,
+            boolean customized,
+            String updatedAt,
+            String updatedBy) {}
 }

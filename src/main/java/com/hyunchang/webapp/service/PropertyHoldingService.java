@@ -5,12 +5,11 @@ import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.PropertyHoldingRepository;
 import com.hyunchang.webapp.repository.UserRepository;
 import com.hyunchang.webapp.util.SecurityUtils;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 @Transactional
@@ -21,8 +20,8 @@ public class PropertyHoldingService {
     private final PropertyHoldingRepository propertyHoldingRepository;
     private final UserRepository userRepository;
 
-    public PropertyHoldingService(PropertyHoldingRepository propertyHoldingRepository,
-                                  UserRepository userRepository) {
+    public PropertyHoldingService(
+            PropertyHoldingRepository propertyHoldingRepository, UserRepository userRepository) {
         this.propertyHoldingRepository = propertyHoldingRepository;
         this.userRepository = userRepository;
     }
@@ -32,13 +31,29 @@ public class PropertyHoldingService {
         return propertyHoldingRepository.findByUserUserIdOrderByIdAsc(userId);
     }
 
-    public PropertyHolding addHolding(String userId, String propertyType, String dealType, String name,
-                                      String lawdCd, String sigungu, Double areaM2, Long purchasePrice,
-                                      Long monthlyRent, String memo, java.time.LocalDate purchaseDate,
-                                      String jimok, String useZone, String umdName, String jibun,
-                                      String bdongCode, Long officialPricePerM2, Integer officialPriceYear) {
-        User user = userRepository.findByUserId(userId)
-            .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다: " + userId));
+    public PropertyHolding addHolding(
+            String userId,
+            String propertyType,
+            String dealType,
+            String name,
+            String lawdCd,
+            String sigungu,
+            Double areaM2,
+            Long purchasePrice,
+            Long monthlyRent,
+            String memo,
+            java.time.LocalDate purchaseDate,
+            String jimok,
+            String useZone,
+            String umdName,
+            String jibun,
+            String bdongCode,
+            Long officialPricePerM2,
+            Integer officialPriceYear) {
+        User user =
+                userRepository
+                        .findByUserId(userId)
+                        .orElseThrow(() -> new IllegalStateException("사용자를 찾을 수 없습니다: " + userId));
 
         PropertyHolding holding = new PropertyHolding();
         holding.setUser(user);
@@ -61,24 +76,39 @@ public class PropertyHoldingService {
         holding.setOfficialPriceYear(officialPriceYear);
 
         PropertyHolding saved = propertyHoldingRepository.save(holding);
-        log.info("[PROPERTY/HOLDING] user={}({}), CREATE id={} type={} name={} lawdCd={} dealType={} area={} price={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getPropertyType(), saved.getName(), saved.getLawdCd(), saved.getDealType(),
-            saved.getAreaM2(), saved.getPurchasePrice());
+        log.info(
+                "[PROPERTY/HOLDING] user={}({}), CREATE id={} type={} name={} lawdCd={} dealType={} area={} price={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getPropertyType(),
+                saved.getName(),
+                saved.getLawdCd(),
+                saved.getDealType(),
+                saved.getAreaM2(),
+                saved.getPurchasePrice());
         return saved;
     }
 
     /**
-     * 보유 부동산 수정. 식별 필드(명칭·소재·면적·지번)는 변경 대상이 아니며,
-     * 가변 값(매입가·월세·메모·매입일)과 토지 속성(지목·용도지역·공시지가)만 갱신한다.
-     * 토지 전용 필드는 아파트면 컨트롤러에서 null 로 전달된다.
+     * 보유 부동산 수정. 식별 필드(명칭·소재·면적·지번)는 변경 대상이 아니며, 가변 값(매입가·월세·메모·매입일)과 토지 속성(지목·용도지역·공시지가)만 갱신한다. 토지
+     * 전용 필드는 아파트면 컨트롤러에서 null 로 전달된다.
      */
-    public PropertyHolding updateHolding(String userId, Long id, Long purchasePrice,
-                                         Long monthlyRent, String memo, java.time.LocalDate purchaseDate,
-                                         String jimok, String useZone,
-                                         Long officialPricePerM2, Integer officialPriceYear) {
-        PropertyHolding holding = propertyHoldingRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("보유 부동산을 찾을 수 없습니다."));
+    public PropertyHolding updateHolding(
+            String userId,
+            Long id,
+            Long purchasePrice,
+            Long monthlyRent,
+            String memo,
+            java.time.LocalDate purchaseDate,
+            String jimok,
+            String useZone,
+            Long officialPricePerM2,
+            Integer officialPriceYear) {
+        PropertyHolding holding =
+                propertyHoldingRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("보유 부동산을 찾을 수 없습니다."));
 
         holding.setPurchasePrice(purchasePrice);
         holding.setMonthlyRent(monthlyRent);
@@ -92,18 +122,28 @@ public class PropertyHoldingService {
         }
         PropertyHolding saved = propertyHoldingRepository.save(holding);
 
-        log.info("[PROPERTY/HOLDING] user={}({}), UPDATE id={} name={} price={} monthlyRent={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getName(), saved.getPurchasePrice(), saved.getMonthlyRent());
+        log.info(
+                "[PROPERTY/HOLDING] user={}({}), UPDATE id={} name={} price={} monthlyRent={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getName(),
+                saved.getPurchasePrice(),
+                saved.getMonthlyRent());
         return saved;
     }
 
     public void deleteHolding(String userId, Long id) {
-        PropertyHolding holding = propertyHoldingRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("보유 부동산을 찾을 수 없습니다."));
+        PropertyHolding holding =
+                propertyHoldingRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(() -> new IllegalArgumentException("보유 부동산을 찾을 수 없습니다."));
         propertyHoldingRepository.delete(holding);
-        log.info("[PROPERTY/HOLDING] user={}({}), DELETE id={} name={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            holding.getId(), holding.getName());
+        log.info(
+                "[PROPERTY/HOLDING] user={}({}), DELETE id={} name={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                holding.getId(),
+                holding.getName());
     }
 }

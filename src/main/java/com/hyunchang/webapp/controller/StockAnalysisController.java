@@ -17,8 +17,8 @@ public class StockAnalysisController {
     private final StockAnalysisService stockAnalysisService;
     private final MenuAccessGuard menuAccessGuard;
 
-    public StockAnalysisController(StockAnalysisService stockAnalysisService,
-                                   MenuAccessGuard menuAccessGuard) {
+    public StockAnalysisController(
+            StockAnalysisService stockAnalysisService, MenuAccessGuard menuAccessGuard) {
         this.stockAnalysisService = stockAnalysisService;
         this.menuAccessGuard = menuAccessGuard;
     }
@@ -27,8 +27,10 @@ public class StockAnalysisController {
     public ResponseEntity<?> analyze(@RequestBody StockAnalysisRequest request) {
         if (!menuAccessGuard.hasAccess(MENU_PATH)) return menuAccessGuard.forbidden();
         if (request == null || request.getSymbol() == null || request.getSymbol().isBlank()) {
-            return ResponseEntity.badRequest().body("symbol \uAC12\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.");
+            return ResponseEntity.badRequest()
+                    .body("symbol \uAC12\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.");
         }
-        return ResponseEntity.ok(stockAnalysisService.analyze(request.getSymbol(), request.getMarket()));
+        return ResponseEntity.ok(
+                stockAnalysisService.analyze(request.getSymbol(), request.getMarket()));
     }
 }

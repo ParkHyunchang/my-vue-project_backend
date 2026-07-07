@@ -5,18 +5,20 @@ import com.hyunchang.webapp.dto.LandDealDto;
 import com.hyunchang.webapp.dto.LandFiltersDto;
 import com.hyunchang.webapp.dto.LandQuoteDto;
 import com.hyunchang.webapp.dto.OfficialPriceDto;
-import com.hyunchang.webapp.dto.UmdDto;
 import com.hyunchang.webapp.dto.PropertyQuoteDto;
 import com.hyunchang.webapp.dto.RealEstateAnalysisResponse;
 import com.hyunchang.webapp.dto.RealEstateDealDto;
 import com.hyunchang.webapp.dto.RealEstateNewsDto;
 import com.hyunchang.webapp.dto.RegionDto;
+import com.hyunchang.webapp.dto.UmdDto;
 import com.hyunchang.webapp.service.LandPriceService;
 import com.hyunchang.webapp.service.RealEstateAnalysisService;
 import com.hyunchang.webapp.service.RealEstateNewsService;
 import com.hyunchang.webapp.service.RealEstateService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
+import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,9 +26,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
 
 @Tag(name = "RealEstate", description = "부동산 실거래가 API (국토교통부)")
 @RestController
@@ -41,11 +40,12 @@ public class RealEstateController {
     private final LandPriceService landPriceService;
     private final MenuAccessGuard menuAccessGuard;
 
-    public RealEstateController(RealEstateService realEstateService,
-                                RealEstateNewsService realEstateNewsService,
-                                RealEstateAnalysisService realEstateAnalysisService,
-                                LandPriceService landPriceService,
-                                MenuAccessGuard menuAccessGuard) {
+    public RealEstateController(
+            RealEstateService realEstateService,
+            RealEstateNewsService realEstateNewsService,
+            RealEstateAnalysisService realEstateAnalysisService,
+            LandPriceService landPriceService,
+            MenuAccessGuard menuAccessGuard) {
         this.realEstateService = realEstateService;
         this.realEstateNewsService = realEstateNewsService;
         this.realEstateAnalysisService = realEstateAnalysisService;
@@ -67,8 +67,8 @@ public class RealEstateController {
             @RequestParam(defaultValue = "SALE") String dealType,
             @RequestParam(defaultValue = "3") int months) {
         if (!realEstateService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
         }
         List<RealEstateDealDto> deals = realEstateService.search(lawdCd, dealType, months);
         return ResponseEntity.ok(deals);
@@ -77,8 +77,7 @@ public class RealEstateController {
     @Operation(summary = "지역+거래유형 단지명 목록 (보유 등록 자동완성용)")
     @GetMapping("/apartments")
     public ResponseEntity<List<String>> getApartments(
-            @RequestParam String lawdCd,
-            @RequestParam(defaultValue = "SALE") String dealType) {
+            @RequestParam String lawdCd, @RequestParam(defaultValue = "SALE") String dealType) {
         return ResponseEntity.ok(realEstateService.getApartments(lawdCd, dealType));
     }
 
@@ -99,8 +98,8 @@ public class RealEstateController {
             @RequestParam String aptName,
             @RequestParam(required = false) Double areaM2) {
         if (!realEstateService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
         }
         PropertyQuoteDto quote = realEstateService.getQuote(lawdCd, dealType, aptName, areaM2);
         return ResponseEntity.ok(quote);
@@ -111,11 +110,10 @@ public class RealEstateController {
     @Operation(summary = "토지 매매 실거래 검색")
     @GetMapping("/land/search")
     public ResponseEntity<?> searchLand(
-            @RequestParam String lawdCd,
-            @RequestParam(defaultValue = "3") int months) {
+            @RequestParam String lawdCd, @RequestParam(defaultValue = "3") int months) {
         if (!realEstateService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
         }
         List<LandDealDto> deals = realEstateService.searchLand(lawdCd, months);
         return ResponseEntity.ok(deals);
@@ -135,8 +133,8 @@ public class RealEstateController {
             @RequestParam(required = false) String useZone,
             @RequestParam(required = false) Double areaM2) {
         if (!realEstateService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
         }
         LandQuoteDto quote = realEstateService.getLandQuote(lawdCd, jimok, useZone, areaM2);
         return ResponseEntity.ok(quote);
@@ -157,10 +155,10 @@ public class RealEstateController {
             @RequestParam(defaultValue = "0") int ji,
             @RequestParam(required = false) Integer year) {
         if (!landPriceService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "공시지가 API 키가 설정되지 않았습니다."));
+            return ResponseEntity.status(503).body(Map.of("error", "공시지가 API 키가 설정되지 않았습니다."));
         }
-        OfficialPriceDto price = landPriceService.getOfficialPrice(bdongCode, mountain, bun, ji, year);
+        OfficialPriceDto price =
+                landPriceService.getOfficialPrice(bdongCode, mountain, bun, ji, year);
         return ResponseEntity.ok(price);
     }
 
@@ -181,10 +179,11 @@ public class RealEstateController {
             return ResponseEntity.badRequest().body("lawdCd 가 필요합니다.");
         }
         if (!realEstateService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
         }
-        RealEstateAnalysisResponse res = realEstateAnalysisService.analyze(request.lawdCd(), request.dealType());
+        RealEstateAnalysisResponse res =
+                realEstateAnalysisService.analyze(request.lawdCd(), request.dealType());
         return ResponseEntity.ok(res);
     }
 
@@ -198,8 +197,8 @@ public class RealEstateController {
             return ResponseEntity.badRequest().body("lawdCd 가 필요합니다.");
         }
         if (!realEstateService.isConfigured()) {
-            return ResponseEntity.status(503).body(Map.of(
-                "error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "부동산 실거래가 API 키(REALESTATE_API_KEY)가 설정되지 않았습니다."));
         }
         return ResponseEntity.ok(realEstateAnalysisService.analyzeLand(request.lawdCd()));
     }

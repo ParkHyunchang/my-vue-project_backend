@@ -13,17 +13,16 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-
 /**
- * 예정 일정 — 조만간 갈 여행의 실제 일정. AI 플래너 결과를 저장한 뒤 사용자가 다듬는다.
- * itinerary 컬럼에는 일자별 일정(JSON 배열 문자열)을 그대로 저장한다:
- *   [{ "day":1, "theme":"...", "items":[{ "time":"오전", "type":"관광", "place":"...", "desc":"..." }] }]
+ * 예정 일정 — 조만간 갈 여행의 실제 일정. AI 플래너 결과를 저장한 뒤 사용자가 다듬는다. itinerary 컬럼에는 일자별 일정(JSON 배열 문자열)을 그대로
+ * 저장한다: [{ "day":1, "theme":"...", "items":[{ "time":"오전", "type":"관광", "place":"...", "desc":"..."
+ * }] }]
  */
 @Entity
 @Table(name = "travel_itinerary")
@@ -42,7 +41,7 @@ public class TravelItinerary {
     private User user;
 
     @Column(nullable = false)
-    private String title;       // 일정 제목 (예: 오사카 3박4일)
+    private String title; // 일정 제목 (예: 오사카 3박4일)
 
     @Column(length = 120)
     private String destination; // 목적지
@@ -53,8 +52,7 @@ public class TravelItinerary {
     @Column(name = "end_date")
     private LocalDate endDate;
 
-    @Column
-    private Integer days;
+    @Column private Integer days;
 
     // 일자별 일정 JSON 배열 문자열. @JsonRawValue 로 응답 시 escape 없이 그대로 JSON 으로 내보낸다.
     @Column(columnDefinition = "TEXT")

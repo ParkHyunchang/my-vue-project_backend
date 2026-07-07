@@ -1,7 +1,6 @@
 package com.hyunchang.webapp.dto;
 
 import com.hyunchang.webapp.entity.MenuDefinition;
-
 import java.util.Arrays;
 import java.util.List;
 
@@ -44,17 +43,55 @@ public class MenuDefinitionResponse {
         return r;
     }
 
-    public Long getId() { return id; }
-    public String getPath() { return path; }
-    public String getName() { return name; }
-    public String getIcon() { return icon; }
-    public String getDescription() { return description; }
-    public String getCategory() { return category; }
-    public boolean isRequired() { return isRequired; }
-    public boolean isShowInNav() { return showInNav; }
-    public String getNavLabel() { return navLabel; }
-    public boolean isAdminSubMenu() { return isAdminSubMenu; }
-    public List<String> getDefaultRoles() { return defaultRoles; }
-    public int getSortOrder() { return sortOrder; }
-    public String getParentPath() { return parentPath; }
+    public Long getId() {
+        return id;
+    }
+
+    public String getPath() {
+        return path;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public boolean isRequired() {
+        return isRequired;
+    }
+
+    public boolean isShowInNav() {
+        return showInNav;
+    }
+
+    public String getNavLabel() {
+        return navLabel;
+    }
+
+    public boolean isAdminSubMenu() {
+        return isAdminSubMenu;
+    }
+
+    public List<String> getDefaultRoles() {
+        return defaultRoles;
+    }
+
+    public int getSortOrder() {
+        return sortOrder;
+    }
+
+    public String getParentPath() {
+        return parentPath;
+    }
 }

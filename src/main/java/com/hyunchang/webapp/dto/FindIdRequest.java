@@ -9,4 +9,3 @@ public class FindIdRequest {
     private String name;
     private String email;
 }
-

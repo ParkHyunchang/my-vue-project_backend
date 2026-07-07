@@ -7,11 +7,6 @@ import com.hyunchang.webapp.repository.HistoryRepository;
 import com.hyunchang.webapp.repository.UserRepository;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.UploadPathUtil;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -19,6 +14,10 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class HistoryService {
@@ -37,7 +36,8 @@ public class HistoryService {
     }
 
     public History findById(Long id) {
-        return historyRepository.findById(id)
+        return historyRepository
+                .findById(id)
                 .orElseThrow(() -> new RuntimeException("History not found"));
     }
 
@@ -87,11 +87,17 @@ public class HistoryService {
         validateHistory(history);
         userRepository.findByUserId(ownerUserId).ifPresent(history::setUser);
         History saved = historyRepository.save(history);
-        log.info("[HISTORY] user={}({}), CREATE id={} title={} dateType={} date={} category={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getTitle(), saved.getDateType(),
-            saved.getDate() != null ? saved.getDate() : (saved.getStartDate() + "~" + saved.getEndDate()),
-            saved.getCategory());
+        log.info(
+                "[HISTORY] user={}({}), CREATE id={} title={} dateType={} date={} category={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getTitle(),
+                saved.getDateType(),
+                saved.getDate() != null
+                        ? saved.getDate()
+                        : (saved.getStartDate() + "~" + saved.getEndDate()),
+                saved.getCategory());
         return saved;
     }
 
@@ -125,21 +131,30 @@ public class HistoryService {
         History saved = historyRepository.save(existingHistory);
 
         List<String> diffs = new ArrayList<>();
-        if (!Objects.equals(oldTitle, saved.getTitle())) diffs.add(String.format("title '%s'→'%s'", oldTitle, saved.getTitle()));
-        if (!Objects.equals(oldDateType, saved.getDateType())) diffs.add(String.format("dateType %s→%s", oldDateType, saved.getDateType()));
-        if (!Objects.equals(oldDate, saved.getDate())) diffs.add(String.format("date %s→%s", oldDate, saved.getDate()));
-        if (!Objects.equals(oldStart, saved.getStartDate())) diffs.add(String.format("startDate %s→%s", oldStart, saved.getStartDate()));
-        if (!Objects.equals(oldEnd, saved.getEndDate())) diffs.add(String.format("endDate %s→%s", oldEnd, saved.getEndDate()));
-        if (!Objects.equals(oldCategory, saved.getCategory())) diffs.add(String.format("category %s→%s", oldCategory, saved.getCategory()));
-        if (!Objects.equals(oldLocation, saved.getLocation())) diffs.add(String.format("location %s→%s", oldLocation, saved.getLocation()));
+        if (!Objects.equals(oldTitle, saved.getTitle()))
+            diffs.add(String.format("title '%s'→'%s'", oldTitle, saved.getTitle()));
+        if (!Objects.equals(oldDateType, saved.getDateType()))
+            diffs.add(String.format("dateType %s→%s", oldDateType, saved.getDateType()));
+        if (!Objects.equals(oldDate, saved.getDate()))
+            diffs.add(String.format("date %s→%s", oldDate, saved.getDate()));
+        if (!Objects.equals(oldStart, saved.getStartDate()))
+            diffs.add(String.format("startDate %s→%s", oldStart, saved.getStartDate()));
+        if (!Objects.equals(oldEnd, saved.getEndDate()))
+            diffs.add(String.format("endDate %s→%s", oldEnd, saved.getEndDate()));
+        if (!Objects.equals(oldCategory, saved.getCategory()))
+            diffs.add(String.format("category %s→%s", oldCategory, saved.getCategory()));
+        if (!Objects.equals(oldLocation, saved.getLocation()))
+            diffs.add(String.format("location %s→%s", oldLocation, saved.getLocation()));
         if (!Objects.equals(oldDescription, saved.getDescription())) diffs.add("description (변경됨)");
         if (!Objects.equals(oldImage, saved.getImage())) diffs.add("image (변경됨)");
         if (!Objects.equals(oldImages, saved.getImages())) diffs.add("images (변경됨)");
 
-        log.info("[HISTORY] user={}({}), UPDATE id={} {}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(),
-            diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
+        log.info(
+                "[HISTORY] user={}({}), UPDATE id={} {}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
         return saved;
     }
 
@@ -149,9 +164,13 @@ public class HistoryService {
         verifyOwnership(existingHistory, currentUserId, roleName);
         deleteImageFile(existingHistory.getImage());
         historyRepository.deleteById(id);
-        log.info("[HISTORY] user={}({}), DELETE id={} title={} category={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            existingHistory.getId(), existingHistory.getTitle(), existingHistory.getCategory());
+        log.info(
+                "[HISTORY] user={}({}), DELETE id={} title={} category={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                existingHistory.getId(),
+                existingHistory.getTitle(),
+                existingHistory.getCategory());
     }
 
     private void verifyOwnership(History history, String currentUserId, String roleName) {

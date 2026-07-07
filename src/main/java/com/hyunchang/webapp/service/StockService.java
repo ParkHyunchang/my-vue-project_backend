@@ -11,11 +11,6 @@ import com.hyunchang.webapp.dto.StockQuotaDto;
 import com.hyunchang.webapp.dto.StockQuoteDto;
 import com.hyunchang.webapp.dto.StockSearchResultDto;
 import jakarta.annotation.PostConstruct;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
 import java.io.File;
 import java.io.IOException;
 import java.time.Duration;
@@ -35,77 +30,77 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
 
 /**
- * 주식 기능 오케스트레이터.
- * 실제 외부 API 호출은 KrxService / YahooFinanceService / StockNewsService 에 위임합니다.
- * 이 클래스는 캐싱, 순위 계산, 스케줄링, 쿼터 관리에만 집중합니다.
+ * 주식 기능 오케스트레이터. 실제 외부 API 호출은 KrxService / YahooFinanceService / StockNewsService 에 위임합니다. 이 클래스는
+ * 캐싱, 순위 계산, 스케줄링, 쿼터 관리에만 집중합니다.
  */
 @Service
 public class StockService {
 
     private static final Logger log = LoggerFactory.getLogger(StockService.class);
 
-    private static final long TOP10_CACHE_TTL_MS    = 2 * 60 * 1000L;      // 2분 (Top10 실시간 갱신)
-    private static final long PORTFOLIO_PRICE_TTL_MS = 2 * 60 * 1000L;      // 2분 (포트폴리오 개별 시세)
+    private static final long TOP10_CACHE_TTL_MS = 2 * 60 * 1000L; // 2분 (Top10 실시간 갱신)
+    private static final long PORTFOLIO_PRICE_TTL_MS = 2 * 60 * 1000L; // 2분 (포트폴리오 개별 시세)
     private static final long QUOTE_FAIL_TTL_MS = 60 * 1000L;
     private static final String BASE_RANKS_FILE = "data/base-ranks.json";
     private static final String TOP10_SNAPSHOTS_FILE = "data/top10-snapshots.json";
     private static final int US_TOP10_DISCOVERY_SIZE = 100;
-    private static final int  DAILY_LIMIT  = 25; // Alpha Vantage 일일 한도 (표시용)
+    private static final int DAILY_LIMIT = 25; // Alpha Vantage 일일 한도 (표시용)
     private static final DateTimeFormatter HEATMAP_FMT =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     // ── 시세 캐시 ────────────────────────────────────────────────
-    private final Map<String, List<StockQuoteDto>>  quoteCache       = new ConcurrentHashMap<>();
-    private final Map<String, Long>                 cacheTimes       = new ConcurrentHashMap<>();
-    private final Map<String, Map<String, Integer>> baseRanks        = new ConcurrentHashMap<>();
-    private final Map<String, Top10Snapshot>        top10Snapshots   = new ConcurrentHashMap<>();
-    private final Map<String, StockPriceDto>        singlePriceCache = new ConcurrentHashMap<>();
-    private final Map<String, Long>                 singlePriceTimes = new ConcurrentHashMap<>();
+    private final Map<String, List<StockQuoteDto>> quoteCache = new ConcurrentHashMap<>();
+    private final Map<String, Long> cacheTimes = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Integer>> baseRanks = new ConcurrentHashMap<>();
+    private final Map<String, Top10Snapshot> top10Snapshots = new ConcurrentHashMap<>();
+    private final Map<String, StockPriceDto> singlePriceCache = new ConcurrentHashMap<>();
+    private final Map<String, Long> singlePriceTimes = new ConcurrentHashMap<>();
 
     // ── 히트맵 캐시 ──────────────────────────────────────────────
-    private final Map<String, Long>                 quoteFailTimes   = new ConcurrentHashMap<>();
+    private final Map<String, Long> quoteFailTimes = new ConcurrentHashMap<>();
 
-    private volatile List<StockHeatmapSectorDto> heatmapCache     = null;
-    private volatile String                       heatmapUpdatedAt = null;
+    private volatile List<StockHeatmapSectorDto> heatmapCache = null;
+    private volatile String heatmapUpdatedAt = null;
 
     // ── Alpha Vantage 일일 API 카운터 (현재는 Yahoo Finance 사용으로 표시 전용) ──
     private final AtomicInteger dailyCallCount = new AtomicInteger(0);
-    private volatile LocalDate  counterDate    = LocalDate.now();
+    private volatile LocalDate counterDate = LocalDate.now();
 
-    private final KrxService           krxService;
-    private final KrxOpenApiService    krxApiService;
-    private final YahooFinanceService  yahooService;
-    private final StockNewsService     newsService;
-    private final NaverFinanceService  naverService;
-    private final ObjectMapper         objectMapper;
+    private final KrxService krxService;
+    private final KrxOpenApiService krxApiService;
+    private final YahooFinanceService yahooService;
+    private final StockNewsService newsService;
+    private final NaverFinanceService naverService;
+    private final ObjectMapper objectMapper;
 
     private record Top10Snapshot(
-        String market,
-        String source,
-        String fetchedAt,
-        List<StockQuoteDto> quotes
-    ) {}
+            String market, String source, String fetchedAt, List<StockQuoteDto> quotes) {}
 
-    public StockService(KrxService krxService,
-                        KrxOpenApiService krxApiService,
-                        YahooFinanceService yahooService,
-                        StockNewsService newsService,
-                        NaverFinanceService naverService,
-                        ObjectMapper objectMapper) {
-        this.krxService    = krxService;
+    public StockService(
+            KrxService krxService,
+            KrxOpenApiService krxApiService,
+            YahooFinanceService yahooService,
+            StockNewsService newsService,
+            NaverFinanceService naverService,
+            ObjectMapper objectMapper) {
+        this.krxService = krxService;
         this.krxApiService = krxApiService;
-        this.yahooService  = yahooService;
-        this.newsService   = newsService;
-        this.naverService  = naverService;
-        this.objectMapper  = objectMapper;
+        this.yahooService = yahooService;
+        this.newsService = newsService;
+        this.naverService = naverService;
+        this.objectMapper = objectMapper;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -119,7 +114,8 @@ public class StockService {
             log.info("Stock 캐시 히트 [KR]");
             return quoteCache.getOrDefault("KR", Collections.emptyList());
         }
-        List<NaverFinanceService.NaverStockData> naverStocks = naverService.getTopStocksKospiCached(10);
+        List<NaverFinanceService.NaverStockData> naverStocks =
+                naverService.getTopStocksKospiCached(10);
         List<StockQuoteDto> result;
         if (!naverStocks.isEmpty()) {
             result = buildKrQuotes("KR", naverStocks, "KRW");
@@ -141,7 +137,8 @@ public class StockService {
             log.info("Stock 캐시 히트 [KOSDAQ]");
             return quoteCache.getOrDefault("KOSDAQ", Collections.emptyList());
         }
-        List<NaverFinanceService.NaverStockData> naverStocks = naverService.getTopStocksKosdaqCached(10);
+        List<NaverFinanceService.NaverStockData> naverStocks =
+                naverService.getTopStocksKosdaqCached(10);
         List<StockQuoteDto> result;
         if (!naverStocks.isEmpty()) {
             result = buildKrQuotes("KOSDAQ", naverStocks, "KRW");
@@ -157,10 +154,9 @@ public class StockService {
     }
 
     /**
-     * 미국 시총 Top 10.
-     * 1순위: Yahoo Finance screener API — 미국 상장 전체에서 시총 상위 동적 조회 (ADR 포함, 하드코딩 없음)
-     * 2순위: 마지막 성공 스냅샷 (외부 API 실패 시 신규 상장 반영 실패보다 오래된 성공 데이터 우선)
-     * 3순위: 정적 후보 풀 기반 부트스트랩 (스냅샷도 없는 최초 실행 시 최후 안전망)
+     * 미국 시총 Top 10. 1순위: Yahoo Finance screener API — 미국 상장 전체에서 시총 상위 동적 조회 (ADR 포함, 하드코딩 없음) 2순위:
+     * 마지막 성공 스냅샷 (외부 API 실패 시 신규 상장 반영 실패보다 오래된 성공 데이터 우선) 3순위: 정적 후보 풀 기반 부트스트랩 (스냅샷도 없는 최초 실행 시
+     * 최후 안전망)
      */
     public List<StockQuoteDto> getTop10US() {
         Long cachedAt = cacheTimes.get("US");
@@ -170,7 +166,7 @@ public class StockService {
         }
 
         List<YahooFinanceService.RawQuote> raws =
-            yahooService.fetchTopMarketCapUs(US_TOP10_DISCOVERY_SIZE);
+                yahooService.fetchTopMarketCapUs(US_TOP10_DISCOVERY_SIZE);
         if (!raws.isEmpty()) {
             List<StockQuoteDto> result = buildQuoteDtos("US", raws, "USD");
             if (result.size() > 10) result = new ArrayList<>(result.subList(0, 10));
@@ -201,29 +197,29 @@ public class StockService {
     /** Alpha Vantage API 쿼터 현황 조회 (표시용) */
     public StockQuotaDto getQuota() {
         resetCounterIfNewDay();
-        int used      = dailyCallCount.get();
+        int used = dailyCallCount.get();
         int remaining = Math.max(0, DAILY_LIMIT - used);
 
-        LocalDateTime now      = LocalDateTime.now(ZoneId.of("Asia/Seoul"));
+        LocalDateTime now = LocalDateTime.now(ZoneId.of("Asia/Seoul"));
         LocalDateTime midnight = now.toLocalDate().plusDays(1).atStartOfDay();
         long minutesLeft = Duration.between(now, midnight).toMinutes();
-        String resetInfo = String.format("자정(00:00) 초기화까지 %d시간 %d분 남음",
-            minutesLeft / 60, minutesLeft % 60);
+        String resetInfo =
+                String.format("자정(00:00) 초기화까지 %d시간 %d분 남음", minutesLeft / 60, minutesLeft % 60);
 
         return StockQuotaDto.builder()
-            .dailyLimit(DAILY_LIMIT).callsUsed(used).callsRemaining(remaining)
-            .nextKrRefresh("매일 09:00 KST (한국 장 개장 직전)")
-            .nextUsRefresh("매일 23:30 KST (미국 장 개장 직전)")
-            .resetInfo(resetInfo)
-            .build();
+                .dailyLimit(DAILY_LIMIT)
+                .callsUsed(used)
+                .callsRemaining(remaining)
+                .nextKrRefresh("매일 09:00 KST (한국 장 개장 직전)")
+                .nextUsRefresh("매일 23:30 KST (미국 장 개장 직전)")
+                .resetInfo(resetInfo)
+                .build();
     }
 
     /**
-     * 포트폴리오 개별 종목 시세.
-     * 1) 개별 캐시(2분) → 2) Yahoo Finance(실시간) → 3) KRX Open API 폴백(.KS/.KQ 전일 종가)
+     * 포트폴리오 개별 종목 시세. 1) 개별 캐시(2분) → 2) Yahoo Finance(실시간) → 3) KRX Open API 폴백(.KS/.KQ 전일 종가)
      *
-     * Top10 캐시는 시총 순위 표시용(6시간 TTL, KRX 전일 종가 기반)이므로
-     * 포트폴리오 실시간 시세에는 사용하지 않습니다.
+     * <p>Top10 캐시는 시총 순위 표시용(6시간 TTL, KRX 전일 종가 기반)이므로 포트폴리오 실시간 시세에는 사용하지 않습니다.
      */
     public StockPriceDto getQuote(String symbol, String market) {
         if (symbol == null || symbol.isBlank()) return null;
@@ -260,10 +256,14 @@ public class StockService {
             if (hasKrSuffix(candidate)) {
                 NaverFinanceService.NaverStockData krx = krxApiService.getKrPrice(candidate);
                 if (krx != null) {
-                    StockPriceDto fallback = StockPriceDto.builder()
-                        .symbol(requestedSymbol).price(krx.price())
-                        .change(krx.change()).changePercent(krx.changePercent())
-                        .currency("KRW").build();
+                    StockPriceDto fallback =
+                            StockPriceDto.builder()
+                                    .symbol(requestedSymbol)
+                                    .price(krx.price())
+                                    .change(krx.change())
+                                    .changePercent(krx.changePercent())
+                                    .currency("KRW")
+                                    .build();
                     cacheQuote(requestedSymbol, fallback);
                     return fallback;
                 }
@@ -291,12 +291,12 @@ public class StockService {
 
     private StockPriceDto withRequestedSymbol(StockPriceDto dto, String symbol, String currency) {
         return StockPriceDto.builder()
-            .symbol(symbol)
-            .price(dto.getPrice())
-            .change(dto.getChange())
-            .changePercent(dto.getChangePercent())
-            .currency(dto.getCurrency() != null ? dto.getCurrency() : currency)
-            .build();
+                .symbol(symbol)
+                .price(dto.getPrice())
+                .change(dto.getChange())
+                .changePercent(dto.getChangePercent())
+                .currency(dto.getCurrency() != null ? dto.getCurrency() : currency)
+                .build();
     }
 
     private void cacheQuote(String symbol, StockPriceDto dto) {
@@ -306,10 +306,8 @@ public class StockService {
     }
 
     /**
-     * 종목 검색 — 입력 언어/형식 무관하게 동일하게 동작.
-     * 1) KR 로컬 (KRX OpenAPI 2500+종목) + US 로컬 (한글명/영문명/티커) 통합 검색
-     * 2) 로컬 결과가 0건이고 검색어에 한글이 없으면 Yahoo Finance API 폴백
-     *    (한글 검색어는 Yahoo가 인식하지 못하므로 호출하지 않음)
+     * 종목 검색 — 입력 언어/형식 무관하게 동일하게 동작. 1) KR 로컬 (KRX OpenAPI 2500+종목) + US 로컬 (한글명/영문명/티커) 통합 검색 2)
+     * 로컬 결과가 0건이고 검색어에 한글이 없으면 Yahoo Finance API 폴백 (한글 검색어는 Yahoo가 인식하지 못하므로 호출하지 않음)
      */
     public List<StockSearchResultDto> searchStocks(String query) {
         String q = query == null ? "" : query.trim();
@@ -317,8 +315,10 @@ public class StockService {
 
         // symbol 기준 dedupe — KR 결과를 먼저 넣어 한국 사용자에게 익숙한 순서로 노출
         Map<String, StockSearchResultDto> merged = new LinkedHashMap<>();
-        for (StockSearchResultDto r : krxService.searchKrLocal(q))      merged.putIfAbsent(r.getSymbol(), r);
-        for (StockSearchResultDto r : yahooService.searchUsLocal(q))    merged.putIfAbsent(r.getSymbol(), r);
+        for (StockSearchResultDto r : krxService.searchKrLocal(q))
+            merged.putIfAbsent(r.getSymbol(), r);
+        for (StockSearchResultDto r : yahooService.searchUsLocal(q))
+            merged.putIfAbsent(r.getSymbol(), r);
 
         // 로컬에서 잡히면 Yahoo API 호출 생략 (속도/외부 의존도↓). 비어 있고 한글이 없을 때만 폴백.
         if (merged.isEmpty() && !containsKorean(q)) {
@@ -326,10 +326,14 @@ public class StockService {
                 if ("KR".equals(r.getMarket())) {
                     String koName = krxService.resolveKrStockName(r.getSymbol());
                     if (koName != null && !koName.isBlank()) {
-                        r = StockSearchResultDto.builder()
-                            .symbol(r.getSymbol()).name(koName)
-                            .exchange(r.getExchange()).type(r.getType()).market(r.getMarket())
-                            .build();
+                        r =
+                                StockSearchResultDto.builder()
+                                        .symbol(r.getSymbol())
+                                        .name(koName)
+                                        .exchange(r.getExchange())
+                                        .type(r.getType())
+                                        .market(r.getMarket())
+                                        .build();
                     }
                 }
                 merged.putIfAbsent(r.getSymbol(), r);
@@ -342,9 +346,9 @@ public class StockService {
     public StockHeatmapResponseDto getHeatmapKR() {
         if (heatmapCache == null) refreshHeatmapCache();
         return StockHeatmapResponseDto.builder()
-            .updatedAt(heatmapUpdatedAt)
-            .sectors(heatmapCache != null ? heatmapCache : Collections.emptyList())
-            .build();
+                .updatedAt(heatmapUpdatedAt)
+                .sectors(heatmapCache != null ? heatmapCache : Collections.emptyList())
+                .build();
     }
 
     /** 뉴스 조회 — StockNewsService에 위임 */
@@ -413,28 +417,35 @@ public class StockService {
     // ─────────────────────────────────────────────────────────────
 
     /** RawQuote 목록을 시총 내림차순 정렬 후 순위 변동 포함 StockQuoteDto 목록으로 변환 */
-    private List<StockQuoteDto> buildQuoteDtos(String cacheKey,
-            List<YahooFinanceService.RawQuote> raws, String currency) {
+    private List<StockQuoteDto> buildQuoteDtos(
+            String cacheKey, List<YahooFinanceService.RawQuote> raws, String currency) {
         if (raws.isEmpty()) return Collections.emptyList();
 
         List<YahooFinanceService.RawQuote> sorted = new ArrayList<>(raws);
         sorted.sort(Comparator.comparingLong(YahooFinanceService.RawQuote::marketCap).reversed());
 
-        Map<String, Integer> base   = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
-        List<StockQuoteDto>  result = new ArrayList<>();
+        Map<String, Integer> base = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
+        List<StockQuoteDto> result = new ArrayList<>();
 
         for (int idx = 0; idx < sorted.size(); idx++) {
-            YahooFinanceService.RawQuote raw     = sorted.get(idx);
-            int                          newRank  = idx + 1;
-            Integer                      baseRank = base.get(raw.symbol());
+            YahooFinanceService.RawQuote raw = sorted.get(idx);
+            int newRank = idx + 1;
+            Integer baseRank = base.get(raw.symbol());
             int rankChange = (baseRank == null) ? 0 : (baseRank - newRank);
 
-            result.add(StockQuoteDto.builder()
-                .rank(newRank).rankChange(rankChange)
-                .symbol(raw.symbol()).name(raw.name())
-                .price(raw.price()).change(raw.change()).changePercent(raw.changePercent())
-                .marketCap(raw.marketCap()).currency(currency).volume(raw.volume())
-                .build());
+            result.add(
+                    StockQuoteDto.builder()
+                            .rank(newRank)
+                            .rankChange(rankChange)
+                            .symbol(raw.symbol())
+                            .name(raw.name())
+                            .price(raw.price())
+                            .change(raw.change())
+                            .changePercent(raw.changePercent())
+                            .marketCap(raw.marketCap())
+                            .currency(currency)
+                            .volume(raw.volume())
+                            .build());
         }
         return result;
     }
@@ -443,10 +454,18 @@ public class StockService {
     private List<StockQuoteDto> fetchAll(String cacheKey, List<String[]> stocks, String currency) {
         boolean isKr = "KRW".equals(currency);
         ExecutorService exec = Executors.newFixedThreadPool(10);
-        List<Future<YahooFinanceService.RawQuote>> futures = stocks.stream()
-            .map(s -> exec.submit(() -> yahooService.fetchSingle(
-                s[0], s[1], Long.parseLong(s[2]), currency)))
-            .toList();
+        List<Future<YahooFinanceService.RawQuote>> futures =
+                stocks.stream()
+                        .map(
+                                s ->
+                                        exec.submit(
+                                                () ->
+                                                        yahooService.fetchSingle(
+                                                                s[0],
+                                                                s[1],
+                                                                Long.parseLong(s[2]),
+                                                                currency)))
+                        .toList();
 
         List<YahooFinanceService.RawQuote> raws = new ArrayList<>();
         for (int i = 0; i < futures.size(); i++) {
@@ -459,12 +478,19 @@ public class StockService {
                 if (isKr && raw.marketCap() == 0) {
                     long krxCap = krxApiService.getKrMarketCap(raw.symbol());
                     if (krxCap > 0) {
-                        log.info("KR 시총 KRX 캐시 보강 [{}]: {}원 (Yahoo v8/chart 0 → KRX)", raw.symbol(), krxCap);
-                        raw = new YahooFinanceService.RawQuote(
-                            raw.symbol(), raw.name(),
-                            raw.price(), raw.change(), raw.changePercent(),
-                            krxCap, raw.volume()
-                        );
+                        log.info(
+                                "KR 시총 KRX 캐시 보강 [{}]: {}원 (Yahoo v8/chart 0 → KRX)",
+                                raw.symbol(),
+                                krxCap);
+                        raw =
+                                new YahooFinanceService.RawQuote(
+                                        raw.symbol(),
+                                        raw.name(),
+                                        raw.price(),
+                                        raw.change(),
+                                        raw.changePercent(),
+                                        krxCap,
+                                        raw.volume());
                     }
                 }
                 raws.add(raw);
@@ -479,27 +505,35 @@ public class StockService {
     }
 
     /** 네이버 금융 데이터로 StockQuoteDto 목록 생성 (순위 변동 계산 포함) */
-    private List<StockQuoteDto> buildKrQuotes(String cacheKey,
-            List<NaverFinanceService.NaverStockData> stocks, String currency) {
-        Map<String, Integer> base   = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
-        List<StockQuoteDto>  result = new ArrayList<>();
+    private List<StockQuoteDto> buildKrQuotes(
+            String cacheKey, List<NaverFinanceService.NaverStockData> stocks, String currency) {
+        Map<String, Integer> base = baseRanks.getOrDefault(cacheKey, Collections.emptyMap());
+        List<StockQuoteDto> result = new ArrayList<>();
         for (int idx = 0; idx < stocks.size(); idx++) {
             NaverFinanceService.NaverStockData s = stocks.get(idx);
-            int     newRank    = idx + 1;
-            Integer baseRank   = base.get(s.symbol());
-            int     rankChange = (baseRank == null) ? 0 : (baseRank - newRank);
-            result.add(StockQuoteDto.builder()
-                .rank(newRank).rankChange(rankChange)
-                .symbol(s.symbol()).name(s.name())
-                .price(s.price()).change(s.change()).changePercent(s.changePercent())
-                .marketCap(s.marketCap()).currency(currency).volume(s.volume())
-                .build());
+            int newRank = idx + 1;
+            Integer baseRank = base.get(s.symbol());
+            int rankChange = (baseRank == null) ? 0 : (baseRank - newRank);
+            result.add(
+                    StockQuoteDto.builder()
+                            .rank(newRank)
+                            .rankChange(rankChange)
+                            .symbol(s.symbol())
+                            .name(s.name())
+                            .price(s.price())
+                            .change(s.change())
+                            .changePercent(s.changePercent())
+                            .marketCap(s.marketCap())
+                            .currency(currency)
+                            .volume(s.volume())
+                            .build());
         }
         return result;
     }
 
     private List<StockQuoteDto> fetchBootstrapUsTop10() {
-        List<YahooFinanceService.RawQuote> raws = yahooService.fetchBulkQuotes(yahooService.getUsStocksFallback());
+        List<YahooFinanceService.RawQuote> raws =
+                yahooService.fetchBulkQuotes(yahooService.getUsStocksFallback());
         List<StockQuoteDto> result;
         if (!raws.isEmpty()) {
             result = buildQuoteDtos("US", raws, "USD");
@@ -521,22 +555,27 @@ public class StockService {
             String market, List<StockQuoteDto> quotes, String source) {
         if (quotes == null || quotes.isEmpty()) return;
 
-        List<StockQuoteDto> top10 = quotes.size() > 10
-            ? new ArrayList<>(quotes.subList(0, 10))
-            : new ArrayList<>(quotes);
+        List<StockQuoteDto> top10 =
+                quotes.size() > 10
+                        ? new ArrayList<>(quotes.subList(0, 10))
+                        : new ArrayList<>(quotes);
         Top10Snapshot previous = top10Snapshots.get(market);
-        logTop10Changes(market, previous != null ? previous.quotes() : Collections.emptyList(), top10);
+        logTop10Changes(
+                market, previous != null ? previous.quotes() : Collections.emptyList(), top10);
 
-        top10Snapshots.put(market, new Top10Snapshot(
-            market,
-            source,
-            LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
-            top10
-        ));
+        top10Snapshots.put(
+                market,
+                new Top10Snapshot(
+                        market,
+                        source,
+                        LocalDateTime.now(ZoneId.of("Asia/Seoul"))
+                                .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME),
+                        top10));
         persistTop10Snapshots();
     }
 
-    private void logTop10Changes(String market, List<StockQuoteDto> previous, List<StockQuoteDto> current) {
+    private void logTop10Changes(
+            String market, List<StockQuoteDto> previous, List<StockQuoteDto> current) {
         List<String> prevSymbols = symbolsByRank(previous);
         List<String> currSymbols = symbolsByRank(current);
         if (prevSymbols.isEmpty()) {
@@ -552,29 +591,34 @@ public class StockService {
         Set<String> currSet = new LinkedHashSet<>(currSymbols);
         List<String> entered = currSymbols.stream().filter(s -> !prevSet.contains(s)).toList();
         List<String> exited = prevSymbols.stream().filter(s -> !currSet.contains(s)).toList();
-        log.info("[Top10 스냅샷] {} 변경 감지 - 진입: {}, 제외: {}, 새 순서: {}",
-            market, entered, exited, currSymbols);
+        log.info(
+                "[Top10 스냅샷] {} 변경 감지 - 진입: {}, 제외: {}, 새 순서: {}",
+                market,
+                entered,
+                exited,
+                currSymbols);
     }
 
     private List<String> symbolsByRank(List<StockQuoteDto> quotes) {
         if (quotes == null || quotes.isEmpty()) return Collections.emptyList();
         return quotes.stream()
-            .sorted(Comparator.comparingInt(StockQuoteDto::getRank))
-            .map(StockQuoteDto::getSymbol)
-            .toList();
+                .sorted(Comparator.comparingInt(StockQuoteDto::getRank))
+                .map(StockQuoteDto::getSymbol)
+                .toList();
     }
 
     private synchronized void refreshHeatmapCache() {
         List<StockHeatmapSectorDto> result = fetchHeatmapFromYahoo();
         if (!result.isEmpty()) {
-            heatmapCache     = result;
+            heatmapCache = result;
             heatmapUpdatedAt = LocalDateTime.now(ZoneId.of("Asia/Seoul")).format(HEATMAP_FMT);
         }
     }
 
     /** KRX 상위 30종목 히트맵. KRX 데이터 우선, 실패 시 Yahoo Finance 폴백. */
     private List<StockHeatmapSectorDto> fetchHeatmapFromYahoo() {
-        List<NaverFinanceService.NaverStockData> krxStocks = naverService.getTopStocksKospiCached(50);
+        List<NaverFinanceService.NaverStockData> krxStocks =
+                naverService.getTopStocksKospiCached(50);
         if (!krxStocks.isEmpty()) {
             return buildHeatmapFromKrx(krxStocks);
         }
@@ -586,26 +630,35 @@ public class StockService {
     private List<StockHeatmapSectorDto> buildHeatmapFromKrx(
             List<NaverFinanceService.NaverStockData> krxStocks) {
         List<NaverFinanceService.NaverStockData> top30 =
-            krxStocks.subList(0, Math.min(30, krxStocks.size()));
+                krxStocks.subList(0, Math.min(30, krxStocks.size()));
 
         Map<String, List<StockHeatmapItemDto>> bySector = new LinkedHashMap<>();
         for (NaverFinanceService.NaverStockData s : top30) {
-            StockHeatmapItemDto item = StockHeatmapItemDto.builder()
-                .symbol(s.symbol()).name(s.name()).price(s.price())
-                .changePercent(s.changePercent())
-                .marketCap(s.marketCap() > 0 ? s.marketCap() : 1)
-                .build();
+            StockHeatmapItemDto item =
+                    StockHeatmapItemDto.builder()
+                            .symbol(s.symbol())
+                            .name(s.name())
+                            .price(s.price())
+                            .changePercent(s.changePercent())
+                            .marketCap(s.marketCap() > 0 ? s.marketCap() : 1)
+                            .build();
             String sector = krxService.getKrSectorMap().getOrDefault(s.symbol(), "기타");
             bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
         }
 
-        log.info("히트맵 수집 완료 (KRX): {}개 섹터, {}개 종목",
-            bySector.size(), bySector.values().stream().mapToLong(List::size).sum());
+        log.info(
+                "히트맵 수집 완료 (KRX): {}개 섹터, {}개 종목",
+                bySector.size(),
+                bySector.values().stream().mapToLong(List::size).sum());
 
         return bySector.entrySet().stream()
-            .map(e -> StockHeatmapSectorDto.builder()
-                .sector(e.getKey()).stocks(e.getValue()).build())
-            .toList();
+                .map(
+                        e ->
+                                StockHeatmapSectorDto.builder()
+                                        .sector(e.getKey())
+                                        .stocks(e.getValue())
+                                        .build())
+                .toList();
     }
 
     /** Yahoo Finance 30개 병렬 조회 (KRX 실패 시 폴백) */
@@ -613,15 +666,17 @@ public class StockService {
         List<String[]> krStocks = krxService.getTopStocksCached(30);
         if (krStocks.isEmpty()) {
             log.warn("KRX 종목 목록 없음 — 히트맵 하드코딩 목록 사용");
-            krStocks = krxService.getKrHeatmapNameFallback().entrySet().stream()
-                .map(e -> new String[]{e.getKey(), e.getValue(), "0"})
-                .toList();
+            krStocks =
+                    krxService.getKrHeatmapNameFallback().entrySet().stream()
+                            .map(e -> new String[] {e.getKey(), e.getValue(), "0"})
+                            .toList();
         }
 
         ExecutorService exec = Executors.newFixedThreadPool(10);
-        List<Future<StockHeatmapItemDto>> futures = krStocks.stream()
-            .map(s -> exec.submit(() -> yahooService.fetchHeatmapItem(s[0], s[1])))
-            .toList();
+        List<Future<StockHeatmapItemDto>> futures =
+                krStocks.stream()
+                        .map(s -> exec.submit(() -> yahooService.fetchHeatmapItem(s[0], s[1])))
+                        .toList();
 
         Map<String, StockHeatmapItemDto> resultMap = new HashMap<>();
         for (int i = 0; i < futures.size(); i++) {
@@ -632,7 +687,8 @@ public class StockService {
                 // 보강 후에도 0이면 트리맵 면적 계산이 불가능하므로 최후 1로 강제.
                 if (item.getMarketCap() <= 0) {
                     long krxCap = krxApiService.getKrMarketCap(item.getSymbol());
-                    if (krxCap > 0) log.info("히트맵 시총 KRX 캐시 보강 [{}]: {}원", item.getSymbol(), krxCap);
+                    if (krxCap > 0)
+                        log.info("히트맵 시총 KRX 캐시 보강 [{}]: {}원", item.getSymbol(), krxCap);
                     item.setMarketCap(krxCap > 0 ? krxCap : 1);
                 }
                 resultMap.put(krStocks.get(i)[0], item);
@@ -651,13 +707,19 @@ public class StockService {
             bySector.computeIfAbsent(sector, k -> new ArrayList<>()).add(item);
         }
 
-        log.info("히트맵 수집 완료 (Yahoo 폴백): {}개 섹터, {}개 종목",
-            bySector.size(), bySector.values().stream().mapToLong(List::size).sum());
+        log.info(
+                "히트맵 수집 완료 (Yahoo 폴백): {}개 섹터, {}개 종목",
+                bySector.size(),
+                bySector.values().stream().mapToLong(List::size).sum());
 
         return bySector.entrySet().stream()
-            .map(e -> StockHeatmapSectorDto.builder()
-                .sector(e.getKey()).stocks(e.getValue()).build())
-            .toList();
+                .map(
+                        e ->
+                                StockHeatmapSectorDto.builder()
+                                        .sector(e.getKey())
+                                        .stocks(e.getValue())
+                                        .build())
+                .toList();
     }
 
     @PostConstruct
@@ -665,8 +727,8 @@ public class StockService {
         File file = new File(BASE_RANKS_FILE);
         if (file.exists()) {
             try {
-                Map<String, Map<String, Integer>> loaded = objectMapper.readValue(
-                    file, new TypeReference<>() {});
+                Map<String, Map<String, Integer>> loaded =
+                        objectMapper.readValue(file, new TypeReference<>() {});
                 baseRanks.putAll(loaded);
                 log.info("[순위 기준점 로드] 파일에서 {}개 마켓 복원 ({})", loaded.size(), BASE_RANKS_FILE);
                 return;
@@ -677,9 +739,12 @@ public class StockService {
         // 파일이 없거나 읽기 실패 시 — 초기 데이터를 가져와 기준점 저장
         log.info("[순위 기준점 초기화] 파일 없음 — KR/KOSDAQ/US 초기 데이터 로드 후 기준점 저장");
         try {
-            getTop10KR();     saveBaseRanks("KR");
-            getTop10KOSDAQ(); saveBaseRanks("KOSDAQ");
-            getTop10US();     saveBaseRanks("US");
+            getTop10KR();
+            saveBaseRanks("KR");
+            getTop10KOSDAQ();
+            saveBaseRanks("KOSDAQ");
+            getTop10US();
+            saveBaseRanks("US");
             log.info("[순위 기준점 초기화] 완료 — 다음 스케줄 갱신 시 순위 변동 표시 가능");
         } catch (Exception e) {
             log.warn("[순위 기준점 초기화] 실패: {}", e.getMessage());
@@ -694,8 +759,8 @@ public class StockService {
             return;
         }
         try {
-            Map<String, Top10Snapshot> loaded = objectMapper.readValue(
-                file, new TypeReference<>() {});
+            Map<String, Top10Snapshot> loaded =
+                    objectMapper.readValue(file, new TypeReference<>() {});
             top10Snapshots.putAll(loaded);
             log.info("[Top10 스냅샷 로드] {}개 마켓 복원 ({})", loaded.size(), TOP10_SNAPSHOTS_FILE);
         } catch (IOException e) {
@@ -748,8 +813,9 @@ public class StockService {
     private boolean containsKorean(String s) {
         for (char c : s.toCharArray()) {
             if (Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_SYLLABLES
-             || Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_JAMO
-             || Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) {
+                    || Character.UnicodeBlock.of(c) == Character.UnicodeBlock.HANGUL_JAMO
+                    || Character.UnicodeBlock.of(c)
+                            == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO) {
                 return true;
             }
         }

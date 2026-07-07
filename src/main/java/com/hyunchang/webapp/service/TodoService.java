@@ -5,6 +5,10 @@ import com.hyunchang.webapp.entity.todo.TodoHistory;
 import com.hyunchang.webapp.repository.TodoRepository;
 import com.hyunchang.webapp.repository.todo.TodoHistoryRepository;
 import com.hyunchang.webapp.util.SecurityUtils;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -13,11 +17,6 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
 
 @Service
 public class TodoService {
@@ -39,20 +38,37 @@ public class TodoService {
         return todoRepository.findAll(pageable);
     }
 
-    public Page<Todo> search(String q, String status, Integer priority, String category,
-                             String sort, String dir, int page, int size) {
+    public Page<Todo> search(
+            String q,
+            String status,
+            Integer priority,
+            String category,
+            String sort,
+            String dir,
+            int page,
+            int size) {
         String trimmedQ = (q == null || q.isBlank()) ? null : q.trim();
-        String normalizedStatus = (status == null || status.isBlank() || "all".equalsIgnoreCase(status)) ? null : status;
+        String normalizedStatus =
+                (status == null || status.isBlank() || "all".equalsIgnoreCase(status))
+                        ? null
+                        : status;
         String normalizedCategory = (category == null || category.isBlank()) ? null : category;
-        Sort.Direction direction = "asc".equalsIgnoreCase(dir) ? Sort.Direction.ASC : Sort.Direction.DESC;
-        Sort sortObj = switch (sort == null ? "" : sort.toLowerCase()) {
-            case "due", "duedate" -> Sort.by(direction, "dueDate").and(Sort.by(Sort.Direction.DESC, "id"));
-            case "priority" -> Sort.by(direction, "priority").and(Sort.by(Sort.Direction.DESC, "id"));
-            case "title" -> Sort.by(direction, "title").and(Sort.by(Sort.Direction.DESC, "id"));
-            default -> Sort.by(direction, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"));
-        };
+        Sort.Direction direction =
+                "asc".equalsIgnoreCase(dir) ? Sort.Direction.ASC : Sort.Direction.DESC;
+        Sort sortObj =
+                switch (sort == null ? "" : sort.toLowerCase()) {
+                    case "due", "duedate" ->
+                            Sort.by(direction, "dueDate").and(Sort.by(Sort.Direction.DESC, "id"));
+                    case "priority" ->
+                            Sort.by(direction, "priority").and(Sort.by(Sort.Direction.DESC, "id"));
+                    case "title" ->
+                            Sort.by(direction, "title").and(Sort.by(Sort.Direction.DESC, "id"));
+                    default ->
+                            Sort.by(direction, "createdAt").and(Sort.by(Sort.Direction.DESC, "id"));
+                };
         Pageable pageable = PageRequest.of(page, size, sortObj);
-        return todoRepository.search(trimmedQ, normalizedStatus, priority, normalizedCategory, pageable);
+        return todoRepository.search(
+                trimmedQ, normalizedStatus, priority, normalizedCategory, pageable);
     }
 
     public List<String> findCategories() {
@@ -60,7 +76,8 @@ public class TodoService {
     }
 
     public Todo findById(Long id) {
-        return todoRepository.findById(id)
+        return todoRepository
+                .findById(id)
                 .orElseThrow(() -> new RuntimeException("Todo not found"));
     }
 
@@ -83,10 +100,16 @@ public class TodoService {
         history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
 
-        log.info("[TODO] user={}({}), CREATE id={} title={} done={} priority={} due={} category={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            savedTodo.getId(), savedTodo.getTitle(), savedTodo.getDone(),
-            savedTodo.getPriority(), savedTodo.getDueDate(), savedTodo.getCategory());
+        log.info(
+                "[TODO] user={}({}), CREATE id={} title={} done={} priority={} due={} category={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                savedTodo.getId(),
+                savedTodo.getTitle(),
+                savedTodo.getDone(),
+                savedTodo.getPriority(),
+                savedTodo.getDueDate(),
+                savedTodo.getCategory());
         return savedTodo;
     }
 
@@ -140,10 +163,12 @@ public class TodoService {
         history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
 
-        log.info("[TODO] user={}({}), UPDATE id={} {}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            updatedTodo.getId(),
-            diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
+        log.info(
+                "[TODO] user={}({}), UPDATE id={} {}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                updatedTodo.getId(),
+                diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
         return updatedTodo;
     }
 
@@ -151,8 +176,10 @@ public class TodoService {
     public int deleteAllCompleted() {
         long count = todoRepository.countByDoneTrue();
         if (count == 0) {
-            log.info("[TODO] user={}({}), BULK_DELETE_COMPLETED count=0 (no-op)",
-                SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName());
+            log.info(
+                    "[TODO] user={}({}), BULK_DELETE_COMPLETED count=0 (no-op)",
+                    SecurityUtils.getCurrentUserId(),
+                    SecurityUtils.getCurrentUserRoleName());
             return 0;
         }
 
@@ -164,8 +191,11 @@ public class TodoService {
         history.setCreatedDt(LocalDateTime.now());
         todoHistoryRepository.save(history);
 
-        log.info("[TODO] user={}({}), BULK_DELETE_COMPLETED count={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(), deleted);
+        log.info(
+                "[TODO] user={}({}), BULK_DELETE_COMPLETED count={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                deleted);
         return deleted;
     }
 
@@ -182,9 +212,13 @@ public class TodoService {
 
         todoRepository.deleteById(id);
 
-        log.info("[TODO] user={}({}), DELETE id={} title={} done={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            todo.getId(), todo.getTitle(), todo.getDone());
+        log.info(
+                "[TODO] user={}({}), DELETE id={} title={} done={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                todo.getId(),
+                todo.getTitle(),
+                todo.getDone());
     }
 
     private void normalizeCategory(Todo todo) {

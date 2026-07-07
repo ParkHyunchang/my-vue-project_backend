@@ -2,10 +2,9 @@ package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.Career;
 import com.hyunchang.webapp.repository.CareerRepository;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 public class CareerService {
@@ -21,7 +20,8 @@ public class CareerService {
     }
 
     public Career findById(Long id) {
-        return careerRepository.findById(id)
+        return careerRepository
+                .findById(id)
                 .orElseThrow(() -> new RuntimeException("Career not found: " + id));
     }
 

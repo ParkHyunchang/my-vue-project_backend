@@ -6,6 +6,12 @@ import com.hyunchang.webapp.entity.History;
 import com.hyunchang.webapp.service.HistoryService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.UploadPathUtil;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -20,13 +26,6 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.util.Set;
-import java.util.UUID;
-
 @RestController
 @RequestMapping("/api/histories")
 public class HistoryController {
@@ -35,8 +34,10 @@ public class HistoryController {
     private final HistoryService historyService;
     private final MenuAccessGuard menuAccessGuard;
     private static final Path UPLOAD_ROOT = UploadPathUtil.imagesSubdirPath("history");
-    private static final Set<String> IMAGE_EXTENSIONS = Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
-    private static final Set<String> VIDEO_EXTENSIONS = Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
+    private static final Set<String> IMAGE_EXTENSIONS =
+            Set.of(".jpg", ".jpeg", ".png", ".gif", ".webp");
+    private static final Set<String> VIDEO_EXTENSIONS =
+            Set.of(".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".3gp");
 
     public HistoryController(HistoryService historyService, MenuAccessGuard menuAccessGuard) {
         this.historyService = historyService;
@@ -78,7 +79,8 @@ public class HistoryController {
     public ResponseEntity<?> update(@PathVariable Long id, @RequestBody History history) {
         if (!hasAccess()) return forbidden();
         String roleName = SecurityUtils.getCurrentUserRoleName();
-        return ResponseEntity.ok(historyService.update(id, history, SecurityUtils.getCurrentUserId(), roleName));
+        return ResponseEntity.ok(
+                historyService.update(id, history, SecurityUtils.getCurrentUserId(), roleName));
     }
 
     @DeleteMapping("/{id}")
@@ -126,8 +128,10 @@ public class HistoryController {
             Files.copy(file.getInputStream(), targetPath, StandardCopyOption.REPLACE_EXISTING);
 
             String fileUrl = "/uploads/images/history/" + uniqueFilename;
-            log.info("[HISTORY] user={}, action=UPLOAD_MEDIA, filename={}",
-                    SecurityUtils.getCurrentUserId(), uniqueFilename);
+            log.info(
+                    "[HISTORY] user={}, action=UPLOAD_MEDIA, filename={}",
+                    SecurityUtils.getCurrentUserId(),
+                    uniqueFilename);
             return ResponseEntity.ok(fileUrl);
 
         } catch (IOException e) {

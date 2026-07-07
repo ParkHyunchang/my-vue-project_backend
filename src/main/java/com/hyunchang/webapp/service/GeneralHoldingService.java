@@ -7,12 +7,11 @@ import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.GeneralHoldingRepository;
 import com.hyunchang.webapp.repository.UserRepository;
 import com.hyunchang.webapp.util.SecurityUtils;
+import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 @Transactional
@@ -24,9 +23,10 @@ public class GeneralHoldingService {
     private final UserRepository userRepository;
     private final StockService stockService;
 
-    public GeneralHoldingService(GeneralHoldingRepository generalHoldingRepository,
-                                 UserRepository userRepository,
-                                 StockService stockService) {
+    public GeneralHoldingService(
+            GeneralHoldingRepository generalHoldingRepository,
+            UserRepository userRepository,
+            StockService stockService) {
         this.generalHoldingRepository = generalHoldingRepository;
         this.userRepository = userRepository;
         this.stockService = stockService;
@@ -35,8 +35,8 @@ public class GeneralHoldingService {
     @Transactional(readOnly = true)
     public List<GeneralHoldingResponse> getHoldings(String userId) {
         return generalHoldingRepository.findByUserUserIdOrderByIdAsc(userId).stream()
-            .map(this::toResponseWithKoreanName)
-            .toList();
+                .map(this::toResponseWithKoreanName)
+                .toList();
     }
 
     private GeneralHoldingResponse toResponseWithKoreanName(GeneralHolding holding) {
@@ -48,10 +48,18 @@ public class GeneralHoldingService {
         return response;
     }
 
-    public GeneralHoldingResponse addHolding(String userId, PortfolioAssetType assetType, String market, String name,
-                                             String symbol, Long quantity, Double avgPrice) {
-        User user = userRepository.findByUserId(userId)
-            .orElseThrow(() -> new IllegalStateException("User not found: " + userId));
+    public GeneralHoldingResponse addHolding(
+            String userId,
+            PortfolioAssetType assetType,
+            String market,
+            String name,
+            String symbol,
+            Long quantity,
+            Double avgPrice) {
+        User user =
+                userRepository
+                        .findByUserId(userId)
+                        .orElseThrow(() -> new IllegalStateException("User not found: " + userId));
 
         PortfolioAssetType resolvedType = assetType == null ? PortfolioAssetType.STOCK : assetType;
 
@@ -65,45 +73,77 @@ public class GeneralHoldingService {
         holding.setAvgPrice(resolvedType == PortfolioAssetType.CASH ? 1.0 : avgPrice);
 
         GeneralHolding saved = generalHoldingRepository.save(holding);
-        log.info("[STOCK/GENERAL] user={}({}), CREATE id={} symbol={} assetType={} market={} quantity={} avgPrice={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getSymbol(), saved.getAssetType(), saved.getMarket(), saved.getQuantity(), saved.getAvgPrice());
+        log.info(
+                "[STOCK/GENERAL] user={}({}), CREATE id={} symbol={} assetType={} market={} quantity={} avgPrice={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getSymbol(),
+                saved.getAssetType(),
+                saved.getMarket(),
+                saved.getQuantity(),
+                saved.getAvgPrice());
         return GeneralHoldingResponse.from(saved);
     }
 
-    public GeneralHoldingResponse updateHolding(String userId, Long id, Long quantity, Double avgPrice) {
-        GeneralHolding holding = generalHoldingRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("General holding not found."));
+    public GeneralHoldingResponse updateHolding(
+            String userId, Long id, Long quantity, Double avgPrice) {
+        GeneralHolding holding =
+                generalHoldingRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(
+                                () -> new IllegalArgumentException("General holding not found."));
 
         holding.setQuantity(quantity);
-        holding.setAvgPrice(PortfolioAssetType.CASH.name().equals(holding.getAssetType()) ? 1.0 : avgPrice);
+        holding.setAvgPrice(
+                PortfolioAssetType.CASH.name().equals(holding.getAssetType()) ? 1.0 : avgPrice);
         GeneralHolding saved = generalHoldingRepository.save(holding);
 
-        log.info("[STOCK/GENERAL] user={}({}), UPDATE id={} symbol={} quantity={} avgPrice={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getSymbol(), saved.getQuantity(), saved.getAvgPrice());
+        log.info(
+                "[STOCK/GENERAL] user={}({}), UPDATE id={} symbol={} quantity={} avgPrice={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getSymbol(),
+                saved.getQuantity(),
+                saved.getAvgPrice());
         return GeneralHoldingResponse.from(saved);
     }
 
     public GeneralHoldingResponse updateCore(String userId, Long id, boolean core) {
-        GeneralHolding holding = generalHoldingRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("General holding not found."));
+        GeneralHolding holding =
+                generalHoldingRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(
+                                () -> new IllegalArgumentException("General holding not found."));
 
         holding.setCore(core);
         GeneralHolding saved = generalHoldingRepository.save(holding);
 
-        log.info("[STOCK/GENERAL] user={}({}), CORE id={} symbol={} core={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getSymbol(), core);
+        log.info(
+                "[STOCK/GENERAL] user={}({}), CORE id={} symbol={} core={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getSymbol(),
+                core);
         return GeneralHoldingResponse.from(saved);
     }
 
     public void deleteHolding(String userId, Long id) {
-        GeneralHolding holding = generalHoldingRepository.findByIdAndUserUserId(id, userId)
-            .orElseThrow(() -> new IllegalArgumentException("General holding not found."));
+        GeneralHolding holding =
+                generalHoldingRepository
+                        .findByIdAndUserUserId(id, userId)
+                        .orElseThrow(
+                                () -> new IllegalArgumentException("General holding not found."));
         generalHoldingRepository.delete(holding);
-        log.info("[STOCK/GENERAL] user={}({}), DELETE id={} symbol={} quantity={} avgPrice={}",
-            userId, SecurityUtils.getCurrentUserRoleName(),
-            holding.getId(), holding.getSymbol(), holding.getQuantity(), holding.getAvgPrice());
+        log.info(
+                "[STOCK/GENERAL] user={}({}), DELETE id={} symbol={} quantity={} avgPrice={}",
+                userId,
+                SecurityUtils.getCurrentUserRoleName(),
+                holding.getId(),
+                holding.getSymbol(),
+                holding.getQuantity(),
+                holding.getAvgPrice());
     }
 }

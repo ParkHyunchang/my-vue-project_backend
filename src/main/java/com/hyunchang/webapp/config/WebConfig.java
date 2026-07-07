@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.config;
 
 import com.hyunchang.webapp.util.UploadPathUtil;
+import java.time.Duration;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
@@ -12,13 +13,10 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-import java.time.Duration;
-
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    @Autowired
-    private ActivityLogInterceptor activityLogInterceptor;
+    @Autowired private ActivityLogInterceptor activityLogInterceptor;
 
     @Value("${app.upload-base-url:}")
     private String uploadBaseUrl;
@@ -27,10 +25,7 @@ public class WebConfig implements WebMvcConfigurer {
     public void addInterceptors(@NonNull InterceptorRegistry registry) {
         registry.addInterceptor(activityLogInterceptor)
                 .addPathPatterns("/**")
-                .excludePathPatterns(
-                        "/api/auth/check-username/**",
-                        "/api/auth/check-email/**"
-                );
+                .excludePathPatterns("/api/auth/check-username/**", "/api/auth/check-email/**");
     }
 
     @Override
@@ -47,10 +42,8 @@ public class WebConfig implements WebMvcConfigurer {
     @Bean
     public RestTemplate restTemplate(RestTemplateBuilder builder) {
         // 외부 API(Yahoo, Naver, Google translate, KRX 등) 호출 시 무한 대기 방지
-        return builder
-                .setConnectTimeout(Duration.ofSeconds(5))
+        return builder.setConnectTimeout(Duration.ofSeconds(5))
                 .setReadTimeout(Duration.ofSeconds(15))
                 .build();
     }
-
 }

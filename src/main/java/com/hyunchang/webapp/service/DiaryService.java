@@ -8,11 +8,10 @@ import com.hyunchang.webapp.repository.UserRepository;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
 import com.hyunchang.webapp.util.SecurityUtils;
-import org.springframework.stereotype.Service;
-
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import org.springframework.stereotype.Service;
 
 @Service
 public class DiaryService {
@@ -22,8 +21,11 @@ public class DiaryService {
     private final ClaudeService claudeService;
     private final AiPromptService aiPromptService;
 
-    public DiaryService(DiaryRepository diaryRepository, UserRepository userRepository,
-                        ClaudeService claudeService, AiPromptService aiPromptService) {
+    public DiaryService(
+            DiaryRepository diaryRepository,
+            UserRepository userRepository,
+            ClaudeService claudeService,
+            AiPromptService aiPromptService) {
         this.diaryRepository = diaryRepository;
         this.userRepository = userRepository;
         this.claudeService = claudeService;
@@ -32,7 +34,8 @@ public class DiaryService {
 
     private User getCurrentUser() {
         String userId = SecurityUtils.getCurrentUserId();
-        return userRepository.findByUserId(userId)
+        return userRepository
+                .findByUserId(userId)
                 .orElseThrow(() -> new RuntimeException("사용자를 찾을 수 없습니다."));
     }
 
@@ -41,8 +44,10 @@ public class DiaryService {
     }
 
     public Diary findById(Long id) {
-        Diary diary = diaryRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("일기를 찾을 수 없습니다."));
+        Diary diary =
+                diaryRepository
+                        .findById(id)
+                        .orElseThrow(() -> new RuntimeException("일기를 찾을 수 없습니다."));
         if (!diary.getUser().getUserId().equals(SecurityUtils.getCurrentUserId())) {
             throw new RuntimeException("접근 권한이 없습니다.");
         }
@@ -50,14 +55,12 @@ public class DiaryService {
     }
 
     public Diary findByDate(LocalDate date) {
-        return diaryRepository.findByUserAndDiaryDate(getCurrentUser(), date)
-                .orElse(null);
+        return diaryRepository.findByUserAndDiaryDate(getCurrentUser(), date).orElse(null);
     }
 
     public Diary save(LocalDate diaryDate, String content) {
         User user = getCurrentUser();
-        Diary diary = diaryRepository.findByUserAndDiaryDate(user, diaryDate)
-                .orElse(new Diary());
+        Diary diary = diaryRepository.findByUserAndDiaryDate(user, diaryDate).orElse(new Diary());
         diary.setUser(user);
         diary.setDiaryDate(diaryDate);
         diary.setContent(content);
@@ -68,9 +71,10 @@ public class DiaryService {
     public Diary analyze(Long id) {
         Diary diary = findById(id);
 
-        String prompt = aiPromptService.render(
-                AiPromptCatalog.DIARY_ANALYSIS,
-                Map.of("일기내용", diary.getContent() == null ? "" : diary.getContent()));
+        String prompt =
+                aiPromptService.render(
+                        AiPromptCatalog.DIARY_ANALYSIS,
+                        Map.of("일기내용", diary.getContent() == null ? "" : diary.getContent()));
 
         String analysis = claudeService.chat(List.of(new ChatMessage("user", prompt)));
         diary.setAiAnalysis(analysis);

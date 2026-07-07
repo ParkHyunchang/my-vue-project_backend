@@ -9,15 +9,14 @@ import com.hyunchang.webapp.dto.StockSearchResultDto;
 import com.hyunchang.webapp.service.StockService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
+import java.util.Map;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
 
 @Tag(name = "Stock", description = "주식 대시보드 API")
 @RestController
@@ -60,7 +59,8 @@ public class StockController {
         return ResponseEntity.ok(stockService.getHeatmapKR());
     }
 
-    @Operation(summary = "주식 뉴스 (RSS) — market: KR(국내) | US(해외) | ALL(전체, 기본값) / force=true 시 캐시 무효화")
+    @Operation(
+            summary = "주식 뉴스 (RSS) — market: KR(국내) | US(해외) | ALL(전체, 기본값) / force=true 시 캐시 무효화")
     @GetMapping("/news")
     public ResponseEntity<List<StockNewsDto>> getNews(
             @RequestParam(defaultValue = "KR") String market,
@@ -79,11 +79,11 @@ public class StockController {
     @Operation(summary = "포트폴리오 개별 종목 시세 조회 (캐시 우선)")
     @GetMapping("/quote")
     public ResponseEntity<?> getQuote(
-            @RequestParam String symbol,
-            @RequestParam(defaultValue = "us") String market) {
+            @RequestParam String symbol, @RequestParam(defaultValue = "us") String market) {
         StockPriceDto dto = stockService.getQuote(symbol, market);
-        if (dto == null) return ResponseEntity.status(503)
-            .body(Map.of("error", "시세를 가져올 수 없습니다. API 한도를 확인하세요."));
+        if (dto == null)
+            return ResponseEntity.status(503)
+                    .body(Map.of("error", "시세를 가져올 수 없습니다. API 한도를 확인하세요."));
         return ResponseEntity.ok(dto);
     }
 
@@ -97,10 +97,12 @@ public class StockController {
     @GetMapping("/balance/status")
     public ResponseEntity<Map<String, Object>> getBalanceStatus() {
         // KFTC 오픈뱅킹 승인 후 실제 연동 구현 예정
-        return ResponseEntity.ok(Map.of(
-            "connected", false,
-            "message", "KFTC 오픈뱅킹 연동이 필요합니다. openbanking.or.kr에서 신청하세요."
-        ));
+        return ResponseEntity.ok(
+                Map.of(
+                        "connected",
+                        false,
+                        "message",
+                        "KFTC 오픈뱅킹 연동이 필요합니다. openbanking.or.kr에서 신청하세요."));
     }
 
     @Operation(summary = "KRX API 설정 (만료일 등) — application.yml 기반")

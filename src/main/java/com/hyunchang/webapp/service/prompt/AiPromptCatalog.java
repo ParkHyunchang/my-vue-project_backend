@@ -7,9 +7,9 @@ import java.util.Map;
 /**
  * 편집 가능한 AI 프롬프트의 단일 출처(single source of truth).
  *
- * 각 프롬프트는 [지침(instruction)] + [고정 데이터(fixedContext, {{변수}})] + [고정 응답스키마(fixedSchema)] 로 나뉜다.
- * 관리자는 화면에서 '지침'만 수정하고, 데이터/응답형식은 시스템이 자동으로 덧붙인다.
- * 수정한 지침은 DB(ai_prompt_override)에 오버라이드로만 저장되며, 여기 기본값은 되돌리기/폴백 기준으로 항상 보존된다.
+ * <p>각 프롬프트는 [지침(instruction)] + [고정 데이터(fixedContext, {{변수}})] + [고정 응답스키마(fixedSchema)] 로 나뉜다.
+ * 관리자는 화면에서 '지침'만 수정하고, 데이터/응답형식은 시스템이 자동으로 덧붙인다. 수정한 지침은 DB(ai_prompt_override)에 오버라이드로만 저장되며, 여기
+ * 기본값은 되돌리기/폴백 기준으로 항상 보존된다.
  */
 public final class AiPromptCatalog {
 
@@ -64,20 +64,20 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition stockAnalysis() {
         return new PromptDefinition(
-            STOCK_ANALYSIS,
-            "주식 종목 분석",
-            "주식",
-            "주식 종목 페이지에서 'AI 분석' 을 눌렀을 때, 종목 시세·뉴스를 근거로 감정/요약/호재/리스크를 생성하는 프롬프트입니다.",
-            List.of(
-                new PromptVariable("종목명", "분석 대상 종목 이름 (예: 삼성전자)"),
-                new PromptVariable("티커", "종목 코드/티커 (예: 005930)"),
-                new PromptVariable("시장", "시장 구분 (KR / US)"),
-                new PromptVariable("시세정보", "현재가·등락률"),
-                new PromptVariable("재무데이터", "외부 API(Yahoo/DART)에서 수집한 재무지표·재무제표 요약 (없으면 미수집 안내)"),
-                new PromptVariable("뉴스지침", "뉴스 유무에 따른 사용 지침"),
-                new PromptVariable("뉴스목록", "수집된 종목 관련 뉴스 목록")
-            ),
-            """
+                STOCK_ANALYSIS,
+                "주식 종목 분석",
+                "주식",
+                "주식 종목 페이지에서 'AI 분석' 을 눌렀을 때, 종목 시세·뉴스를 근거로 감정/요약/호재/리스크를 생성하는 프롬프트입니다.",
+                List.of(
+                        new PromptVariable("종목명", "분석 대상 종목 이름 (예: 삼성전자)"),
+                        new PromptVariable("티커", "종목 코드/티커 (예: 005930)"),
+                        new PromptVariable("시장", "시장 구분 (KR / US)"),
+                        new PromptVariable("시세정보", "현재가·등락률"),
+                        new PromptVariable(
+                                "재무데이터", "외부 API(Yahoo/DART)에서 수집한 재무지표·재무제표 요약 (없으면 미수집 안내)"),
+                        new PromptVariable("뉴스지침", "뉴스 유무에 따른 사용 지침"),
+                        new PromptVariable("뉴스목록", "수집된 종목 관련 뉴스 목록")),
+                """
             당신은 글로벌 기업 가치평가(Valuation)·재무분석 전문가입니다.
             아래 제공된 종목 데이터(시세·재무·뉴스)를 근거로, 투자자에게 도움이 되도록
             정확하고 구조적인 종목 분석 보고서를 작성하세요.
@@ -92,7 +92,7 @@ public final class AiPromptCatalog {
             제공되지 않은 수치는 절대 지어내지 말고, 부족하면 '데이터 없음'이라고 명시하세요.
             결론(매수/중립/매도 등 핵심 판단)부터 제시하고, 표와 근거를 활용해 설명하세요.
             """,
-            """
+                """
             ── 종목 ──
             이름: {{종목명}}
             티커: {{티커}}
@@ -105,13 +105,12 @@ public final class AiPromptCatalog {
             ── 최근 뉴스 ──
             {{뉴스목록}}
             """,
-            """
+                """
             ── 출력 형식 ──
             위 지침에서 지정한 보고서 형식에 따라 한국어 마크다운으로 작성하세요.
             제목(##)·표(table)·굵게·목록을 적절히 사용하고, 답변 전체를 ``` 코드블록으로 감싸지 마세요.
             제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
-            """
-        );
+            """);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -119,18 +118,17 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition portfolioAnalysis() {
         return new PromptDefinition(
-            PORTFOLIO_ANALYSIS,
-            "장기 주식계좌 AI 진단",
-            "주식",
-            "장기 주식계좌 포트폴리오 진단 — 보유 종목·뉴스를 근거로 코어/위성 전략에 따라 종목별 퀀트·펀더멘털 분석을 생성합니다.",
-            List.of(
-                new PromptVariable("보유종목", "보유 종목 상세 (현재가·평단가·손익률·관련 뉴스)"),
-                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
-                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
-                new PromptVariable("보유종목목록", "현재 보유 중인 종목 라벨 목록")
-            ),
-            "",
-            """
+                PORTFOLIO_ANALYSIS,
+                "장기 주식계좌 AI 진단",
+                "주식",
+                "장기 주식계좌 포트폴리오 진단 — 보유 종목·뉴스를 근거로 코어/위성 전략에 따라 종목별 퀀트·펀더멘털 분석을 생성합니다.",
+                List.of(
+                        new PromptVariable("보유종목", "보유 종목 상세 (현재가·평단가·손익률·관련 뉴스)"),
+                        new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                        new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                        new PromptVariable("보유종목목록", "현재 보유 중인 종목 라벨 목록")),
+                "",
+                """
             ── 보유 종목 ──
             {{보유종목}}
             ── 보유 종목 재무·퀀트·공시 데이터 ──
@@ -140,7 +138,7 @@ public final class AiPromptCatalog {
             ── 현재 보유 중인 종목 (참고) ──
             {{보유종목목록}}
             """,
-            """
+                """
             ── 출력 형식 ──
             한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
             다음 섹션을 반드시 포함하세요:
@@ -166,27 +164,26 @@ public final class AiPromptCatalog {
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
-            """
-        );
+            """);
     }
 
     private static PromptDefinition portfolioIsaAnalysis() {
         return new PromptDefinition(
-            PORTFOLIO_ISA_ANALYSIS,
-            "ISA 포트폴리오 AI 진단",
-            "주식",
-            "ISA 계좌 — 계속 모아가는 중장기 적립식 전략에 맞춰 절세 효과와 장기 적립 관점의 포트폴리오 진단을 생성합니다.",
-            List.of(
-                new PromptVariable("계좌유형", "분석 계좌명 (ISA)"),
-                new PromptVariable("계좌설명", "프론트에서 전달한 계좌별 분석 메모"),
-                new PromptVariable("계좌비중점검", "ISA 기본 배경정보와 현재 위험/현금성 자산 비중 점검 (내부 판단용)"),
-                new PromptVariable("보유종목", "ISA 보유 자산 상세 (주식/ETF/현금성 자산, 현재가·평단가·손익률·관련 뉴스)"),
-                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
-                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
-                new PromptVariable("보유종목목록", "현재 보유 중인 자산 라벨 목록")
-            ),
-            "",
-            """
+                PORTFOLIO_ISA_ANALYSIS,
+                "ISA 포트폴리오 AI 진단",
+                "주식",
+                "ISA 계좌 — 계속 모아가는 중장기 적립식 전략에 맞춰 절세 효과와 장기 적립 관점의 포트폴리오 진단을 생성합니다.",
+                List.of(
+                        new PromptVariable("계좌유형", "분석 계좌명 (ISA)"),
+                        new PromptVariable("계좌설명", "프론트에서 전달한 계좌별 분석 메모"),
+                        new PromptVariable("계좌비중점검", "ISA 기본 배경정보와 현재 위험/현금성 자산 비중 점검 (내부 판단용)"),
+                        new PromptVariable(
+                                "보유종목", "ISA 보유 자산 상세 (주식/ETF/현금성 자산, 현재가·평단가·손익률·관련 뉴스)"),
+                        new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                        new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                        new PromptVariable("보유종목목록", "현재 보유 중인 자산 라벨 목록")),
+                "",
+                """
             ── 계좌 ──
             계좌유형: {{계좌유형}}
             계좌설명: {{계좌설명}}
@@ -201,7 +198,7 @@ public final class AiPromptCatalog {
             ── 현재 보유 중인 자산 ──
             {{보유종목목록}}
             """,
-            """
+                """
             ── 출력 형식 ──
             한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
             다음 섹션을 반드시 포함하세요:
@@ -227,24 +224,22 @@ public final class AiPromptCatalog {
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. ISA 의무가입기간 내 중도 해지 시 세제혜택이 소멸됩니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
-            """
-        );
+            """);
     }
 
     private static PromptDefinition portfolioGeneralAnalysis() {
         return new PromptDefinition(
-            PORTFOLIO_GENERAL_ANALYSIS,
-            "단기 주식계좌 AI 진단",
-            "주식",
-            "단기매매(스윙 트레이딩)로 운용 중인 포트폴리오의 종목별 진입·청산 시그널, 손절·익절 수준, 모멘텀을 진단합니다.",
-            List.of(
-                new PromptVariable("보유종목", "보유 종목 상세 (현재가·평단가·손익률·관련 뉴스)"),
-                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
-                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
-                new PromptVariable("보유종목목록", "현재 보유 중인 종목 라벨 목록")
-            ),
-            "",
-            """
+                PORTFOLIO_GENERAL_ANALYSIS,
+                "단기 주식계좌 AI 진단",
+                "주식",
+                "단기매매(스윙 트레이딩)로 운용 중인 포트폴리오의 종목별 진입·청산 시그널, 손절·익절 수준, 모멘텀을 진단합니다.",
+                List.of(
+                        new PromptVariable("보유종목", "보유 종목 상세 (현재가·평단가·손익률·관련 뉴스)"),
+                        new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                        new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                        new PromptVariable("보유종목목록", "현재 보유 중인 종목 라벨 목록")),
+                "",
+                """
             ── 보유 종목 ──
             {{보유종목}}
             ── 보유 종목 재무·퀀트·공시 데이터 ──
@@ -254,7 +249,7 @@ public final class AiPromptCatalog {
             ── 현재 보유 중인 종목 (참고) ──
             {{보유종목목록}}
             """,
-            """
+                """
             ── 출력 형식 ──
             한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
             다음 섹션을 반드시 포함하세요:
@@ -280,27 +275,26 @@ public final class AiPromptCatalog {
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
-            """
-        );
+            """);
     }
 
     private static PromptDefinition portfolioIrpAnalysis() {
         return new PromptDefinition(
-            PORTFOLIO_IRP_ANALYSIS,
-            "퇴직연금 IRP 포트폴리오 AI 진단",
-            "주식",
-            "퇴직연금 IRP 계좌의 보유 종목·현금성 자산·뉴스를 근거로 은퇴자산 관점의 장기 안정성 진단을 생성합니다.",
-            List.of(
-                new PromptVariable("계좌유형", "분석 계좌명 (퇴직연금 IRP)"),
-                new PromptVariable("계좌설명", "프론트에서 전달한 계좌별 분석 메모"),
-                new PromptVariable("계좌비중점검", "IRP 위험자산 70% 한도와 안전/현금성 자산 비중 점검 (내부 판단용)"),
-                new PromptVariable("보유종목", "IRP 보유 자산 상세 (주식/ETF/현금성 자산, 현재가·평단가·손익률·관련 뉴스)"),
-                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
-                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
-                new PromptVariable("보유종목목록", "현재 보유 중인 자산 라벨 목록")
-            ),
-            "",
-            """
+                PORTFOLIO_IRP_ANALYSIS,
+                "퇴직연금 IRP 포트폴리오 AI 진단",
+                "주식",
+                "퇴직연금 IRP 계좌의 보유 종목·현금성 자산·뉴스를 근거로 은퇴자산 관점의 장기 안정성 진단을 생성합니다.",
+                List.of(
+                        new PromptVariable("계좌유형", "분석 계좌명 (퇴직연금 IRP)"),
+                        new PromptVariable("계좌설명", "프론트에서 전달한 계좌별 분석 메모"),
+                        new PromptVariable("계좌비중점검", "IRP 위험자산 70% 한도와 안전/현금성 자산 비중 점검 (내부 판단용)"),
+                        new PromptVariable(
+                                "보유종목", "IRP 보유 자산 상세 (주식/ETF/현금성 자산, 현재가·평단가·손익률·관련 뉴스)"),
+                        new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                        new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                        new PromptVariable("보유종목목록", "현재 보유 중인 자산 라벨 목록")),
+                "",
+                """
             ── 계좌 ──
             계좌유형: {{계좌유형}}
             계좌설명: {{계좌설명}}
@@ -315,7 +309,7 @@ public final class AiPromptCatalog {
             ── 현재 보유 중인 자산 ──
             {{보유종목목록}}
             """,
-            """
+                """
             ── 출력 형식 ──
             한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
             다음 섹션을 반드시 포함하세요:
@@ -345,24 +339,23 @@ public final class AiPromptCatalog {
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
-            """
-        );
+            """);
     }
 
     private static PromptDefinition portfolioAllAnalysis() {
         return new PromptDefinition(
-            PORTFOLIO_ALL_ANALYSIS,
-            "전체 계좌 종합 진단",
-            "주식",
-            "장기·단기·ISA·IRP 4개 계좌를 합친 통합 포트폴리오 진단 — 계좌별로 다른 운용 전략을 존중하면서 전체 자산배분과 계좌간 중복 노출을 점검합니다.",
-            List.of(
-                new PromptVariable("보유종목", "4개 계좌를 합친 보유 자산 상세 (계좌 라벨 포함, 현재가·평단가·손익률·관련 뉴스)"),
-                new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
-                new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
-                new PromptVariable("보유종목목록", "현재 보유 중인 전체 자산 라벨 목록")
-            ),
-            "",
-            """
+                PORTFOLIO_ALL_ANALYSIS,
+                "전체 계좌 종합 진단",
+                "주식",
+                "장기·단기·ISA·IRP 4개 계좌를 합친 통합 포트폴리오 진단 — 계좌별로 다른 운용 전략을 존중하면서 전체 자산배분과 계좌간 중복 노출을 점검합니다.",
+                List.of(
+                        new PromptVariable(
+                                "보유종목", "4개 계좌를 합친 보유 자산 상세 (계좌 라벨 포함, 현재가·평단가·손익률·관련 뉴스)"),
+                        new PromptVariable("재무데이터", "보유 종목들의 재무지표 요약 (외부 API 수집, 없으면 미수집 안내)"),
+                        new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인 목록"),
+                        new PromptVariable("보유종목목록", "현재 보유 중인 전체 자산 라벨 목록")),
+                "",
+                """
             ── 보유 종목 (전체 계좌 통합, 각 항목에 소속 계좌 표기) ──
             {{보유종목}}
             ── 보유 종목 재무·퀀트·공시 데이터 ──
@@ -372,7 +365,7 @@ public final class AiPromptCatalog {
             ── 현재 보유 중인 전체 자산 (참고) ──
             {{보유종목목록}}
             """,
-            """
+                """
             ── 출력 형식 ──
             한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
             다음 섹션을 반드시 포함하세요:
@@ -397,8 +390,7 @@ public final class AiPromptCatalog {
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
-            """
-        );
+            """);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -406,20 +398,19 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition travelCreate() {
         return new PromptDefinition(
-            TRAVEL_CREATE,
-            "여행 일정 생성",
-            "여행",
-            "여행 AI 플래너에서 조건(목적지·기간·동행·스타일·예산)을 받아 일자별 추천 일정을 처음 생성하는 프롬프트입니다.",
-            List.of(
-                new PromptVariable("목적지", "여행 목적지"),
-                new PromptVariable("기간일수", "여행 일수 (예: 4)"),
-                new PromptVariable("박수", "숙박 수 (일수 - 1)"),
-                new PromptVariable("동행", "동행 정보 (미지정 가능)"),
-                new PromptVariable("여행스타일", "여행 스타일 (미지정 가능)"),
-                new PromptVariable("예산", "예산 (미지정 가능)"),
-                new PromptVariable("예산포함항목", "항공권/숙박 포함 여부")
-            ),
-            """
+                TRAVEL_CREATE,
+                "여행 일정 생성",
+                "여행",
+                "여행 AI 플래너에서 조건(목적지·기간·동행·스타일·예산)을 받아 일자별 추천 일정을 처음 생성하는 프롬프트입니다.",
+                List.of(
+                        new PromptVariable("목적지", "여행 목적지"),
+                        new PromptVariable("기간일수", "여행 일수 (예: 4)"),
+                        new PromptVariable("박수", "숙박 수 (일수 - 1)"),
+                        new PromptVariable("동행", "동행 정보 (미지정 가능)"),
+                        new PromptVariable("여행스타일", "여행 스타일 (미지정 가능)"),
+                        new PromptVariable("예산", "예산 (미지정 가능)"),
+                        new PromptVariable("예산포함항목", "항공권/숙박 포함 여부")),
+                """
             당신은 한국인 여행자를 위한 여행 플래너입니다. 아래 조건에 맞춰 현실적이고 동선이 효율적인
             일자별 추천 일정을 짜세요. 실제 존재하는 장소·명소·음식 위주로 구체적으로 작성하고,
             이동 동선이 들쭉날쭉하지 않게 가까운 곳끼리 묶으세요. 과장이나 허구의 장소는 쓰지 마세요.
@@ -429,7 +420,7 @@ public final class AiPromptCatalog {
             불포함으로 표시된 항목(항공권/숙박)은 예상 경비에서 제외하고,
             무엇이 포함/불포함인지 한 줄로 함께 명시하세요. (예: "1인 약 60~80만원, 항공권·숙박 별도")
             """,
-            """
+                """
             ── 여행 조건 ──
             목적지: {{목적지}}
             기간: {{기간일수}}일 ({{박수}}박 {{기간일수}}일)
@@ -438,7 +429,7 @@ public final class AiPromptCatalog {
             예산: {{예산}}
             예산 포함 항목: {{예산포함항목}}
             """,
-            """
+                """
             ── 응답 스키마 ──
             {
               "title": "여행 제목 (예: 오사카 3박4일 미식 여행)",
@@ -456,8 +447,7 @@ public final class AiPromptCatalog {
               "estimatedBudget": "1인 예상 경비 요약 (포함/불포함 항목 명시)"
             }
             반드시 days 배열의 길이는 {{기간일수}} 여야 합니다.
-            """
-        );
+            """);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -465,15 +455,14 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition travelRefine() {
         return new PromptDefinition(
-            TRAVEL_REFINE,
-            "여행 일정 수정 (채팅)",
-            "여행",
-            "여행 AI 플래너에서 이미 만들어진 일정에 대해 사용자가 채팅으로 수정 요청을 했을 때, 일정을 다시 구성하는 프롬프트입니다.",
-            List.of(
-                new PromptVariable("현재일정", "현재 일정 JSON 전체"),
-                new PromptVariable("수정요청", "사용자의 수정 요청 메시지")
-            ),
-            """
+                TRAVEL_REFINE,
+                "여행 일정 수정 (채팅)",
+                "여행",
+                "여행 AI 플래너에서 이미 만들어진 일정에 대해 사용자가 채팅으로 수정 요청을 했을 때, 일정을 다시 구성하는 프롬프트입니다.",
+                List.of(
+                        new PromptVariable("현재일정", "현재 일정 JSON 전체"),
+                        new PromptVariable("수정요청", "사용자의 수정 요청 메시지")),
+                """
             당신은 한국인 여행자를 위한 여행 플래너입니다. 아래는 현재 여행 일정(JSON)입니다.
             사용자의 수정 요청을 반영해 일정을 다시 구성하세요. 단, 다음 원칙을 지키세요:
             - 요청과 직접 관련된 부분만 바꾸고, 나머지 일자·일정 구성은 최대한 그대로 유지하세요.
@@ -482,14 +471,14 @@ public final class AiPromptCatalog {
             - 전체 일정을 빠짐없이 다시 출력하세요(바뀐 부분만이 아니라 전체).
             응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
             """,
-            """
+                """
             ── 현재 일정 ──
             {{현재일정}}
 
             ── 사용자 수정 요청 ──
             {{수정요청}}
             """,
-            """
+                """
             ── 응답 스키마 ──
             {
               "title": "여행 제목",
@@ -506,8 +495,7 @@ public final class AiPromptCatalog {
               "tips": ["팁1", "팁2"],
               "estimatedBudget": "1인 예상 경비 요약"
             }
-            """
-        );
+            """);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -515,33 +503,32 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition realEstateTrade() {
         return new PromptDefinition(
-            REALESTATE_TRADE,
-            "부동산 시황 (매매/전세/월세)",
-            "부동산",
-            "부동산(아파트) 검색 시 해당 지역의 실거래 통계·뉴스를 근거로 시황을 분석하는 프롬프트입니다. 매매/전세/월세 공통.",
-            List.of(
-                new PromptVariable("지역", "분석 대상 지역명"),
-                new PromptVariable("거래유형", "매매 / 전세 / 월세"),
-                new PromptVariable("분석개월수", "집계 기간(개월)"),
-                new PromptVariable("거래건수", "기간 내 총 거래 건수"),
-                new PromptVariable("평균가", "평균 가격"),
-                new PromptVariable("최저가", "최저 가격"),
-                new PromptVariable("최고가", "최고 가격"),
-                new PromptVariable("추세", "가격 추세 (상승/보합/하락)"),
-                new PromptVariable("추세율", "추세 변화율(%)"),
-                new PromptVariable("평형별시세", "전용면적 구간별 평균 시세"),
-                new PromptVariable("가격항목", "대표 거래 금액 항목명 (거래금액/보증금)"),
-                new PromptVariable("대표거래", "최근 대표 거래 목록"),
-                new PromptVariable("뉴스지침", "뉴스 사용 지침"),
-                new PromptVariable("뉴스목록", "부동산 뉴스 목록")
-            ),
-            """
+                REALESTATE_TRADE,
+                "부동산 시황 (매매/전세/월세)",
+                "부동산",
+                "부동산(아파트) 검색 시 해당 지역의 실거래 통계·뉴스를 근거로 시황을 분석하는 프롬프트입니다. 매매/전세/월세 공통.",
+                List.of(
+                        new PromptVariable("지역", "분석 대상 지역명"),
+                        new PromptVariable("거래유형", "매매 / 전세 / 월세"),
+                        new PromptVariable("분석개월수", "집계 기간(개월)"),
+                        new PromptVariable("거래건수", "기간 내 총 거래 건수"),
+                        new PromptVariable("평균가", "평균 가격"),
+                        new PromptVariable("최저가", "최저 가격"),
+                        new PromptVariable("최고가", "최고 가격"),
+                        new PromptVariable("추세", "가격 추세 (상승/보합/하락)"),
+                        new PromptVariable("추세율", "추세 변화율(%)"),
+                        new PromptVariable("평형별시세", "전용면적 구간별 평균 시세"),
+                        new PromptVariable("가격항목", "대표 거래 금액 항목명 (거래금액/보증금)"),
+                        new PromptVariable("대표거래", "최근 대표 거래 목록"),
+                        new PromptVariable("뉴스지침", "뉴스 사용 지침"),
+                        new PromptVariable("뉴스목록", "부동산 뉴스 목록")),
+                """
             당신은 한국 부동산 시장 분석가입니다. 아래 실거래 데이터와 뉴스만 근거로,
             이 지역을 매수/계약 검토하는 사람에게 도움이 되도록 간결하고 정확하게 분석하세요.
             추측이나 일반론은 쓰지 마세요. 투자 권유가 아닌 정보 정리 톤으로 작성하세요.
             응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
             """,
-            """
+                """
             ── 분석 대상 ──
             지역: {{지역}}
             거래유형: {{거래유형}}
@@ -557,7 +544,7 @@ public final class AiPromptCatalog {
             ── 부동산 뉴스 ──
             {{뉴스목록}}
             """,
-            """
+                """
             ── 응답 스키마 ──
             {
               "trend": "상승" | "보합" | "하락",
@@ -567,8 +554,7 @@ public final class AiPromptCatalog {
               "watchPoints": ["매수 검토 시 주의점1", "주의점2"],
               "comment": "2~3문장 종합 코멘트"
             }
-            """
-        );
+            """);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -576,26 +562,25 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition realEstateLand() {
         return new PromptDefinition(
-            REALESTATE_LAND,
-            "부동산 토지 분석",
-            "부동산",
-            "토지(LAND) 검색 시 단가(원/㎡)·용도지역·지목별 실거래를 근거로 토지 시황을 분석하는 프롬프트입니다.",
-            List.of(
-                new PromptVariable("지역", "분석 대상 지역명"),
-                new PromptVariable("분석개월수", "집계 기간(개월)"),
-                new PromptVariable("거래건수", "기간 내 총 거래 건수"),
-                new PromptVariable("평균단가", "평균 단가 (원/㎡)"),
-                new PromptVariable("최저단가", "최저 단가"),
-                new PromptVariable("최고단가", "최고 단가"),
-                new PromptVariable("추세", "단가 추세 (상승/보합/하락)"),
-                new PromptVariable("추세율", "추세 변화율(%)"),
-                new PromptVariable("용도지역별단가", "용도지역별 평균 단가"),
-                new PromptVariable("지목별단가", "지목별 평균 단가"),
-                new PromptVariable("대표거래", "최근 대표 거래 목록"),
-                new PromptVariable("뉴스지침", "뉴스 사용 지침"),
-                new PromptVariable("뉴스목록", "부동산 뉴스 목록")
-            ),
-            """
+                REALESTATE_LAND,
+                "부동산 토지 분석",
+                "부동산",
+                "토지(LAND) 검색 시 단가(원/㎡)·용도지역·지목별 실거래를 근거로 토지 시황을 분석하는 프롬프트입니다.",
+                List.of(
+                        new PromptVariable("지역", "분석 대상 지역명"),
+                        new PromptVariable("분석개월수", "집계 기간(개월)"),
+                        new PromptVariable("거래건수", "기간 내 총 거래 건수"),
+                        new PromptVariable("평균단가", "평균 단가 (원/㎡)"),
+                        new PromptVariable("최저단가", "최저 단가"),
+                        new PromptVariable("최고단가", "최고 단가"),
+                        new PromptVariable("추세", "단가 추세 (상승/보합/하락)"),
+                        new PromptVariable("추세율", "추세 변화율(%)"),
+                        new PromptVariable("용도지역별단가", "용도지역별 평균 단가"),
+                        new PromptVariable("지목별단가", "지목별 평균 단가"),
+                        new PromptVariable("대표거래", "최근 대표 거래 목록"),
+                        new PromptVariable("뉴스지침", "뉴스 사용 지침"),
+                        new PromptVariable("뉴스목록", "부동산 뉴스 목록")),
+                """
             당신은 한국 토지(부동산) 시장 분석가입니다. 아래 토지 실거래 데이터와 뉴스만 근거로,
             이 지역 토지를 매입 검토하는 사람에게 도움이 되도록 간결하고 정확하게 분석하세요.
             토지는 필지마다 조건(지목·용도지역·도로·형상)이 달라 개별 시세 단정이 어렵다는 점을 전제로,
@@ -603,7 +588,7 @@ public final class AiPromptCatalog {
             추측이나 일반론은 쓰지 마세요. 투자 권유가 아닌 정보 정리 톤으로 작성하세요.
             응답은 반드시 아래 스키마의 JSON 객체 하나로만 출력하세요. 코드블록·해설을 포함하지 마세요.
             """,
-            """
+                """
             ── 분석 대상 ──
             지역: {{지역}} (토지 매매)
             최근 {{분석개월수}}개월 집계: 총 {{거래건수}}건, 평균 단가 {{평균단가}}, 최저 {{최저단가}}, 최고 {{최고단가}}
@@ -620,7 +605,7 @@ public final class AiPromptCatalog {
             ── 부동산 뉴스 ──
             {{뉴스목록}}
             """,
-            """
+                """
             ── 응답 스키마 ──
             {
               "trend": "상승" | "보합" | "하락",
@@ -630,8 +615,7 @@ public final class AiPromptCatalog {
               "watchPoints": ["토지 매입 검토 시 주의점1", "주의점2"],
               "comment": "2~3문장 종합 코멘트"
             }
-            """
-        );
+            """);
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -639,21 +623,19 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition diaryAnalysis() {
         return new PromptDefinition(
-            DIARY_ANALYSIS,
-            "일기 AI 분석",
-            "일기",
-            "일기 작성 후 'AI 분석' 시, 일기 내용을 근거로 감정·요약·키워드·따뜻한 코멘트를 생성하는 프롬프트입니다.",
-            List.of(
-                new PromptVariable("일기내용", "사용자가 작성한 일기 본문")
-            ),
-            """
+                DIARY_ANALYSIS,
+                "일기 AI 분석",
+                "일기",
+                "일기 작성 후 'AI 분석' 시, 일기 내용을 근거로 감정·요약·키워드·따뜻한 코멘트를 생성하는 프롬프트입니다.",
+                List.of(new PromptVariable("일기내용", "사용자가 작성한 일기 본문")),
+                """
             다음은 사용자가 오늘 작성한 일기입니다. 아래 JSON 형식으로만 응답해주세요. 다른 텍스트는 절대 포함하지 마세요.
             """,
-            """
+                """
             일기 내용:
             {{일기내용}}
             """,
-            """
+                """
             응답 형식 (JSON만):
             {
               "mood": "감정을 나타내는 이모지 하나와 한 단어 (예: 😊 기쁨)",
@@ -662,7 +644,6 @@ public final class AiPromptCatalog {
               "keywords": ["키워드1", "키워드2", "키워드3"],
               "comment": "공감하고 격려하는 따뜻한 한마디 (2~3문장)"
             }
-            """
-        );
+            """);
     }
 }

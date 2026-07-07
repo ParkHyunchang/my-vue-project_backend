@@ -11,13 +11,13 @@ public class TodoHistory {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
     private String action;
     private String todoTitle;
     private Long todoId;
     private LocalDateTime createdDt;
 
-    public TodoHistory() {
-    }
+    public TodoHistory() {}
 
     public Long getId() {
         return id;
@@ -58,4 +58,4 @@ public class TodoHistory {
     public void setCreatedDt(LocalDateTime createdDt) {
         this.createdDt = createdDt;
     }
-} 
+}

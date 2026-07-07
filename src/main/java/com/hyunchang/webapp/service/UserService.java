@@ -5,6 +5,9 @@ import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.exception.UserAlreadyExistsException;
 import com.hyunchang.webapp.exception.UserNotFoundException;
 import com.hyunchang.webapp.repository.UserRepository;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -12,10 +15,6 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
-
-import java.util.Arrays;
-import java.util.List;
-import java.util.Optional;
 
 @Service
 @RequiredArgsConstructor
@@ -29,18 +28,22 @@ public class UserService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        return userRepository.findByUserId(username)
+        return userRepository
+                .findByUserId(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
 
-    public User registerUser(String userId, String name, String email, String phone, String password, String role) {
+    public User registerUser(
+            String userId, String name, String email, String phone, String password, String role) {
         if (userRepository.existsByUserId(userId)) {
             throw new UserAlreadyExistsException("이미 사용 중인 사용자ID입니다.");
         }
         if (userRepository.existsByEmail(email)) {
             throw new UserAlreadyExistsException("가입된 메일주소가 있습니다.");
         }
-        if (phone != null && !phone.trim().isEmpty() && userRepository.existsByPhone(phone.trim())) {
+        if (phone != null
+                && !phone.trim().isEmpty()
+                && userRepository.existsByPhone(phone.trim())) {
             throw new UserAlreadyExistsException("가입된 전화번호가 있습니다.");
         }
 
@@ -49,14 +52,15 @@ public class UserService implements UserDetailsService {
             throw new IllegalArgumentException("관리자 권한을 설정할 수 없습니다. 허용된 사용자만 관리자가 될 수 있습니다.");
         }
 
-        User user = User.builder()
-                .userId(userId)
-                .name(name)
-                .email(email)
-                .phone(phone)
-                .password(passwordEncoder.encode(password))
-                .role(roleUpper)
-                .build();
+        User user =
+                User.builder()
+                        .userId(userId)
+                        .name(name)
+                        .email(email)
+                        .phone(phone)
+                        .password(passwordEncoder.encode(password))
+                        .role(roleUpper)
+                        .build();
 
         return userRepository.save(user);
     }
@@ -83,7 +87,8 @@ public class UserService implements UserDetailsService {
         String trimName = name.trim();
         String trimEmail = email.trim();
         if (trimName.isEmpty() || trimEmail.isEmpty()) return Optional.empty();
-        return userRepository.findByEmail(trimEmail)
+        return userRepository
+                .findByEmail(trimEmail)
                 .filter(u -> u.getName() != null && u.getName().trim().equalsIgnoreCase(trimName));
     }
 
@@ -105,8 +110,13 @@ public class UserService implements UserDetailsService {
     }
 
     public User updateUser(Long userId, UpdateUserRequest request) {
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new UserNotFoundException("User not found with id: " + userId));
+        User user =
+                userRepository
+                        .findById(userId)
+                        .orElseThrow(
+                                () ->
+                                        new UserNotFoundException(
+                                                "User not found with id: " + userId));
 
         if (request.getName() != null && !request.getName().trim().isEmpty()) {
             user.setName(request.getName().trim());
@@ -119,8 +129,11 @@ public class UserService implements UserDetailsService {
             user.setEmail(newEmail);
         }
         if (request.getPhone() != null) {
-            String newPhone = request.getPhone().trim().isEmpty() ? null : request.getPhone().trim();
-            if (newPhone != null && !newPhone.equals(user.getPhone()) && userRepository.existsByPhone(newPhone)) {
+            String newPhone =
+                    request.getPhone().trim().isEmpty() ? null : request.getPhone().trim();
+            if (newPhone != null
+                    && !newPhone.equals(user.getPhone())
+                    && userRepository.existsByPhone(newPhone)) {
                 throw new UserAlreadyExistsException("가입된 전화번호가 있습니다.");
             }
             user.setPhone(newPhone);
@@ -161,8 +174,10 @@ public class UserService implements UserDetailsService {
     }
 
     public boolean isAdmin(String userId) {
-        User user = userRepository.findByUserId(userId)
-                .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
+        User user =
+                userRepository
+                        .findByUserId(userId)
+                        .orElseThrow(() -> new UserNotFoundException("User not found: " + userId));
         return "ADMIN".equals(user.getRole());
     }
 

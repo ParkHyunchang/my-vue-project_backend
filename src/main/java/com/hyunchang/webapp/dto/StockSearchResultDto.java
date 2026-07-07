@@ -13,6 +13,6 @@ public class StockSearchResultDto {
     private String symbol;
     private String name;
     private String exchange;
-    private String type;     // EQUITY, ETF, INDEX, ...
-    private String market;   // KR / US (자동 감지)
+    private String type; // EQUITY, ETF, INDEX, ...
+    private String market; // KR / US (자동 감지)
 }

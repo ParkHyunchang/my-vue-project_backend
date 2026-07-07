@@ -2,10 +2,9 @@ package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.Experience;
 import com.hyunchang.webapp.repository.ExperienceRepository;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 public class ExperienceService {
@@ -21,7 +20,8 @@ public class ExperienceService {
     }
 
     public Experience findById(Long id) {
-        return experienceRepository.findById(id)
+        return experienceRepository
+                .findById(id)
                 .orElseThrow(() -> new RuntimeException("Experience not found: " + id));
     }
 

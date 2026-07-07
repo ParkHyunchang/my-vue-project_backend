@@ -1,8 +1,7 @@
 package com.hyunchang.webapp.util;
 
-import org.slf4j.Logger;
-
 import java.util.function.Supplier;
+import org.slf4j.Logger;
 
 public final class SafeCalls {
     private SafeCalls() {}

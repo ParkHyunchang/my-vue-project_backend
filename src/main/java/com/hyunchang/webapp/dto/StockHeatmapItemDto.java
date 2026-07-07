@@ -14,5 +14,5 @@ public class StockHeatmapItemDto {
     private String name;
     private double price;
     private double changePercent;
-    private long   marketCap;
+    private long marketCap;
 }

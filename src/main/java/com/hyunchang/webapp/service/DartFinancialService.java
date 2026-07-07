@@ -2,15 +2,6 @@ package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-import org.w3c.dom.Element;
-import org.w3c.dom.NodeList;
-
-import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
 import java.time.LocalDate;
 import java.time.Year;
@@ -22,16 +13,23 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.zip.ZipInputStream;
+import javax.xml.parsers.DocumentBuilderFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.w3c.dom.Element;
+import org.w3c.dom.NodeList;
 
 /**
  * OpenDART(금융감독원 전자공시) 재무제표 연동 — 국내 종목 재무 요약을 만든다.
  *
- *  1) corpCode.xml(zip) 으로 6자리 종목코드 → corp_code 매핑을 1회 로드/캐시
- *  2) fnlttSinglAcnt.json 으로 주요계정(매출/영업이익/순이익/자산·부채·자본) 조회
- *  3) 핵심 비율(영업이익률·순이익률·ROE·부채비율) 계산 후 한국어 블록 반환
+ * <p>1) corpCode.xml(zip) 으로 6자리 종목코드 → corp_code 매핑을 1회 로드/캐시 2) fnlttSinglAcnt.json 으로
+ * 주요계정(매출/영업이익/순이익/자산·부채·자본) 조회 3) 핵심 비율(영업이익률·순이익률·ROE·부채비율) 계산 후 한국어 블록 반환
  *
- * DART_API_KEY(application.yml dart.api-key)가 없으면 비활성(enabled()=false) → null 반환.
- * 모든 실패는 null 로 흡수해 분석이 멈추지 않게 한다.
+ * <p>DART_API_KEY(application.yml dart.api-key)가 없으면 비활성(enabled()=false) → null 반환. 모든 실패는 null 로
+ * 흡수해 분석이 멈추지 않게 한다.
  */
 @Service
 public class DartFinancialService {
@@ -47,17 +45,34 @@ public class DartFinancialService {
 
     /** 6자리 종목코드 → corp_code (8자리). 최초 1회 로드. */
     private volatile Map<String, String> stockToCorp = null;
+
     private final Object loadLock = new Object();
 
-    private static final Set<String> DISCLOSURE_RISK_KEYWORDS = Set.of(
-            "타법인", "최대주주", "대주주", "담보", "질권", "전환사채", "신주인수권",
-            "유상증자", "감자", "자기주식", "주식등의대량보유", "임원ㆍ주요주주",
-            "횡령", "배임", "불성실", "소송", "상장폐지", "관리종목"
-    );
+    private static final Set<String> DISCLOSURE_RISK_KEYWORDS =
+            Set.of(
+                    "타법인",
+                    "최대주주",
+                    "대주주",
+                    "담보",
+                    "질권",
+                    "전환사채",
+                    "신주인수권",
+                    "유상증자",
+                    "감자",
+                    "자기주식",
+                    "주식등의대량보유",
+                    "임원ㆍ주요주주",
+                    "횡령",
+                    "배임",
+                    "불성실",
+                    "소송",
+                    "상장폐지",
+                    "관리종목");
 
-    public DartFinancialService(RestTemplate restTemplate,
-                                ObjectMapper objectMapper,
-                                KrxOpenApiService krxOpenApiService) {
+    public DartFinancialService(
+            RestTemplate restTemplate,
+            ObjectMapper objectMapper,
+            KrxOpenApiService krxOpenApiService) {
         this.restTemplate = restTemplate;
         this.objectMapper = objectMapper;
         this.krxOpenApiService = krxOpenApiService;
@@ -90,10 +105,8 @@ public class DartFinancialService {
         List<DartDisclosure> disclosures = recentDisclosures(symbol, 20);
         if (disclosures.isEmpty()) return "(DART 최근 공시: 최근 12개월 조회 결과 없음)";
 
-        List<DartDisclosure> riskItems = disclosures.stream()
-                .filter(this::isRiskDisclosure)
-                .limit(5)
-                .toList();
+        List<DartDisclosure> riskItems =
+                disclosures.stream().filter(this::isRiskDisclosure).limit(5).toList();
 
         StringBuilder sb = new StringBuilder("(출처: DART 전자공시, 최근 12개월 공시 체크)\n");
         if (riskItems.isEmpty()) {
@@ -106,8 +119,15 @@ public class DartFinancialService {
         }
 
         sb.append("최근 공시 표본:\n");
-        disclosures.stream().limit(3).forEach(d ->
-                sb.append("- ").append(d.date()).append(" ").append(d.name()).append("\n"));
+        disclosures.stream()
+                .limit(3)
+                .forEach(
+                        d ->
+                                sb.append("- ")
+                                        .append(d.date())
+                                        .append(" ")
+                                        .append(d.name())
+                                        .append("\n"));
         return sb.toString().strip();
     }
 
@@ -116,10 +136,8 @@ public class DartFinancialService {
         if (!enabled()) return null;
         List<DartDisclosure> disclosures = recentDisclosures(symbol, 12);
         if (disclosures.isEmpty()) return null;
-        List<DartDisclosure> riskItems = disclosures.stream()
-                .filter(this::isRiskDisclosure)
-                .limit(2)
-                .toList();
+        List<DartDisclosure> riskItems =
+                disclosures.stream().filter(this::isRiskDisclosure).limit(2).toList();
         if (riskItems.isEmpty()) return "DART 최근 공시 위험 후보 없음";
         StringBuilder sb = new StringBuilder("DART 공시 위험 후보 ");
         for (int i = 0; i < riskItems.size(); i++) {
@@ -142,8 +160,10 @@ public class DartFinancialService {
         synchronized (loadLock) {
             if (stockToCorp != null) return;
             try {
-                byte[] zip = restTemplate.getForObject(
-                    "https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=" + apiKey, byte[].class);
+                byte[] zip =
+                        restTemplate.getForObject(
+                                "https://opendart.fss.or.kr/api/corpCode.xml?crtfc_key=" + apiKey,
+                                byte[].class);
                 if (zip == null || zip.length == 0) {
                     log.warn("[DART] corpCode 응답 비어있음");
                     return; // null 유지 → 다음 호출 때 재시도
@@ -168,7 +188,8 @@ public class DartFinancialService {
             byte[] xml = zis.readAllBytes();
 
             var factory = DocumentBuilderFactory.newInstance();
-            factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setFeature(
+                    "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
             var doc = factory.newDocumentBuilder().parse(new ByteArrayInputStream(xml));
             NodeList list = doc.getElementsByTagName("list");
             for (int i = 0; i < list.getLength(); i++) {
@@ -195,11 +216,15 @@ public class DartFinancialService {
     /** 특정 사업연도(reprt_code=11011 사업보고서)의 주요계정으로 요약 블록 생성. 없으면 null. */
     private String fetchYear(String corp, int year, long marketCap) {
         try {
-            String url = "https://opendart.fss.or.kr/api/fnlttSinglAcnt.json"
-                + "?crtfc_key=" + apiKey
-                + "&corp_code=" + corp
-                + "&bsns_year=" + year
-                + "&reprt_code=11011";
+            String url =
+                    "https://opendart.fss.or.kr/api/fnlttSinglAcnt.json"
+                            + "?crtfc_key="
+                            + apiKey
+                            + "&corp_code="
+                            + corp
+                            + "&bsns_year="
+                            + year
+                            + "&reprt_code=11011";
             String body = restTemplate.getForObject(url, String.class);
             if (body == null) return null;
             JsonNode root = objectMapper.readTree(body);
@@ -230,12 +255,14 @@ public class DartFinancialService {
             line(sb, "매출액", revenue);
             if (opProfit != null) {
                 sb.append("영업이익: ").append(won(opProfit));
-                if (revenue != null && revenue != 0) sb.append(" (영업이익률 ").append(pct(opProfit, revenue)).append(")");
+                if (revenue != null && revenue != 0)
+                    sb.append(" (영업이익률 ").append(pct(opProfit, revenue)).append(")");
                 sb.append("\n");
             }
             if (netProfit != null) {
                 sb.append("당기순이익: ").append(won(netProfit));
-                if (revenue != null && revenue != 0) sb.append(" (순이익률 ").append(pct(netProfit, revenue)).append(")");
+                if (revenue != null && revenue != 0)
+                    sb.append(" (순이익률 ").append(pct(netProfit, revenue)).append(")");
                 sb.append("\n");
             }
             line(sb, "자산총계", assets);
@@ -244,7 +271,8 @@ public class DartFinancialService {
             line(sb, "영업활동현금흐름(CFO)", cfo);
             if (cfo != null && netProfit != null && netProfit > 0) {
                 double quality = (double) cfo / netProfit;
-                sb.append("CFO/Net Income(이익의 질): ").append(String.format(Locale.US, "%.2f배", quality));
+                sb.append("CFO/Net Income(이익의 질): ")
+                        .append(String.format(Locale.US, "%.2f배", quality));
                 if (quality < 1.0) sb.append(" (1.0 미만: 이익의 질 검증 필요)");
                 sb.append("\n");
             }
@@ -254,7 +282,8 @@ public class DartFinancialService {
             if (marketCap > 0 && netProfit != null) {
                 if (netProfit > 0) {
                     sb.append("PER(주가수익비율, KRX 시총/DART 순이익): ")
-                            .append(ratio(marketCap, netProfit)).append("배\n");
+                            .append(ratio(marketCap, netProfit))
+                            .append("배\n");
                 } else {
                     sb.append("PER(주가수익비율): 산출 불가(당기순이익 적자 또는 0)\n");
                 }
@@ -262,7 +291,8 @@ public class DartFinancialService {
             if (marketCap > 0 && equity != null) {
                 if (equity > 0) {
                     sb.append("PBR(주가순자산비율, KRX 시총/DART 자본총계): ")
-                            .append(ratio(marketCap, equity)).append("배\n");
+                            .append(ratio(marketCap, equity))
+                            .append("배\n");
                 } else {
                     sb.append("PBR(주가순자산비율): 산출 불가(자본총계 0 이하)\n");
                 }
@@ -299,12 +329,18 @@ public class DartFinancialService {
         try {
             LocalDate end = LocalDate.now();
             LocalDate start = end.minusMonths(12);
-            String url = "https://opendart.fss.or.kr/api/list.json"
-                    + "?crtfc_key=" + apiKey
-                    + "&corp_code=" + corp
-                    + "&bgn_de=" + start.format(DateTimeFormatter.BASIC_ISO_DATE)
-                    + "&end_de=" + end.format(DateTimeFormatter.BASIC_ISO_DATE)
-                    + "&page_no=1&page_count=" + Math.max(1, Math.min(100, count));
+            String url =
+                    "https://opendart.fss.or.kr/api/list.json"
+                            + "?crtfc_key="
+                            + apiKey
+                            + "&corp_code="
+                            + corp
+                            + "&bgn_de="
+                            + start.format(DateTimeFormatter.BASIC_ISO_DATE)
+                            + "&end_de="
+                            + end.format(DateTimeFormatter.BASIC_ISO_DATE)
+                            + "&page_no=1&page_count="
+                            + Math.max(1, Math.min(100, count));
             String body = restTemplate.getForObject(url, String.class);
             if (body == null || body.isBlank()) return List.of();
             JsonNode root = objectMapper.readTree(body);
@@ -360,7 +396,10 @@ public class DartFinancialService {
         long eok = (a % 1_0000_0000_0000L) / 1_0000_0000L;
         StringBuilder sb = new StringBuilder();
         if (jo > 0) sb.append(jo).append("조");
-        if (eok > 0) sb.append(jo > 0 ? " " : "").append(String.format(Locale.KOREA, "%,d", eok)).append("억");
+        if (eok > 0)
+            sb.append(jo > 0 ? " " : "")
+                    .append(String.format(Locale.KOREA, "%,d", eok))
+                    .append("억");
         if (sb.length() == 0) sb.append(String.format(Locale.KOREA, "%,d", a)).append("원");
         return (neg ? "-" : "") + sb;
     }

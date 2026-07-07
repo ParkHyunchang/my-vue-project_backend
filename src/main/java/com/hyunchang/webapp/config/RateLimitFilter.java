@@ -4,22 +4,20 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.util.Deque;
+import java.util.Iterator;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.NonNull;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-import java.io.IOException;
-import java.util.Deque;
-import java.util.Iterator;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedDeque;
-
 /**
- * /api/auth/** 엔드포인트에 대한 IP 기반 rate limit.
- * 슬라이딩 윈도우(60초) 안에서 IP당 최대 30회 요청 허용.
- * 초과 시 429 Too Many Requests 응답.
+ * /api/auth/** 엔드포인트에 대한 IP 기반 rate limit. 슬라이딩 윈도우(60초) 안에서 IP당 최대 30회 요청 허용. 초과 시 429 Too Many
+ * Requests 응답.
  */
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
@@ -32,9 +30,11 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final ConcurrentHashMap<String, Deque<Long>> requestLog = new ConcurrentHashMap<>();
 
     @Override
-    protected void doFilterInternal(@NonNull HttpServletRequest request,
-                                    @NonNull HttpServletResponse response,
-                                    @NonNull FilterChain filterChain) throws ServletException, IOException {
+    protected void doFilterInternal(
+            @NonNull HttpServletRequest request,
+            @NonNull HttpServletResponse response,
+            @NonNull FilterChain filterChain)
+            throws ServletException, IOException {
         String path = request.getRequestURI();
         if (path != null && path.startsWith(AUTH_PATH_PREFIX) && !isExcluded(path)) {
             String key = clientKey(request);
@@ -58,7 +58,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private boolean allow(String key) {
         long now = System.currentTimeMillis();
-        Deque<Long> timestamps = requestLog.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>());
+        Deque<Long> timestamps =
+                requestLog.computeIfAbsent(key, k -> new ConcurrentLinkedDeque<>());
         synchronized (timestamps) {
             Iterator<Long> it = timestamps.iterator();
             while (it.hasNext()) {

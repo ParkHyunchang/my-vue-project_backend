@@ -1,5 +1,13 @@
 package com.hyunchang.webapp.service.news;
 
+import java.io.StringReader;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -11,19 +19,10 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 import org.xml.sax.InputSource;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import java.io.StringReader;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Locale;
-
 @Component
 public class RssClient {
     private static final DateTimeFormatter RFC_822 =
-        DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
+            DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss Z", Locale.ENGLISH);
 
     private final RestTemplate restTemplate;
 
@@ -32,19 +31,18 @@ public class RssClient {
     }
 
     public record RssItem(
-        String title,
-        String link,
-        String description,
-        String pubDate,
-        String itemSource,
-        String imageUrl
-    ) {}
+            String title,
+            String link,
+            String description,
+            String pubDate,
+            String itemSource,
+            String imageUrl) {}
 
     public List<RssItem> fetchItems(String url) throws Exception {
         HttpHeaders headers = new HttpHeaders();
         headers.set("User-Agent", "Mozilla/5.0 (compatible; RSS Reader/1.0)");
-        ResponseEntity<String> resp = restTemplate.exchange(
-            url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
+        ResponseEntity<String> resp =
+                restTemplate.exchange(url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
 
         String xml = resp.getBody();
         if (xml == null || xml.isBlank()) return List.of();
@@ -60,14 +58,14 @@ public class RssClient {
         for (int i = 0; i < nodes.getLength(); i++) {
             if (nodes.item(i).getNodeType() != org.w3c.dom.Node.ELEMENT_NODE) continue;
             Element el = (Element) nodes.item(i);
-            items.add(new RssItem(
-                textOf(el, "title"),
-                textOf(el, "link"),
-                textOf(el, "description"),
-                textOf(el, "pubDate"),
-                textOf(el, "source"),
-                imageUrlOf(el)
-            ));
+            items.add(
+                    new RssItem(
+                            textOf(el, "title"),
+                            textOf(el, "link"),
+                            textOf(el, "description"),
+                            textOf(el, "pubDate"),
+                            textOf(el, "source"),
+                            imageUrlOf(el)));
         }
         return items;
     }
@@ -79,7 +77,8 @@ public class RssClient {
             return ZonedDateTime.parse(normalized, RFC_822).toEpochSecond();
         } catch (Exception ignored) {
             try {
-                return ZonedDateTime.parse(normalized, DateTimeFormatter.RFC_1123_DATE_TIME).toEpochSecond();
+                return ZonedDateTime.parse(normalized, DateTimeFormatter.RFC_1123_DATE_TIME)
+                        .toEpochSecond();
             } catch (Exception ignoredAgain) {
                 return 0L;
             }
@@ -115,8 +114,8 @@ public class RssClient {
             String urlAttr = e.getAttribute("url");
             String medium = e.getAttribute("medium");
             String type = e.getAttribute("type");
-            if (!urlAttr.isBlank() && (medium.isBlank() || "image".equals(medium)
-                    || type.startsWith("image/"))) {
+            if (!urlAttr.isBlank()
+                    && (medium.isBlank() || "image".equals(medium) || type.startsWith("image/"))) {
                 return urlAttr;
             }
         }

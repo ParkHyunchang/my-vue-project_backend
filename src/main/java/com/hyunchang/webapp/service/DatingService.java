@@ -13,13 +13,6 @@ import com.hyunchang.webapp.repository.UserRepository;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.UploadPathUtil;
 import jakarta.persistence.EntityNotFoundException;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.dao.EmptyResultDataAccessException;
-import org.springframework.orm.ObjectOptimisticLockingFailureException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,6 +20,12 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class DatingService {
@@ -46,7 +45,8 @@ public class DatingService {
     }
 
     public Dating findById(Long id) {
-        return datingRepository.findById(id)
+        return datingRepository
+                .findById(id)
                 .orElseThrow(() -> new NotFoundException("추억을 찾을 수 없습니다. id: " + id));
     }
 
@@ -96,11 +96,17 @@ public class DatingService {
         validateDating(dating);
         userRepository.findByUserId(ownerUserId).ifPresent(dating::setUser);
         Dating saved = datingRepository.save(dating);
-        log.info("[DATING] user={}({}), CREATE id={} title={} dateType={} date={} category={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(), saved.getTitle(), saved.getDateType(),
-            saved.getDate() != null ? saved.getDate() : (saved.getStartDate() + "~" + saved.getEndDate()),
-            saved.getCategory());
+        log.info(
+                "[DATING] user={}({}), CREATE id={} title={} dateType={} date={} category={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                saved.getTitle(),
+                saved.getDateType(),
+                saved.getDate() != null
+                        ? saved.getDate()
+                        : (saved.getStartDate() + "~" + saved.getEndDate()),
+                saved.getCategory());
         return saved;
     }
 
@@ -145,28 +151,39 @@ public class DatingService {
         Dating saved = datingRepository.save(existingDating);
 
         List<String> diffs = new ArrayList<>();
-        if (!Objects.equals(oldTitle, saved.getTitle())) diffs.add(String.format("title '%s'→'%s'", oldTitle, saved.getTitle()));
-        if (!Objects.equals(oldDateType, saved.getDateType())) diffs.add(String.format("dateType %s→%s", oldDateType, saved.getDateType()));
-        if (!Objects.equals(oldDate, saved.getDate())) diffs.add(String.format("date %s→%s", oldDate, saved.getDate()));
-        if (!Objects.equals(oldStart, saved.getStartDate())) diffs.add(String.format("startDate %s→%s", oldStart, saved.getStartDate()));
-        if (!Objects.equals(oldEnd, saved.getEndDate())) diffs.add(String.format("endDate %s→%s", oldEnd, saved.getEndDate()));
-        if (!Objects.equals(oldCategory, saved.getCategory())) diffs.add(String.format("category %s→%s", oldCategory, saved.getCategory()));
-        if (!Objects.equals(oldLocation, saved.getLocation())) diffs.add(String.format("location %s→%s", oldLocation, saved.getLocation()));
+        if (!Objects.equals(oldTitle, saved.getTitle()))
+            diffs.add(String.format("title '%s'→'%s'", oldTitle, saved.getTitle()));
+        if (!Objects.equals(oldDateType, saved.getDateType()))
+            diffs.add(String.format("dateType %s→%s", oldDateType, saved.getDateType()));
+        if (!Objects.equals(oldDate, saved.getDate()))
+            diffs.add(String.format("date %s→%s", oldDate, saved.getDate()));
+        if (!Objects.equals(oldStart, saved.getStartDate()))
+            diffs.add(String.format("startDate %s→%s", oldStart, saved.getStartDate()));
+        if (!Objects.equals(oldEnd, saved.getEndDate()))
+            diffs.add(String.format("endDate %s→%s", oldEnd, saved.getEndDate()));
+        if (!Objects.equals(oldCategory, saved.getCategory()))
+            diffs.add(String.format("category %s→%s", oldCategory, saved.getCategory()));
+        if (!Objects.equals(oldLocation, saved.getLocation()))
+            diffs.add(String.format("location %s→%s", oldLocation, saved.getLocation()));
         if (!Objects.equals(oldDescription, saved.getDescription())) diffs.add("description (변경됨)");
         if (!Objects.equals(oldImage, saved.getImage())) diffs.add("image (변경됨)");
         if (!Objects.equals(oldImages, saved.getImages())) diffs.add("images (변경됨)");
 
-        log.info("[DATING] user={}({}), UPDATE id={} {}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            saved.getId(),
-            diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
+        log.info(
+                "[DATING] user={}({}), UPDATE id={} {}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                saved.getId(),
+                diffs.isEmpty() ? "(변경 없음)" : String.join(", ", diffs));
         return saved;
     }
 
     @Transactional
     public void delete(Long id, String currentUserId, String roleName) {
-        Dating existingDating = datingRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("이미 삭제된 추억입니다."));
+        Dating existingDating =
+                datingRepository
+                        .findById(id)
+                        .orElseThrow(() -> new EntityNotFoundException("이미 삭제된 추억입니다."));
         verifyOwnership(existingDating, currentUserId, roleName);
 
         deleteImageFiles(existingDating);
@@ -178,9 +195,13 @@ public class DatingService {
             throw new EntityNotFoundException("이미 삭제된 추억입니다.");
         }
 
-        log.info("[DATING] user={}({}), DELETE id={} title={} category={}",
-            SecurityUtils.getCurrentUserId(), SecurityUtils.getCurrentUserRoleName(),
-            existingDating.getId(), existingDating.getTitle(), existingDating.getCategory());
+        log.info(
+                "[DATING] user={}({}), DELETE id={} title={} category={}",
+                SecurityUtils.getCurrentUserId(),
+                SecurityUtils.getCurrentUserRoleName(),
+                existingDating.getId(),
+                existingDating.getTitle(),
+                existingDating.getCategory());
     }
 
     private void verifyOwnership(Dating dating, String currentUserId, String roleName) {
@@ -222,11 +243,12 @@ public class DatingService {
                 }
 
                 if (!parsed) {
-                    String[] imagePaths = dating.getImages()
-                            .replace("[", "")
-                            .replace("]", "")
-                            .replace("\"", "")
-                            .split(",");
+                    String[] imagePaths =
+                            dating.getImages()
+                                    .replace("[", "")
+                                    .replace("]", "")
+                                    .replace("\"", "")
+                                    .split(",");
                     for (String imagePath : imagePaths) {
                         if (imagePath != null && !imagePath.trim().isEmpty()) {
                             deleteImageFile(imagePath.trim());

@@ -2,7 +2,6 @@ package com.hyunchang.webapp.service.news;
 
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.util.Texts;
-
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -14,7 +13,8 @@ public final class NewsPromptFormatter {
         if (news == null || Texts.nullSafe(news.getTitle()).isBlank()) return "";
         List<String> meta = new ArrayList<>();
         if (!Texts.nullSafe(news.getSource()).isBlank()) meta.add("출처: " + news.getSource().trim());
-        if (!Texts.nullSafe(news.getPubDate()).isBlank()) meta.add("날짜: " + news.getPubDate().trim());
+        if (!Texts.nullSafe(news.getPubDate()).isBlank())
+            meta.add("날짜: " + news.getPubDate().trim());
 
         StringBuilder sb = new StringBuilder();
         if (!meta.isEmpty()) {

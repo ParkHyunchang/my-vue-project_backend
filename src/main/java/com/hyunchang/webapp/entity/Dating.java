@@ -15,40 +15,41 @@ import jakarta.persistence.Table;
 import java.time.LocalDate;
 
 @Entity
-@Table(indexes = {
-    @Index(name = "idx_dating_date", columnList = "date")
-})
+@Table(indexes = {@Index(name = "idx_dating_date", columnList = "date")})
 public class Dating {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
     private String title;
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate date; // 기존 단일 날짜 필드 (호환성 유지)
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate; // 기간 시작일
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate endDate; // 기간 종료일
-    
+
     private String dateType; // "single" 또는 "range"
     private String category;
+
     @Column(columnDefinition = "TEXT")
     private String description;
+
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
+
     @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지를 JSON 문자열로 저장
-    
+
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
 
-    public Dating() {
-    }
+    public Dating() {}
 
     public Long getId() {
         return id;
@@ -137,11 +138,11 @@ public class Dating {
     public void setImages(String images) {
         this.images = images;
     }
-    
+
     public User getUser() {
         return user;
     }
-    
+
     public void setUser(User user) {
         this.user = user;
     }

@@ -2,6 +2,10 @@ package com.hyunchang.webapp.service.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,17 +13,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.List;
-import java.util.Map;
-
 /**
- * Cloudflare Workers AI provider (3차).
- * 무료 한도: 일 10,000 뉴런 (모델별 가중치 다름).
+ * Cloudflare Workers AI provider (3차). 무료 한도: 일 10,000 뉴런 (모델별 가중치 다름).
  * https://developers.cloudflare.com/workers-ai/platform/limits/
  *
- * 필요 환경변수: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
+ * <p>필요 환경변수: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID
  */
 @Component
 public class CloudflareProvider implements AiProvider {
@@ -41,33 +39,46 @@ public class CloudflareProvider implements AiProvider {
         this.restClient = RestClient.builder().baseUrl(BASE_URL).build();
     }
 
-    @Override public String getName() { return "Cloudflare Workers AI"; }
-    @Override public String getModel() { return MODEL; }
+    @Override
+    public String getName() {
+        return "Cloudflare Workers AI";
+    }
+
+    @Override
+    public String getModel() {
+        return MODEL;
+    }
 
     @Override
     public boolean isEnabled() {
-        return apiToken != null && !apiToken.isBlank()
-                && accountId != null && !accountId.isBlank();
+        return apiToken != null && !apiToken.isBlank() && accountId != null && !accountId.isBlank();
     }
 
     @Override
     public AiProviderResult generate(String prompt, boolean expectJson) {
-        Map<String, Object> body = Map.of(
-                "messages", List.of(
-                        Map.of("role", "system", "content", expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
-                        Map.of("role", "user", "content", prompt)
-                ),
-                "temperature", 0.4
-        );
+        Map<String, Object> body =
+                Map.of(
+                        "messages",
+                        List.of(
+                                Map.of(
+                                        "role",
+                                        "system",
+                                        "content",
+                                        expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
+                                Map.of("role", "user", "content", prompt)),
+                        "temperature",
+                        0.4);
 
         try {
-            String response = restClient.post()
-                    .uri("/client/v4/accounts/{accountId}/ai/run/{model}", accountId, MODEL)
-                    .header("Authorization", "Bearer " + apiToken)
-                    .header("Content-Type", "application/json")
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
+            String response =
+                    restClient
+                            .post()
+                            .uri("/client/v4/accounts/{accountId}/ai/run/{model}", accountId, MODEL)
+                            .header("Authorization", "Bearer " + apiToken)
+                            .header("Content-Type", "application/json")
+                            .body(body)
+                            .retrieve()
+                            .body(String.class);
 
             JsonNode root = objectMapper.readTree(response);
             // Cloudflare 응답 형식: { "result": { "response": "..." }, "success": true, ... }
@@ -86,7 +97,10 @@ public class CloudflareProvider implements AiProvider {
                 log.warn("[AI/Cloudflare] 429 rate limited, retryAt={}", retryAt);
                 return AiProviderResult.rateLimited(retryAt);
             }
-            log.warn("[AI/Cloudflare] HTTP {} {}", status, truncate(e.getResponseBodyAsString(), 200));
+            log.warn(
+                    "[AI/Cloudflare] HTTP {} {}",
+                    status,
+                    truncate(e.getResponseBodyAsString(), 200));
             return AiProviderResult.error("Cloudflare HTTP " + status);
         } catch (Exception e) {
             log.warn("[AI/Cloudflare] 호출 실패: {}", e.getMessage());
@@ -103,7 +117,9 @@ public class CloudflareProvider implements AiProvider {
                     long seconds = Long.parseLong(values.get(0).trim());
                     return Instant.now().plusSeconds(seconds);
                 }
-            } catch (Exception ignore) { /* fallthrough */ }
+            } catch (Exception ignore) {
+                /* fallthrough */
+            }
         }
         return Instant.now().plus(fallback);
     }

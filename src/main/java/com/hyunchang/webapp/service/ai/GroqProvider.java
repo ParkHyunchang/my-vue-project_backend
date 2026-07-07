@@ -2,6 +2,11 @@ package com.hyunchang.webapp.service.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -9,15 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-
 /**
- * Groq + Llama 3.3 provider (2차).
- * 무료 한도: 분 30회 / 일 14,400회 (모델별 차이)
+ * Groq + Llama 3.3 provider (2차). 무료 한도: 분 30회 / 일 14,400회 (모델별 차이)
  * https://console.groq.com/docs/rate-limits
  */
 @Component
@@ -35,9 +33,20 @@ public class GroqProvider implements AiProvider {
         this.restClient = RestClient.builder().baseUrl(BASE_URL).build();
     }
 
-    @Override public String getName() { return "Groq Llama"; }
-    @Override public String getModel() { return MODEL; }
-    @Override public boolean isEnabled() { return apiKey != null && !apiKey.isBlank(); }
+    @Override
+    public String getName() {
+        return "Groq Llama";
+    }
+
+    @Override
+    public String getModel() {
+        return MODEL;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return apiKey != null && !apiKey.isBlank();
+    }
 
     @Override
     public AiProviderResult generate(String prompt, boolean expectJson) {
@@ -45,21 +54,28 @@ public class GroqProvider implements AiProvider {
         // 걸려 있으면 모델이 마크다운 대신 JSON 객체로 응답해 프론트 카드 UI가 깨진다.
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", MODEL);
-        body.put("messages", List.of(
-                Map.of("role", "system", "content", expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
-                Map.of("role", "user", "content", prompt)
-        ));
+        body.put(
+                "messages",
+                List.of(
+                        Map.of(
+                                "role",
+                                "system",
+                                "content",
+                                expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
+                        Map.of("role", "user", "content", prompt)));
         if (expectJson) body.put("response_format", Map.of("type", "json_object"));
         body.put("temperature", 0.4);
 
         try {
-            String response = restClient.post()
-                    .uri("/openai/v1/chat/completions")
-                    .header("Authorization", "Bearer " + apiKey)
-                    .header("Content-Type", "application/json")
-                    .body(body)
-                    .retrieve()
-                    .body(String.class);
+            String response =
+                    restClient
+                            .post()
+                            .uri("/openai/v1/chat/completions")
+                            .header("Authorization", "Bearer " + apiKey)
+                            .header("Content-Type", "application/json")
+                            .body(body)
+                            .retrieve()
+                            .body(String.class);
 
             JsonNode root = objectMapper.readTree(response);
             JsonNode choices = root.path("choices");
@@ -95,7 +111,9 @@ public class GroqProvider implements AiProvider {
                     double seconds = Double.parseDouble(values.get(0).trim());
                     return Instant.now().plusMillis((long) (seconds * 1000));
                 }
-            } catch (Exception ignore) { /* fallthrough */ }
+            } catch (Exception ignore) {
+                /* fallthrough */
+            }
         }
         return Instant.now().plus(fallback);
     }

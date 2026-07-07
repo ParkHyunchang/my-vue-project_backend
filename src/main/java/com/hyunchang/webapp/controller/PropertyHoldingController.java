@@ -7,6 +7,8 @@ import com.hyunchang.webapp.service.PropertyHoldingService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
+import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -16,9 +18,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
 
 @Tag(name = "Property", description = "보유 부동산 API")
 @RestController
@@ -30,8 +29,8 @@ public class PropertyHoldingController {
     private final PropertyHoldingService propertyHoldingService;
     private final MenuAccessGuard menuAccessGuard;
 
-    public PropertyHoldingController(PropertyHoldingService propertyHoldingService,
-                                     MenuAccessGuard menuAccessGuard) {
+    public PropertyHoldingController(
+            PropertyHoldingService propertyHoldingService, MenuAccessGuard menuAccessGuard) {
         this.propertyHoldingService = propertyHoldingService;
         this.menuAccessGuard = menuAccessGuard;
     }
@@ -54,25 +53,24 @@ public class PropertyHoldingController {
     }
 
     public record PropertyRequest(
-        String propertyType,     // APT | LAND (미지정 시 APT)
-        String dealType,
-        String name,
-        String lawdCd,
-        String sigungu,
-        Double areaM2,
-        Long purchasePrice,
-        Long monthlyRent,
-        String memo,
-        String purchaseDate,     // ISO yyyy-MM-dd
-        // ── 토지(LAND) 전용 ──
-        String jimok,
-        String useZone,
-        String umdName,
-        String jibun,
-        String bdongCode,
-        Long officialPricePerM2,
-        Integer officialPriceYear
-    ) {}
+            String propertyType, // APT | LAND (미지정 시 APT)
+            String dealType,
+            String name,
+            String lawdCd,
+            String sigungu,
+            Double areaM2,
+            Long purchasePrice,
+            Long monthlyRent,
+            String memo,
+            String purchaseDate, // ISO yyyy-MM-dd
+            // ── 토지(LAND) 전용 ──
+            String jimok,
+            String useZone,
+            String umdName,
+            String jibun,
+            String bdongCode,
+            Long officialPricePerM2,
+            Integer officialPriceYear) {}
 
     @Operation(summary = "보유 부동산 추가 (아파트/토지)")
     @PostMapping("/holdings")
@@ -83,8 +81,10 @@ public class PropertyHoldingController {
         boolean isLand = "LAND".equalsIgnoreCase(request.propertyType());
         String propertyType = isLand ? "LAND" : "APT";
 
-        if (request.name() == null || request.name().isBlank()
-            || request.lawdCd() == null || request.lawdCd().length() != 5) {
+        if (request.name() == null
+                || request.name().isBlank()
+                || request.lawdCd() == null
+                || request.lawdCd().length() != 5) {
             return ResponseEntity.badRequest().body("이름(단지명/토지명)과 지역은 필수입니다.");
         }
         if (isLand) {
@@ -98,24 +98,26 @@ public class PropertyHoldingController {
         // 토지는 거래유형 개념이 없어 SALE 로 고정
         String dealType = isLand ? "SALE" : request.dealType().toUpperCase();
 
-        PropertyHolding created = propertyHoldingService.addHolding(
-            userId, propertyType, dealType,
-            request.name().trim(),
-            request.lawdCd(),
-            request.sigungu() != null ? request.sigungu().trim() : "",
-            request.areaM2(),
-            request.purchasePrice(),
-            isLand ? null : request.monthlyRent(),
-            request.memo() != null ? request.memo().trim() : null,
-            toLocalDate(request.purchaseDate()),
-            trimOrNull(request.jimok()),
-            trimOrNull(request.useZone()),
-            trimOrNull(request.umdName()),
-            trimOrNull(request.jibun()),
-            isLand ? trimOrNull(request.bdongCode()) : null,
-            isLand ? request.officialPricePerM2() : null,
-            isLand ? request.officialPriceYear() : null
-        );
+        PropertyHolding created =
+                propertyHoldingService.addHolding(
+                        userId,
+                        propertyType,
+                        dealType,
+                        request.name().trim(),
+                        request.lawdCd(),
+                        request.sigungu() != null ? request.sigungu().trim() : "",
+                        request.areaM2(),
+                        request.purchasePrice(),
+                        isLand ? null : request.monthlyRent(),
+                        request.memo() != null ? request.memo().trim() : null,
+                        toLocalDate(request.purchaseDate()),
+                        trimOrNull(request.jimok()),
+                        trimOrNull(request.useZone()),
+                        trimOrNull(request.umdName()),
+                        trimOrNull(request.jibun()),
+                        isLand ? trimOrNull(request.bdongCode()) : null,
+                        isLand ? request.officialPricePerM2() : null,
+                        isLand ? request.officialPriceYear() : null);
         return ResponseEntity.ok(created);
     }
 
@@ -127,24 +129,38 @@ public class PropertyHoldingController {
 
     @Operation(summary = "보유 부동산 수정 (가격/월세/메모)")
     @PutMapping("/holdings/{id}")
-    public ResponseEntity<?> updateHolding(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> updateHolding(
+            @PathVariable Long id, @RequestBody Map<String, Object> body) {
         if (!hasAccess()) return forbidden();
         String userId = SecurityUtils.getCurrentUserId();
 
         Long purchasePrice = toLong(body.get("purchasePrice"));
         Long monthlyRent = toLong(body.get("monthlyRent"));
         String memo = body.get("memo") != null ? body.get("memo").toString() : null;
-        java.time.LocalDate purchaseDate = toLocalDate(
-            body.get("purchaseDate") != null ? body.get("purchaseDate").toString() : null);
+        java.time.LocalDate purchaseDate =
+                toLocalDate(
+                        body.get("purchaseDate") != null
+                                ? body.get("purchaseDate").toString()
+                                : null);
         // 토지 속성 (아파트면 무시됨)
         String jimok = trimOrNull(body.get("jimok") != null ? body.get("jimok").toString() : null);
-        String useZone = trimOrNull(body.get("useZone") != null ? body.get("useZone").toString() : null);
+        String useZone =
+                trimOrNull(body.get("useZone") != null ? body.get("useZone").toString() : null);
         Long officialPricePerM2 = toLong(body.get("officialPricePerM2"));
         Integer officialPriceYear = toInt(body.get("officialPriceYear"));
 
-        PropertyHolding updated = propertyHoldingService.updateHolding(
-            userId, id, purchasePrice, monthlyRent, memo, purchaseDate,
-            jimok, useZone, officialPricePerM2, officialPriceYear);
+        PropertyHolding updated =
+                propertyHoldingService.updateHolding(
+                        userId,
+                        id,
+                        purchasePrice,
+                        monthlyRent,
+                        memo,
+                        purchaseDate,
+                        jimok,
+                        useZone,
+                        officialPricePerM2,
+                        officialPriceYear);
         return ResponseEntity.ok(updated);
     }
 

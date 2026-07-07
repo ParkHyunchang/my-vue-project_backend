@@ -8,6 +8,8 @@ import com.hyunchang.webapp.service.GeneralHoldingService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.util.List;
+import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -17,9 +19,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.util.List;
-import java.util.Map;
 
 @Tag(name = "Portfolio General", description = "신한투자증권 종합계좌 holdings API")
 @RestController
@@ -31,8 +30,8 @@ public class GeneralHoldingController {
     private final GeneralHoldingService generalHoldingService;
     private final MenuAccessGuard menuAccessGuard;
 
-    public GeneralHoldingController(GeneralHoldingService generalHoldingService,
-                                    MenuAccessGuard menuAccessGuard) {
+    public GeneralHoldingController(
+            GeneralHoldingService generalHoldingService, MenuAccessGuard menuAccessGuard) {
         this.generalHoldingService = generalHoldingService;
         this.menuAccessGuard = menuAccessGuard;
     }
@@ -49,18 +48,18 @@ public class GeneralHoldingController {
     @GetMapping("/holdings")
     public ResponseEntity<?> getHoldings() {
         if (!hasAccess()) return forbidden();
-        List<GeneralHoldingResponse> holdings = generalHoldingService.getHoldings(SecurityUtils.getCurrentUserId());
+        List<GeneralHoldingResponse> holdings =
+                generalHoldingService.getHoldings(SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(holdings);
     }
 
     public record HoldingRequest(
-        String assetType,
-        String market,
-        String name,
-        String symbol,
-        Long quantity,
-        Double avgPrice
-    ) {}
+            String assetType,
+            String market,
+            String name,
+            String symbol,
+            Long quantity,
+            Double avgPrice) {}
 
     @Operation(summary = "Create General holding")
     @PostMapping("/holdings")
@@ -70,21 +69,22 @@ public class GeneralHoldingController {
         ResponseEntity<?> invalid = validateRequest(request, assetType);
         if (invalid != null) return invalid;
 
-        GeneralHoldingResponse created = generalHoldingService.addHolding(
-            SecurityUtils.getCurrentUserId(),
-            assetType,
-            normalizedMarket(request.market(), assetType),
-            request.name().trim(),
-            request.symbol().trim().toUpperCase(),
-            request.quantity(),
-            request.avgPrice()
-        );
+        GeneralHoldingResponse created =
+                generalHoldingService.addHolding(
+                        SecurityUtils.getCurrentUserId(),
+                        assetType,
+                        normalizedMarket(request.market(), assetType),
+                        request.name().trim(),
+                        request.symbol().trim().toUpperCase(),
+                        request.quantity(),
+                        request.avgPrice());
         return ResponseEntity.ok(created);
     }
 
     @Operation(summary = "Update General holding quantity and average price")
     @PutMapping("/holdings/{id}")
-    public ResponseEntity<?> updateHolding(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> updateHolding(
+            @PathVariable Long id, @RequestBody Map<String, Object> body) {
         if (!hasAccess()) return forbidden();
 
         Long quantity = numberAsLong(body.get("quantity"));
@@ -93,13 +93,16 @@ public class GeneralHoldingController {
         }
 
         Double avgPrice = numberAsDouble(body.get("avgPrice"));
-        GeneralHoldingResponse updated = generalHoldingService.updateHolding(SecurityUtils.getCurrentUserId(), id, quantity, avgPrice);
+        GeneralHoldingResponse updated =
+                generalHoldingService.updateHolding(
+                        SecurityUtils.getCurrentUserId(), id, quantity, avgPrice);
         return ResponseEntity.ok(updated);
     }
 
     @Operation(summary = "Update General core flag")
     @PutMapping("/holdings/{id}/core")
-    public ResponseEntity<?> updateCore(@PathVariable Long id, @RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> updateCore(
+            @PathVariable Long id, @RequestBody Map<String, Object> body) {
         if (!hasAccess()) return forbidden();
 
         Object coreObj = body.get("core");
@@ -107,7 +110,8 @@ public class GeneralHoldingController {
             return ResponseEntity.badRequest().body("core must be true or false.");
         }
 
-        GeneralHoldingResponse updated = generalHoldingService.updateCore(SecurityUtils.getCurrentUserId(), id, core);
+        GeneralHoldingResponse updated =
+                generalHoldingService.updateCore(SecurityUtils.getCurrentUserId(), id, core);
         return ResponseEntity.ok(updated);
     }
 
@@ -127,15 +131,19 @@ public class GeneralHoldingController {
         }
     }
 
-    private ResponseEntity<?> validateRequest(HoldingRequest request, PortfolioAssetType assetType) {
+    private ResponseEntity<?> validateRequest(
+            HoldingRequest request, PortfolioAssetType assetType) {
         if (request.quantity() == null || request.quantity() <= 0) {
             return ResponseEntity.badRequest().body("Quantity must be greater than 0.");
         }
-        if (request.name() == null || request.name().isBlank()
-            || request.symbol() == null || request.symbol().isBlank()) {
+        if (request.name() == null
+                || request.name().isBlank()
+                || request.symbol() == null
+                || request.symbol().isBlank()) {
             return ResponseEntity.badRequest().body("Name and symbol are required.");
         }
-        if (assetType == PortfolioAssetType.STOCK && (request.market() == null || request.market().isBlank())) {
+        if (assetType == PortfolioAssetType.STOCK
+                && (request.market() == null || request.market().isBlank())) {
             return ResponseEntity.badRequest().body("Market is required.");
         }
         return null;

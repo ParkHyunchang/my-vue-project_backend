@@ -15,39 +15,38 @@ import jakarta.persistence.Table;
 import java.time.LocalDate;
 
 @Entity
-@Table(indexes = {
-    @Index(name = "idx_history_date", columnList = "date")
-})
+@Table(indexes = {@Index(name = "idx_history_date", columnList = "date")})
 public class History {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
+
     private String title;
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate date; // 기존 단일 날짜 필드 (호환성 유지)
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate startDate; // 기간 시작일
-    
+
     @JsonFormat(pattern = "yyyy-MM-dd")
     private LocalDate endDate; // 기간 종료일
-    
+
     private String dateType; // "single" 또는 "range"
     private String category;
     private String description;
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
+
     @Column(columnDefinition = "TEXT")
     private String images; // 다중 이미지 지원을 위한 JSON 문자열 필드
-    
+
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
 
-    public History() {
-    }
+    public History() {}
 
     public Long getId() {
         return id;
@@ -104,19 +103,19 @@ public class History {
     public void setImage(String image) {
         this.image = image;
     }
-    
+
     public User getUser() {
         return user;
     }
-    
+
     public void setUser(User user) {
         this.user = user;
     }
-    
+
     public String getImages() {
         return images;
     }
-    
+
     public void setImages(String images) {
         this.images = images;
     }
@@ -144,4 +143,4 @@ public class History {
     public void setDateType(String dateType) {
         this.dateType = dateType;
     }
-} 
+}

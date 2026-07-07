@@ -2,10 +2,9 @@ package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.PortfolioSkill;
 import com.hyunchang.webapp.repository.PortfolioSkillRepository;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
 
 @Service
 public class PortfolioSkillService {
@@ -21,7 +20,8 @@ public class PortfolioSkillService {
     }
 
     public PortfolioSkill findById(Long id) {
-        return portfolioSkillRepository.findById(id)
+        return portfolioSkillRepository
+                .findById(id)
                 .orElseThrow(() -> new RuntimeException("PortfolioSkill not found: " + id));
     }
 

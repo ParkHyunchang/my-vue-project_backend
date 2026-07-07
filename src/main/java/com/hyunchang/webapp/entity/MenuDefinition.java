@@ -74,16 +74,46 @@ public class MenuDefinition {
 
     public MenuDefinition() {}
 
-    public MenuDefinition(String path, String name, String icon, String description,
-                          String category, boolean isRequired, boolean showInNav,
-                          String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder) {
-        this(path, name, icon, description, category, isRequired, showInNav,
-             navLabel, isAdminSubMenu, defaultRoles, sortOrder, null);
+    public MenuDefinition(
+            String path,
+            String name,
+            String icon,
+            String description,
+            String category,
+            boolean isRequired,
+            boolean showInNav,
+            String navLabel,
+            boolean isAdminSubMenu,
+            String defaultRoles,
+            int sortOrder) {
+        this(
+                path,
+                name,
+                icon,
+                description,
+                category,
+                isRequired,
+                showInNav,
+                navLabel,
+                isAdminSubMenu,
+                defaultRoles,
+                sortOrder,
+                null);
     }
 
-    public MenuDefinition(String path, String name, String icon, String description,
-                          String category, boolean isRequired, boolean showInNav,
-                          String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder, String parentPath) {
+    public MenuDefinition(
+            String path,
+            String name,
+            String icon,
+            String description,
+            String category,
+            boolean isRequired,
+            boolean showInNav,
+            String navLabel,
+            boolean isAdminSubMenu,
+            String defaultRoles,
+            int sortOrder,
+            String parentPath) {
         this.path = path;
         this.name = name;
         this.icon = icon;
@@ -98,34 +128,123 @@ public class MenuDefinition {
         this.parentPath = parentPath;
     }
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
-    public String getPath() { return path; }
-    public void setPath(String path) { this.path = path; }
-    public String getName() { return name; }
-    public void setName(String name) { this.name = name; }
-    public String getIcon() { return icon; }
-    public void setIcon(String icon) { this.icon = icon; }
-    public String getDescription() { return description; }
-    public void setDescription(String description) { this.description = description; }
-    public String getCategory() { return category; }
-    public void setCategory(String category) { this.category = category; }
-    public boolean isRequired() { return isRequired; }
-    public void setRequired(boolean required) { isRequired = required; }
-    public boolean isShowInNav() { return showInNav; }
-    public void setShowInNav(boolean showInNav) { this.showInNav = showInNav; }
-    public String getNavLabel() { return navLabel; }
-    public void setNavLabel(String navLabel) { this.navLabel = navLabel; }
-    public boolean isAdminSubMenu() { return isAdminSubMenu; }
-    public void setAdminSubMenu(boolean adminSubMenu) { isAdminSubMenu = adminSubMenu; }
-    public String getDefaultRoles() { return defaultRoles; }
-    public void setDefaultRoles(String defaultRoles) { this.defaultRoles = defaultRoles; }
-    public int getSortOrder() { return sortOrder; }
-    public void setSortOrder(int sortOrder) { this.sortOrder = sortOrder; }
-    public String getParentPath() { return parentPath; }
-    public void setParentPath(String parentPath) { this.parentPath = parentPath; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public Long getId() {
+        return id;
+    }
+
+    public void setId(Long id) {
+        this.id = id;
+    }
+
+    public String getPath() {
+        return path;
+    }
+
+    public void setPath(String path) {
+        this.path = path;
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public void setName(String name) {
+        this.name = name;
+    }
+
+    public String getIcon() {
+        return icon;
+    }
+
+    public void setIcon(String icon) {
+        this.icon = icon;
+    }
+
+    public String getDescription() {
+        return description;
+    }
+
+    public void setDescription(String description) {
+        this.description = description;
+    }
+
+    public String getCategory() {
+        return category;
+    }
+
+    public void setCategory(String category) {
+        this.category = category;
+    }
+
+    public boolean isRequired() {
+        return isRequired;
+    }
+
+    public void setRequired(boolean required) {
+        isRequired = required;
+    }
+
+    public boolean isShowInNav() {
+        return showInNav;
+    }
+
+    public void setShowInNav(boolean showInNav) {
+        this.showInNav = showInNav;
+    }
+
+    public String getNavLabel() {
+        return navLabel;
+    }
+
+    public void setNavLabel(String navLabel) {
+        this.navLabel = navLabel;
+    }
+
+    public boolean isAdminSubMenu() {
+        return isAdminSubMenu;
+    }
+
+    public void setAdminSubMenu(boolean adminSubMenu) {
+        isAdminSubMenu = adminSubMenu;
+    }
+
+    public String getDefaultRoles() {
+        return defaultRoles;
+    }
+
+    public void setDefaultRoles(String defaultRoles) {
+        this.defaultRoles = defaultRoles;
+    }
+
+    public int getSortOrder() {
+        return sortOrder;
+    }
+
+    public void setSortOrder(int sortOrder) {
+        this.sortOrder = sortOrder;
+    }
+
+    public String getParentPath() {
+        return parentPath;
+    }
+
+    public void setParentPath(String parentPath) {
+        this.parentPath = parentPath;
+    }
+
+    public LocalDateTime getCreatedAt() {
+        return createdAt;
+    }
+
+    public void setCreatedAt(LocalDateTime createdAt) {
+        this.createdAt = createdAt;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(LocalDateTime updatedAt) {
+        this.updatedAt = updatedAt;
+    }
 }

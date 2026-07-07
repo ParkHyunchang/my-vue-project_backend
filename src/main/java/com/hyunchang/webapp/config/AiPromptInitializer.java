@@ -7,10 +7,7 @@ import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.stereotype.Component;
 
-/**
- * 앱 시작 시 AI 프롬프트 7종을 DB(ai_prompt_override)에 기본 지침으로 시드한다.
- * 이미 행이 있으면 건너뛴다(관리자 수정 내용 보존).
- */
+/** 앱 시작 시 AI 프롬프트 7종을 DB(ai_prompt_override)에 기본 지침으로 시드한다. 이미 행이 있으면 건너뛴다(관리자 수정 내용 보존). */
 @Component
 public class AiPromptInitializer implements ApplicationRunner {
 

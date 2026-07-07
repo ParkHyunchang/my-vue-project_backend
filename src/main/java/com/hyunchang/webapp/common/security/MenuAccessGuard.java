@@ -15,7 +15,8 @@ public class MenuAccessGuard {
     }
 
     public boolean hasAccess(String menuPath) {
-        return menuPermissionService.hasMenuAccess(SecurityUtils.getCurrentUserRoleName(), menuPath);
+        return menuPermissionService.hasMenuAccess(
+                SecurityUtils.getCurrentUserRoleName(), menuPath);
     }
 
     public ResponseEntity<String> forbidden() {

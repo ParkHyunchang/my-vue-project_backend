@@ -15,7 +15,8 @@ public class SecurityUtils {
 
     public static String getCurrentUserRoleName() {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-        if (authentication != null && authentication.getAuthorities() != null
+        if (authentication != null
+                && authentication.getAuthorities() != null
                 && !authentication.getAuthorities().isEmpty()) {
             String authority = authentication.getAuthorities().iterator().next().getAuthority();
             if (authority.startsWith("ROLE_")) {

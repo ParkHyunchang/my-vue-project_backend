@@ -10,12 +10,11 @@ import com.hyunchang.webapp.exception.NotFoundException;
 import com.hyunchang.webapp.exception.ValidationException;
 import com.hyunchang.webapp.repository.MenuDefinitionRepository;
 import com.hyunchang.webapp.repository.MenuPermissionRepository;
+import java.util.List;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -26,8 +25,7 @@ public class MenuDefinitionService {
 
     @Transactional(readOnly = true)
     public List<MenuDefinitionResponse> getAllMenuDefinitions() {
-        return menuDefinitionRepository.findAllByOrderBySortOrderAscIdAsc()
-                .stream()
+        return menuDefinitionRepository.findAllByOrderBySortOrderAscIdAsc().stream()
                 .map(MenuDefinitionResponse::from)
                 .collect(Collectors.toList());
     }
@@ -44,28 +42,34 @@ public class MenuDefinitionService {
             throw new DuplicateException("이미 존재하는 메뉴 경로입니다: " + request.getPath());
         }
 
-        MenuDefinition menu = new MenuDefinition(
-            request.getPath().trim(),
-            request.getName().trim(),
-            request.getIcon() != null ? request.getIcon().trim() : "",
-            request.getDescription() != null ? request.getDescription().trim() : "",
-            request.getCategory() != null ? request.getCategory().trim() : "main",
-            request.getIsRequired() != null && request.getIsRequired(),
-            request.getShowInNav() == null || request.getShowInNav(),
-            request.getNavLabel() != null ? request.getNavLabel().trim() : request.getName().trim(),
-            request.getIsAdminSubMenu() != null && request.getIsAdminSubMenu(),
-            request.getDefaultRoles() != null ? request.getDefaultRoles().trim() : "",
-            request.getSortOrder() != null ? request.getSortOrder() : 0,
-            request.getParentPath() != null && !request.getParentPath().isBlank() ? request.getParentPath().trim() : null
-        );
+        MenuDefinition menu =
+                new MenuDefinition(
+                        request.getPath().trim(),
+                        request.getName().trim(),
+                        request.getIcon() != null ? request.getIcon().trim() : "",
+                        request.getDescription() != null ? request.getDescription().trim() : "",
+                        request.getCategory() != null ? request.getCategory().trim() : "main",
+                        request.getIsRequired() != null && request.getIsRequired(),
+                        request.getShowInNav() == null || request.getShowInNav(),
+                        request.getNavLabel() != null
+                                ? request.getNavLabel().trim()
+                                : request.getName().trim(),
+                        request.getIsAdminSubMenu() != null && request.getIsAdminSubMenu(),
+                        request.getDefaultRoles() != null ? request.getDefaultRoles().trim() : "",
+                        request.getSortOrder() != null ? request.getSortOrder() : 0,
+                        request.getParentPath() != null && !request.getParentPath().isBlank()
+                                ? request.getParentPath().trim()
+                                : null);
 
         return MenuDefinitionResponse.from(menuDefinitionRepository.save(menu));
     }
 
     @Transactional
     public MenuDefinitionResponse updateMenuDefinition(Long id, MenuDefinitionRequest request) {
-        MenuDefinition menu = menuDefinitionRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("메뉴를 찾을 수 없습니다."));
+        MenuDefinition menu =
+                menuDefinitionRepository
+                        .findById(id)
+                        .orElseThrow(() -> new NotFoundException("메뉴를 찾을 수 없습니다."));
 
         if (request.getName() != null && !request.getName().isBlank()) {
             menu.setName(request.getName().trim());
@@ -98,7 +102,8 @@ public class MenuDefinitionService {
             menu.setSortOrder(request.getSortOrder());
         }
         if (request.getParentPath() != null) {
-            menu.setParentPath(request.getParentPath().isBlank() ? null : request.getParentPath().trim());
+            menu.setParentPath(
+                    request.getParentPath().isBlank() ? null : request.getParentPath().trim());
         }
 
         return MenuDefinitionResponse.from(menuDefinitionRepository.save(menu));
@@ -106,8 +111,10 @@ public class MenuDefinitionService {
 
     @Transactional
     public void deleteMenuDefinition(Long id) {
-        MenuDefinition menu = menuDefinitionRepository.findById(id)
-                .orElseThrow(() -> new NotFoundException("메뉴를 찾을 수 없습니다."));
+        MenuDefinition menu =
+                menuDefinitionRepository
+                        .findById(id)
+                        .orElseThrow(() -> new NotFoundException("메뉴를 찾을 수 없습니다."));
 
         if (menu.isRequired()) {
             throw new ForbiddenException("필수 메뉴(🔒 보호됨)는 삭제할 수 없습니다. '필수 메뉴' 설정을 해제한 후 삭제하세요.");
@@ -122,79 +129,326 @@ public class MenuDefinitionService {
     @Transactional
     public void updateSortOrders(List<MenuSortOrderRequest> requests) {
         for (MenuSortOrderRequest r : requests) {
-            menuDefinitionRepository.findById(r.getId()).ifPresent(menu -> {
-                menu.setSortOrder(r.getSortOrder());
-                menuDefinitionRepository.save(menu);
-            });
+            menuDefinitionRepository
+                    .findById(r.getId())
+                    .ifPresent(
+                            menu -> {
+                                menu.setSortOrder(r.getSortOrder());
+                                menuDefinitionRepository.save(menu);
+                            });
         }
     }
 
     // 앱 시작 시 기본 메뉴 정의 초기화 (이미 존재하면 스킵) + 기존 레코드 마이그레이션
     @Transactional
     public void initializeDefaultMenuDefinitions() {
-        record DefaultMenu(String path, String name, String icon, String description,
-                           String category, boolean isRequired, boolean showInNav,
-                           String navLabel, boolean isAdminSubMenu, String defaultRoles, int sortOrder, String parentPath) {}
+        record DefaultMenu(
+                String path,
+                String name,
+                String icon,
+                String description,
+                String category,
+                boolean isRequired,
+                boolean showInNav,
+                String navLabel,
+                boolean isAdminSubMenu,
+                String defaultRoles,
+                int sortOrder,
+                String parentPath) {}
 
-        List<DefaultMenu> defaults = List.of(
-            new DefaultMenu("/", "홈", "🏠", "메인 홈페이지", "main", true, true, "HOME", false, "USER,PREMIUM,ADMIN", 1, null),
-            new DefaultMenu("/portfolio", "포트폴리오", "💼", "개인 포트폴리오 페이지", "main", true, false, "PORTFOLIO", false, "USER,PREMIUM,ADMIN", 2, null),
-            new DefaultMenu("/projects", "프로젝트", "🚀", "프로젝트 관리 및 조회", "work", true, false, "PROJECTS", false, "USER,PREMIUM,ADMIN", 3, null),
-            new DefaultMenu("/history", "히스토리", "📚", "작업 이력 및 기록", "work", false, true, "HISTORY", false, "PREMIUM,ADMIN", 4, null),
-            new DefaultMenu("/dating", "데이팅", "💕", "데이팅 관련 기능", "personal", false, true, "DATING", false, "PREMIUM,ADMIN", 5, null),
-            new DefaultMenu("/todos", "할일 목록", "📝", "할일 관리", "productivity", false, true, "TODOS", false, "USER,PREMIUM,ADMIN", 7, null),
-            new DefaultMenu("/todos/create", "할일 생성", "➕", "새로운 할일 추가", "productivity", false, false, "할일 생성", false, "USER,PREMIUM,ADMIN", 8, null),
-            new DefaultMenu("/subscription", "구독 관리", "💳", "정기 결제 서비스 관리", "finance", false, true, "구독", false, "ADMIN", 9, null),
-            new DefaultMenu("/stock", "주식 대시보드", "📈", "실시간 주식 시장 데이터 및 포트폴리오", "finance", false, true, "주식", false, "ADMIN", 10, null),
-            new DefaultMenu("/realestate", "부동산", "🏢", "아파트 실거래가·시세·뉴스 (국토교통부)", "finance", false, true, "부동산", false, "ADMIN", 10, null),
-            new DefaultMenu("/travel", "여행", "✈️", "AI 여행 플래너·다녀온 곳·버킷리스트", "personal", false, true, "여행", false, "ADMIN", 10, null),
-            new DefaultMenu("/admin", "관리자 대시보드", "🎛️", "관리자 메인 대시보드", "admin", false, false, "관리자 대시보드", false, "ADMIN", 11, null),
-            new DefaultMenu("/admin/users", "사용자 관리", "👥", "사용자 계정 관리", "admin", false, false, "사용자 관리", true, "ADMIN", 11, null),
-            new DefaultMenu("/admin/menu-management", "권한별 접근메뉴관리", "🔐", "메뉴 접근 권한 설정", "admin", false, false, "권한별 접근메뉴관리", true, "ADMIN", 12, null),
-            new DefaultMenu("/admin/role-management", "권한 관리", "🛡️", "사용자 권한(Role) 관리", "admin", false, false, "권한 관리", true, "ADMIN", 13, null),
-            new DefaultMenu("/admin/menu-definition", "메뉴 정의 관리", "📋", "메뉴 목록 조회 및 정의 관리", "admin", false, false, "메뉴 정의 관리", true, "ADMIN", 14, null),
-            new DefaultMenu("/chat", "AI 채팅", "💬", "Claude AI 채팅", "main", false, true, "CHAT", false, "USER,PREMIUM,ADMIN", 15, null),
-            new DefaultMenu("/diary", "AI 일기", "📔", "AI 감정 분석 일기", "personal", false, true, "DIARY", false, "USER,PREMIUM,ADMIN", 16, null)
-        );
+        List<DefaultMenu> defaults =
+                List.of(
+                        new DefaultMenu(
+                                "/",
+                                "홈",
+                                "🏠",
+                                "메인 홈페이지",
+                                "main",
+                                true,
+                                true,
+                                "HOME",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                1,
+                                null),
+                        new DefaultMenu(
+                                "/portfolio",
+                                "포트폴리오",
+                                "💼",
+                                "개인 포트폴리오 페이지",
+                                "main",
+                                true,
+                                false,
+                                "PORTFOLIO",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                2,
+                                null),
+                        new DefaultMenu(
+                                "/projects",
+                                "프로젝트",
+                                "🚀",
+                                "프로젝트 관리 및 조회",
+                                "work",
+                                true,
+                                false,
+                                "PROJECTS",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                3,
+                                null),
+                        new DefaultMenu(
+                                "/history",
+                                "히스토리",
+                                "📚",
+                                "작업 이력 및 기록",
+                                "work",
+                                false,
+                                true,
+                                "HISTORY",
+                                false,
+                                "PREMIUM,ADMIN",
+                                4,
+                                null),
+                        new DefaultMenu(
+                                "/dating",
+                                "데이팅",
+                                "💕",
+                                "데이팅 관련 기능",
+                                "personal",
+                                false,
+                                true,
+                                "DATING",
+                                false,
+                                "PREMIUM,ADMIN",
+                                5,
+                                null),
+                        new DefaultMenu(
+                                "/todos",
+                                "할일 목록",
+                                "📝",
+                                "할일 관리",
+                                "productivity",
+                                false,
+                                true,
+                                "TODOS",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                7,
+                                null),
+                        new DefaultMenu(
+                                "/todos/create",
+                                "할일 생성",
+                                "➕",
+                                "새로운 할일 추가",
+                                "productivity",
+                                false,
+                                false,
+                                "할일 생성",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                8,
+                                null),
+                        new DefaultMenu(
+                                "/subscription",
+                                "구독 관리",
+                                "💳",
+                                "정기 결제 서비스 관리",
+                                "finance",
+                                false,
+                                true,
+                                "구독",
+                                false,
+                                "ADMIN",
+                                9,
+                                null),
+                        new DefaultMenu(
+                                "/stock",
+                                "주식 대시보드",
+                                "📈",
+                                "실시간 주식 시장 데이터 및 포트폴리오",
+                                "finance",
+                                false,
+                                true,
+                                "주식",
+                                false,
+                                "ADMIN",
+                                10,
+                                null),
+                        new DefaultMenu(
+                                "/realestate",
+                                "부동산",
+                                "🏢",
+                                "아파트 실거래가·시세·뉴스 (국토교통부)",
+                                "finance",
+                                false,
+                                true,
+                                "부동산",
+                                false,
+                                "ADMIN",
+                                10,
+                                null),
+                        new DefaultMenu(
+                                "/travel",
+                                "여행",
+                                "✈️",
+                                "AI 여행 플래너·다녀온 곳·버킷리스트",
+                                "personal",
+                                false,
+                                true,
+                                "여행",
+                                false,
+                                "ADMIN",
+                                10,
+                                null),
+                        new DefaultMenu(
+                                "/admin",
+                                "관리자 대시보드",
+                                "🎛️",
+                                "관리자 메인 대시보드",
+                                "admin",
+                                false,
+                                false,
+                                "관리자 대시보드",
+                                false,
+                                "ADMIN",
+                                11,
+                                null),
+                        new DefaultMenu(
+                                "/admin/users",
+                                "사용자 관리",
+                                "👥",
+                                "사용자 계정 관리",
+                                "admin",
+                                false,
+                                false,
+                                "사용자 관리",
+                                true,
+                                "ADMIN",
+                                11,
+                                null),
+                        new DefaultMenu(
+                                "/admin/menu-management",
+                                "권한별 접근메뉴관리",
+                                "🔐",
+                                "메뉴 접근 권한 설정",
+                                "admin",
+                                false,
+                                false,
+                                "권한별 접근메뉴관리",
+                                true,
+                                "ADMIN",
+                                12,
+                                null),
+                        new DefaultMenu(
+                                "/admin/role-management",
+                                "권한 관리",
+                                "🛡️",
+                                "사용자 권한(Role) 관리",
+                                "admin",
+                                false,
+                                false,
+                                "권한 관리",
+                                true,
+                                "ADMIN",
+                                13,
+                                null),
+                        new DefaultMenu(
+                                "/admin/menu-definition",
+                                "메뉴 정의 관리",
+                                "📋",
+                                "메뉴 목록 조회 및 정의 관리",
+                                "admin",
+                                false,
+                                false,
+                                "메뉴 정의 관리",
+                                true,
+                                "ADMIN",
+                                14,
+                                null),
+                        new DefaultMenu(
+                                "/chat",
+                                "AI 채팅",
+                                "💬",
+                                "Claude AI 채팅",
+                                "main",
+                                false,
+                                true,
+                                "CHAT",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                15,
+                                null),
+                        new DefaultMenu(
+                                "/diary",
+                                "AI 일기",
+                                "📔",
+                                "AI 감정 분석 일기",
+                                "personal",
+                                false,
+                                true,
+                                "DIARY",
+                                false,
+                                "USER,PREMIUM,ADMIN",
+                                16,
+                                null));
 
         for (DefaultMenu d : defaults) {
             if (!menuDefinitionRepository.existsByPath(d.path())) {
-                menuDefinitionRepository.save(new MenuDefinition(
-                    d.path(), d.name(), d.icon(), d.description(),
-                    d.category(), d.isRequired(), d.showInNav(),
-                    d.navLabel(), d.isAdminSubMenu(), d.defaultRoles(), d.sortOrder(), d.parentPath()
-                ));
+                menuDefinitionRepository.save(
+                        new MenuDefinition(
+                                d.path(),
+                                d.name(),
+                                d.icon(),
+                                d.description(),
+                                d.category(),
+                                d.isRequired(),
+                                d.showInNav(),
+                                d.navLabel(),
+                                d.isAdminSubMenu(),
+                                d.defaultRoles(),
+                                d.sortOrder(),
+                                d.parentPath()));
             }
         }
 
         // /dating_sys 메뉴 삭제 (dating_sys 기능 제거) // 추후 삭제 예정
-        menuDefinitionRepository.findByPath("/dating_sys").ifPresent(menu -> {
-            menuPermissionRepository.deleteByMenuPath("/dating_sys");
-            menuDefinitionRepository.delete(menu);
-        });
+        menuDefinitionRepository
+                .findByPath("/dating_sys")
+                .ifPresent(
+                        menu -> {
+                            menuPermissionRepository.deleteByMenuPath("/dating_sys");
+                            menuDefinitionRepository.delete(menu);
+                        });
 
         // /expense 메뉴 삭제 (가계부 → 구독 관리로 대체) // 추후 삭제 예정
-        menuDefinitionRepository.findByPath("/expense").ifPresent(menu -> {
-            menuPermissionRepository.deleteByMenuPath("/expense");
-            menuDefinitionRepository.delete(menu);
-        });
+        menuDefinitionRepository
+                .findByPath("/expense")
+                .ifPresent(
+                        menu -> {
+                            menuPermissionRepository.deleteByMenuPath("/expense");
+                            menuDefinitionRepository.delete(menu);
+                        });
 
         // 기존 레코드 마이그레이션: /portfolio, /projects는 홈 화면에 통합 - nav 숨김 + 접근권한 개방
-        for (String hiddenPath : new String[]{"/portfolio", "/projects"}) {
-            menuDefinitionRepository.findByPath(hiddenPath).ifPresent(menu -> {
-                boolean needsUpdate = false;
-                if (menu.isShowInNav()) {
-                    menu.setShowInNav(false);
-                    needsUpdate = true;
-                }
-                if (!menu.isRequired()) {
-                    menu.setRequired(true);
-                    needsUpdate = true;
-                }
-                if (needsUpdate) {
-                    menuDefinitionRepository.save(menu);
-                }
-            });
+        for (String hiddenPath : new String[] {"/portfolio", "/projects"}) {
+            menuDefinitionRepository
+                    .findByPath(hiddenPath)
+                    .ifPresent(
+                            menu -> {
+                                boolean needsUpdate = false;
+                                if (menu.isShowInNav()) {
+                                    menu.setShowInNav(false);
+                                    needsUpdate = true;
+                                }
+                                if (!menu.isRequired()) {
+                                    menu.setRequired(true);
+                                    needsUpdate = true;
+                                }
+                                if (needsUpdate) {
+                                    menuDefinitionRepository.save(menu);
+                                }
+                            });
         }
     }
 }

@@ -11,6 +11,9 @@ import com.hyunchang.webapp.service.TravelService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -21,10 +24,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-
-import java.time.LocalDate;
-import java.util.List;
-import java.util.Map;
 
 @Tag(name = "Travel", description = "여행 API — AI 플래너 · 다녀온 곳 · 버킷리스트")
 @RestController
@@ -38,10 +37,11 @@ public class TravelController {
     private final TravelGeocodeService travelGeocodeService;
     private final MenuAccessGuard menuAccessGuard;
 
-    public TravelController(TravelService travelService,
-                            TravelPlannerService travelPlannerService,
-                            TravelGeocodeService travelGeocodeService,
-                            MenuAccessGuard menuAccessGuard) {
+    public TravelController(
+            TravelService travelService,
+            TravelPlannerService travelPlannerService,
+            TravelGeocodeService travelGeocodeService,
+            MenuAccessGuard menuAccessGuard) {
         this.travelService = travelService;
         this.travelPlannerService = travelPlannerService;
         this.travelGeocodeService = travelGeocodeService;
@@ -59,9 +59,13 @@ public class TravelController {
     // ── 버킷리스트 ─────────────────────────────────────────────────
 
     public record WishlistRequest(
-        String title, String country, String city,
-        Integer priority, String targetPeriod, Long estBudget, String memo
-    ) {}
+            String title,
+            String country,
+            String city,
+            Integer priority,
+            String targetPeriod,
+            Long estBudget,
+            String memo) {}
 
     @Operation(summary = "버킷리스트 전체 조회")
     @GetMapping("/wishlist")
@@ -78,21 +82,35 @@ public class TravelController {
         if (req.title() == null || req.title().isBlank()) {
             return ResponseEntity.badRequest().body("가고 싶은 곳(제목)은 필수입니다.");
         }
-        TravelWishlist created = travelService.addWishlist(
-            SecurityUtils.getCurrentUserId(),
-            req.title().trim(), trimOrNull(req.country()), trimOrNull(req.city()),
-            req.priority(), trimOrNull(req.targetPeriod()), req.estBudget(), trimOrNull(req.memo()));
+        TravelWishlist created =
+                travelService.addWishlist(
+                        SecurityUtils.getCurrentUserId(),
+                        req.title().trim(),
+                        trimOrNull(req.country()),
+                        trimOrNull(req.city()),
+                        req.priority(),
+                        trimOrNull(req.targetPeriod()),
+                        req.estBudget(),
+                        trimOrNull(req.memo()));
         return ResponseEntity.ok(created);
     }
 
     @Operation(summary = "버킷리스트 수정")
     @PutMapping("/wishlist/{id}")
-    public ResponseEntity<?> updateWishlist(@PathVariable Long id, @RequestBody WishlistRequest req) {
+    public ResponseEntity<?> updateWishlist(
+            @PathVariable Long id, @RequestBody WishlistRequest req) {
         if (!hasAccess()) return forbidden();
-        TravelWishlist updated = travelService.updateWishlist(
-            SecurityUtils.getCurrentUserId(), id,
-            trimOrNull(req.title()), trimOrNull(req.country()), trimOrNull(req.city()),
-            req.priority(), trimOrNull(req.targetPeriod()), req.estBudget(), trimOrNull(req.memo()));
+        TravelWishlist updated =
+                travelService.updateWishlist(
+                        SecurityUtils.getCurrentUserId(),
+                        id,
+                        trimOrNull(req.title()),
+                        trimOrNull(req.country()),
+                        trimOrNull(req.city()),
+                        req.priority(),
+                        trimOrNull(req.targetPeriod()),
+                        req.estBudget(),
+                        trimOrNull(req.memo()));
         return ResponseEntity.ok(updated);
     }
 
@@ -107,9 +125,15 @@ public class TravelController {
     // ── 다녀온 곳 ──────────────────────────────────────────────────
 
     public record VisitedRequest(
-        String title, String country, String city,
-        Double lat, Double lng, String startDate, String endDate, Integer rating, String memo
-    ) {}
+            String title,
+            String country,
+            String city,
+            Double lat,
+            Double lng,
+            String startDate,
+            String endDate,
+            Integer rating,
+            String memo) {}
 
     @Operation(summary = "다녀온 곳 전체 조회")
     @GetMapping("/visited")
@@ -126,11 +150,18 @@ public class TravelController {
         if (req.title() == null || req.title().isBlank()) {
             return ResponseEntity.badRequest().body("장소명(제목)은 필수입니다.");
         }
-        TravelLog created = travelService.addVisited(
-            SecurityUtils.getCurrentUserId(),
-            req.title().trim(), trimOrNull(req.country()), trimOrNull(req.city()),
-            req.lat(), req.lng(), toLocalDate(req.startDate()), toLocalDate(req.endDate()),
-            req.rating(), trimOrNull(req.memo()));
+        TravelLog created =
+                travelService.addVisited(
+                        SecurityUtils.getCurrentUserId(),
+                        req.title().trim(),
+                        trimOrNull(req.country()),
+                        trimOrNull(req.city()),
+                        req.lat(),
+                        req.lng(),
+                        toLocalDate(req.startDate()),
+                        toLocalDate(req.endDate()),
+                        req.rating(),
+                        trimOrNull(req.memo()));
         return ResponseEntity.ok(created);
     }
 
@@ -138,11 +169,19 @@ public class TravelController {
     @PutMapping("/visited/{id}")
     public ResponseEntity<?> updateVisited(@PathVariable Long id, @RequestBody VisitedRequest req) {
         if (!hasAccess()) return forbidden();
-        TravelLog updated = travelService.updateVisited(
-            SecurityUtils.getCurrentUserId(), id,
-            trimOrNull(req.title()), trimOrNull(req.country()), trimOrNull(req.city()),
-            req.lat(), req.lng(), toLocalDate(req.startDate()), toLocalDate(req.endDate()),
-            req.rating(), trimOrNull(req.memo()));
+        TravelLog updated =
+                travelService.updateVisited(
+                        SecurityUtils.getCurrentUserId(),
+                        id,
+                        trimOrNull(req.title()),
+                        trimOrNull(req.country()),
+                        trimOrNull(req.city()),
+                        req.lat(),
+                        req.lng(),
+                        toLocalDate(req.startDate()),
+                        toLocalDate(req.endDate()),
+                        req.rating(),
+                        trimOrNull(req.memo()));
         return ResponseEntity.ok(updated);
     }
 
@@ -156,8 +195,14 @@ public class TravelController {
 
     // ── AI 플래너 ──────────────────────────────────────────────────
 
-    public record PlanRequest(String destination, Integer days, String companions, String style, String budget,
-                              Boolean includeFlight, Boolean includeStay) {}
+    public record PlanRequest(
+            String destination,
+            Integer days,
+            String companions,
+            String style,
+            String budget,
+            Boolean includeFlight,
+            Boolean includeStay) {}
 
     @Operation(summary = "AI 여행 플래너 — 목적지·기간·스타일 기반 일자별 일정 생성")
     @PostMapping("/plan")
@@ -170,13 +215,20 @@ public class TravelController {
         // 미지정(null)이면 포함으로 간주
         boolean includeFlight = req.includeFlight() == null || req.includeFlight();
         boolean includeStay = req.includeStay() == null || req.includeStay();
-        Map<String, Object> result = travelPlannerService.plan(
-            req.destination().trim(), days, req.companions(), req.style(), req.budget(),
-            includeFlight, includeStay);
+        Map<String, Object> result =
+                travelPlannerService.plan(
+                        req.destination().trim(),
+                        days,
+                        req.companions(),
+                        req.style(),
+                        req.budget(),
+                        includeFlight,
+                        includeStay);
         return ResponseEntity.ok(result);
     }
 
-    public record RefineRequest(String destination, Integer days, Object plan, String instruction) {}
+    public record RefineRequest(
+            String destination, Integer days, Object plan, String instruction) {}
 
     @Operation(summary = "AI 일정 채팅 수정 — 현재 일정 + 요청을 받아 수정된 일정 반환")
     @PostMapping("/refine")
@@ -189,18 +241,25 @@ public class TravelController {
             return ResponseEntity.badRequest().body("수정 요청을 입력하세요.");
         }
         int days = req.days() == null ? 3 : Math.min(14, Math.max(1, req.days()));
-        Map<String, Object> result = travelPlannerService.refine(
-            req.destination() == null ? "" : req.destination().trim(),
-            days, req.plan(), req.instruction().trim());
+        Map<String, Object> result =
+                travelPlannerService.refine(
+                        req.destination() == null ? "" : req.destination().trim(),
+                        days,
+                        req.plan(),
+                        req.instruction().trim());
         return ResponseEntity.ok(result);
     }
 
     // ── 예정 일정 ──────────────────────────────────────────────────
 
     public record ItineraryRequest(
-        String title, String destination, String startDate, String endDate,
-        Integer days, Object itinerary, String memo
-    ) {}
+            String title,
+            String destination,
+            String startDate,
+            String endDate,
+            Integer days,
+            Object itinerary,
+            String memo) {}
 
     @Operation(summary = "예정 일정 전체 조회")
     @GetMapping("/itinerary")
@@ -217,23 +276,35 @@ public class TravelController {
         if (req.title() == null || req.title().isBlank()) {
             return ResponseEntity.badRequest().body("일정 제목은 필수입니다.");
         }
-        TravelItinerary created = travelService.addItinerary(
-            SecurityUtils.getCurrentUserId(),
-            req.title().trim(), trimOrNull(req.destination()),
-            toLocalDate(req.startDate()), toLocalDate(req.endDate()),
-            req.days(), req.itinerary(), trimOrNull(req.memo()));
+        TravelItinerary created =
+                travelService.addItinerary(
+                        SecurityUtils.getCurrentUserId(),
+                        req.title().trim(),
+                        trimOrNull(req.destination()),
+                        toLocalDate(req.startDate()),
+                        toLocalDate(req.endDate()),
+                        req.days(),
+                        req.itinerary(),
+                        trimOrNull(req.memo()));
         return ResponseEntity.ok(created);
     }
 
     @Operation(summary = "예정 일정 수정")
     @PutMapping("/itinerary/{id}")
-    public ResponseEntity<?> updateItinerary(@PathVariable Long id, @RequestBody ItineraryRequest req) {
+    public ResponseEntity<?> updateItinerary(
+            @PathVariable Long id, @RequestBody ItineraryRequest req) {
         if (!hasAccess()) return forbidden();
-        TravelItinerary updated = travelService.updateItinerary(
-            SecurityUtils.getCurrentUserId(), id,
-            trimOrNull(req.title()), trimOrNull(req.destination()),
-            toLocalDate(req.startDate()), toLocalDate(req.endDate()),
-            req.days(), req.itinerary(), trimOrNull(req.memo()));
+        TravelItinerary updated =
+                travelService.updateItinerary(
+                        SecurityUtils.getCurrentUserId(),
+                        id,
+                        trimOrNull(req.title()),
+                        trimOrNull(req.destination()),
+                        toLocalDate(req.startDate()),
+                        toLocalDate(req.endDate()),
+                        req.days(),
+                        req.itinerary(),
+                        trimOrNull(req.memo()));
         return ResponseEntity.ok(updated);
     }
 
@@ -253,8 +324,8 @@ public class TravelController {
         if (!hasAccess()) return forbidden();
         String json = travelGeocodeService.search(q);
         return ResponseEntity.ok()
-            .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
-            .body(json);
+                .contentType(org.springframework.http.MediaType.APPLICATION_JSON)
+                .body(json);
     }
 
     // ── 유틸 ──────────────────────────────────────────────────────
