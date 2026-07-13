@@ -2,6 +2,7 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
+import com.hyunchang.webapp.dto.TodoRequest;
 import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.service.TodoService;
 import java.util.List;
@@ -73,15 +74,26 @@ public class TodoController {
     }
 
     @PostMapping
-    public ResponseEntity<?> create(@RequestBody Todo todo) {
+    public ResponseEntity<?> create(@RequestBody TodoRequest request) {
         if (!hasAccess()) return forbidden();
-        return ResponseEntity.ok(todoService.create(todo));
+        return ResponseEntity.ok(todoService.create(toEntity(request)));
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody Todo todo) {
+    public ResponseEntity<?> update(@PathVariable Long id, @RequestBody TodoRequest request) {
         if (!hasAccess()) return forbidden();
-        return ResponseEntity.ok(todoService.update(id, todo));
+        return ResponseEntity.ok(todoService.update(id, toEntity(request)));
+    }
+
+    private Todo toEntity(TodoRequest request) {
+        Todo todo = new Todo();
+        todo.setTitle(request.title());
+        todo.setDescription(request.description());
+        todo.setDone(request.done());
+        todo.setPriority(request.priority());
+        todo.setDueDate(request.dueDate());
+        todo.setCategory(request.category());
+        return todo;
     }
 
     @DeleteMapping("/{id}")
