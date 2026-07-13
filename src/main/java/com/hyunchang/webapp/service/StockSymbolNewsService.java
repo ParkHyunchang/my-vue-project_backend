@@ -328,6 +328,7 @@ public class StockSymbolNewsService {
 
                 String source = item.path("source").asText("AlphaVantage");
                 String pubDate = formatAvDate(item.path("time_published").asText(""));
+                SentimentScore sentiment = sentimentForTicker(item, ticker);
 
                 out.add(
                         StockNewsDto.builder()
@@ -339,6 +340,8 @@ public class StockSymbolNewsService {
                                 .pubDate(pubDate)
                                 .source("AlphaVantage · " + source)
                                 .market("US")
+                                .sentimentScore(sentiment.score())
+                                .relevanceScore(sentiment.relevance())
                                 .build());
                 if (out.size() >= 10) break;
             }
@@ -350,6 +353,27 @@ public class StockSymbolNewsService {
     }
 
     /** "20260515T123456" → "Thu, 15 May 2026 12:34:56 GMT" */
+    private SentimentScore sentimentForTicker(JsonNode item, String ticker) {
+        for (JsonNode score : item.path("ticker_sentiment")) {
+            if (ticker.equalsIgnoreCase(score.path("ticker").asText(""))) {
+                return new SentimentScore(
+                        numberOrNull(score.path("ticker_sentiment_score").asText()),
+                        numberOrNull(score.path("relevance_score").asText()));
+            }
+        }
+        return new SentimentScore(null, numberOrNull(item.path("relevance_score").asText()));
+    }
+
+    private Double numberOrNull(String value) {
+        try {
+            return value == null || value.isBlank() ? null : Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private record SentimentScore(Double score, Double relevance) {}
+
     private String formatAvDate(String raw) {
         if (raw == null || raw.length() < 8) return "";
         try {

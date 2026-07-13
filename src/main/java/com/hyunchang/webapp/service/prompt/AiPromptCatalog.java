@@ -19,6 +19,7 @@ public final class AiPromptCatalog {
     public static final String PORTFOLIO_ANALYSIS = "PORTFOLIO_ANALYSIS";
     public static final String PORTFOLIO_ISA_ANALYSIS = "PORTFOLIO_ISA_ANALYSIS";
     public static final String PORTFOLIO_GENERAL_ANALYSIS = "PORTFOLIO_GENERAL_ANALYSIS";
+    public static final String SHORT_STOCK_RECOMMENDATION = "SHORT_STOCK_RECOMMENDATION";
     public static final String PORTFOLIO_IRP_ANALYSIS = "PORTFOLIO_IRP_ANALYSIS";
     public static final String PORTFOLIO_ALL_ANALYSIS = "PORTFOLIO_ALL_ANALYSIS";
     public static final String TRAVEL_CREATE = "TRAVEL_CREATE";
@@ -47,6 +48,7 @@ public final class AiPromptCatalog {
         register(portfolioAnalysis());
         register(portfolioIsaAnalysis());
         register(portfolioGeneralAnalysis());
+        register(shortStockRecommendation());
         register(portfolioIrpAnalysis());
         register(portfolioAllAnalysis());
         // 여행 그룹
@@ -275,6 +277,65 @@ public final class AiPromptCatalog {
 
             ## 참고 고지
             이 보고서는 정보 제공 목적이며 투자 자문이 아닙니다. 제공된 데이터에 없는 수치는 추정하지 말고 '데이터 없음'으로 표기하세요.
+            """);
+    }
+
+    private static PromptDefinition shortStockRecommendation() {
+        return new PromptDefinition(
+                SHORT_STOCK_RECOMMENDATION,
+                "단기 종목 추가 추천",
+                "주식",
+                "단기 주식계좌 AI 진단에서 신규 편입 후보를 선별하는 별도 지침입니다. 단기 계좌와 전체 계좌(종합) 진단에 함께 적용됩니다.",
+                List.of(
+                        new PromptVariable("보유종목목록", "이미 보유한 종목 목록 — 중복 추천 금지"),
+                        new PromptVariable("시장뉴스", "최근 시장 뉴스 헤드라인"),
+                        new PromptVariable("보유종목", "현재 보유 종목의 가격·수익률·관련 뉴스"),
+                        new PromptVariable("KRX스크리닝", "KRX 등락률·20일 평균 대비 거래량 스크리닝 결과"),
+                        new PromptVariable("DART공시", "최근 호재성 DART 공시"),
+                        new PromptVariable("종목뉴스", "후보 종목별 구체적 호재 뉴스"),
+                        new PromptVariable("뉴스감성", "Alpha Vantage 종목별 뉴스 감성·관련도"),
+                        new PromptVariable("컨센서스", "Yahoo 현재 애널리스트 컨센서스·목표주가")),
+                """
+            당신은 단기 스윙(보유 2~10 거래일) 매매 후보를 엄격하게 선별하는 애널리스트입니다.
+            제공 데이터에서 확인 가능한 사실만 근거로 사용하고, 제공되지 않은 가격·목표가·실적 수치·뉴스는 절대 추정하거나 생성하지 마세요.
+            장기 투자 관점의 막연한 추천은 금지합니다.
+
+            [선별 원칙 — 후보는 촉매와 가격·수급 확인을 동시에 충족]
+            1. 촉매: KR은 DART의 단일판매·공급계약·무상증자·자사주 취득·대규모 수주·임상/승인 등 호재 공시 또는 구체적 종목 뉴스가 있어야 합니다.
+            US는 관련도 높은 기사 기준 Alpha Vantage 감성 +0.25 이상 뉴스가 3건 이상이어야 하며, Yahoo의 현재 컨센서스·목표주가는 보조 근거로만 사용하세요.
+            감성 점수가 1~2건에만 의존하거나 공시가 정정·단순 IR성이면 촉매로 인정하지 마세요.
+            2. 확인: KRX 등락률·거래량 데이터가 있으면 20일 평균 대비 유의미한 거래량 증가를 동반한 상승을 확인하세요.
+            미국처럼 가격·거래량 확인 데이터가 없으면 확신도를 하로 표기하고, 진입 조건에 가격·거래량 확인을 필수로 명시하세요.
+
+            시장 뉴스에서 지수 급락, 매크로 충격, 금리·환율 쇼크 등 뚜렷한 위험 회피 신호가 확인되면 후보 수를 줄이거나 추천 후보 없음으로 답하세요.
+            보유종목목록의 종목, 뉴스·공시 근거 없는 단순 급등주, 여러 날 전 재료만 있고 추가 확인 신호가 없는 종목은 제외하세요.
+            근거가 부족하면 후보를 억지로 만들지 말고 추천 후보 없음과 이유를 쓰세요.
+            """,
+                """
+            참고 데이터:
+            [계좌] 이미 보유한 종목: {{보유종목목록}}
+            [계좌] 보유 종목 현황: {{보유종목}}
+            [시장 공통] 시장 뉴스/헤드라인: {{시장뉴스}}
+            [KR] KRX 스크리닝: {{KRX스크리닝}}
+            [KR] DART 공시: {{DART공시}}
+            [KR] 종목별 뉴스: {{종목뉴스}}
+            [US] 뉴스 감성 점수(Alpha Vantage): {{뉴스감성}}
+            [US] 애널리스트 컨센서스/목표주가(Yahoo): {{컨센서스}}
+            """,
+                """
+            ## 단기 계좌 종목 추가 추천
+            최대 3개, 확실한 근거가 있는 후보만 아래 형식으로 작성하세요. 전체 계좌(종합) 진단에서는 각 후보가 단기 계좌 편입 후보임을 명확히 표시하세요.
+
+            ### [종목명 (티커)] — 단기 계좌 편입 후보 (확신도: 상/중/하)
+            - **촉매 유형**: 공시 / 뉴스 / 감성점수 / 현재 컨센서스 중 해당 항목
+            - **추천 근거**: 제공 데이터에서 확인된 사실 1~2개와 출처 데이터 명시
+            - **가격·수급 확인**: 등락률/거래량 시장 반응. 확인 불가 시 '미확인' 명시
+            - **진입 조건**: 추격 매수 대신 확인해야 할 가격 행동 또는 후속 뉴스 조건
+            - **리스크/무효화 조건**: 제공된 가격 데이터 범위 내 손절 또는 관망 전환 조건
+            - **예상 보유기간**: 2~10 거래일 내 구체적 시나리오
+            - **포지션 원칙**: 종목당 200~300만원 소액 단기 스윙 원칙 준수 유의사항
+
+            근거가 부족하면 섹션 제목 아래에 **추천 후보 없음**과 이유 한 문장을 작성하세요.
             """);
     }
 

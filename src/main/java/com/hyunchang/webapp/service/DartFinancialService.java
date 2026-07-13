@@ -48,6 +48,18 @@ public class DartFinancialService {
 
     private final Object loadLock = new Object();
 
+    private static final Set<String> POSITIVE_DISCLOSURE_KEYWORDS =
+            Set.of(
+                    "단일판매",
+                    "공급계약",
+                    "무상증자",
+                    "자기주식취득",
+                    "자사주취득",
+                    "품목허가",
+                    "임상",
+                    "승인",
+                    "수주");
+
     private static final Set<String> DISCLOSURE_RISK_KEYWORDS =
             Set.of(
                     "타법인",
@@ -80,6 +92,22 @@ public class DartFinancialService {
 
     public boolean enabled() {
         return apiKey != null && !apiKey.isBlank();
+    }
+
+    /**
+     * 단기 스윙 후보의 촉매 확인에 쓰는 최근 호재성 공시입니다. 정정 공시, 위험 공시,
+     * 14일보다 오래된 재료는 제외해 이미 소진된 이벤트를 추천 근거로 사용하지 않습니다.
+     */
+    public List<PositiveDisclosure> recentPositiveDisclosures(String symbol, int limit) {
+        if (!enabled() || limit <= 0) return List.of();
+        LocalDate cutoff = LocalDate.now().minusDays(14);
+        return recentDisclosures(symbol, 40).stream()
+                .filter(this::isPositiveDisclosure)
+                .filter(d -> !d.name().contains("정정"))
+                .filter(d -> parseDisclosureDate(d.date()).isAfter(cutoff.minusDays(1)))
+                .limit(limit)
+                .map(d -> new PositiveDisclosure(d.date(), d.name(), d.receiptNo()))
+                .toList();
     }
 
     /** 국내 종목 재무 요약. symbol 은 "005930.KS" 또는 "005930". 미설정/실패 시 null. */
@@ -366,7 +394,22 @@ public class DartFinancialService {
         return DISCLOSURE_RISK_KEYWORDS.stream().anyMatch(d.name()::contains);
     }
 
+    private boolean isPositiveDisclosure(DartDisclosure d) {
+        if (d == null || d.name() == null || isRiskDisclosure(d)) return false;
+        return POSITIVE_DISCLOSURE_KEYWORDS.stream().anyMatch(d.name()::contains);
+    }
+
+    private LocalDate parseDisclosureDate(String date) {
+        try {
+            return LocalDate.parse(date, DateTimeFormatter.BASIC_ISO_DATE);
+        } catch (Exception e) {
+            return LocalDate.MIN;
+        }
+    }
+
     private record DartDisclosure(String date, String name, String receiptNo) {}
+
+    public record PositiveDisclosure(String date, String title, String receiptNo) {}
 
     /** "1,234,567" → long. 음수 괄호 "(1,234)" 처리. 실패 시 Long.MIN_VALUE. */
     private long parseAmount(String s) {

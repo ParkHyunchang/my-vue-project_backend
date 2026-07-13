@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -38,6 +39,11 @@ public class KrxOpenApiService {
     private static final String ETF_URL = "https://data-dbg.krx.co.kr/svc/apis/etp/etf_bydd_trd";
     private static final String ETN_URL = "https://data-dbg.krx.co.kr/svc/apis/etp/etn_bydd_trd";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final long SWING_SCREEN_CACHE_TTL_MS = 30 * 60 * 1000L;
+    private static final int SWING_LOOKBACK_DAYS = 20;
+    private static final int SWING_HISTORY_FETCH_DAYS = 35;
+    private static final double SWING_MIN_CHANGE_PCT = 3.0;
+    private static final double SWING_MIN_VOLUME_RATIO = 3.0;
     private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L;
     private static final long FAIL_COOLDOWN_MS = 10 * 60 * 1000L; // 연속 실패 시 재시도 쿨다운
 
@@ -66,6 +72,9 @@ public class KrxOpenApiService {
     private volatile long etpMapTime = 0;
     private volatile long etpMapFailTime = 0;
 
+    private volatile List<KrSwingCandidate> swingCandidatesCache = Collections.emptyList();
+    private volatile long swingCandidatesCacheTime = 0;
+
     // ─────────────────────────────────────────────────────────────
     // 공개 메서드
     // ─────────────────────────────────────────────────────────────
@@ -87,6 +96,107 @@ public class KrxOpenApiService {
     public List<NaverFinanceService.NaverStockData> getAllEtp() {
         return new ArrayList<>(getOrLoadEtpMap().values());
     }
+
+    /**
+     * 단기 스윙 후보용 KRX 1차 스크리닝입니다. 최근 종가 기준으로 당일 3% 이상 상승하고
+     * 당일 거래량이 직전 20거래일 평균의 3배 이상인 종목만 반환합니다. 계산은 서버에서
+     * 끝내고 LLM에는 압축된 후보만 전달해 근거 없는 추천을 줄입니다.
+     */
+    public List<KrSwingCandidate> getShortSwingCandidates(int limit) {
+        if (limit <= 0 || !hasApiKey()) return List.of();
+        if (!isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
+            return swingCandidatesCache.stream().limit(limit).toList();
+        }
+
+        synchronized (this) {
+            if (isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
+                swingCandidatesCache = collectShortSwingCandidates();
+                swingCandidatesCacheTime = System.currentTimeMillis();
+            }
+        }
+        return swingCandidatesCache.stream().limit(limit).toList();
+    }
+
+    private List<KrSwingCandidate> collectShortSwingCandidates() {
+        Map<LocalDate, Map<String, NaverFinanceService.NaverStockData>> sessions =
+                new LinkedHashMap<>();
+        for (LocalDate date : getRecentBusinessDays(SWING_HISTORY_FETCH_DAYS)) {
+            try {
+                Map<String, NaverFinanceService.NaverStockData> combined = new HashMap<>();
+                callKrxApi(KOSPI_URL, date.format(DATE_FMT), ".KS")
+                        .forEach(s -> combined.put(s.symbol().toUpperCase(), s));
+                callKrxApi(KOSDAQ_URL, date.format(DATE_FMT), ".KQ")
+                        .forEach(s -> combined.put(s.symbol().toUpperCase(), s));
+                if (!combined.isEmpty()) sessions.put(date, combined);
+            } catch (IOException | InterruptedException e) {
+                log.debug("KRX swing screening history unavailable for {}: {}", date, e.getMessage());
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            }
+            if (sessions.size() >= SWING_LOOKBACK_DAYS + 1) break;
+        }
+
+        if (sessions.size() < SWING_LOOKBACK_DAYS + 1) {
+            log.warn("KRX swing screening skipped: only {} trading sessions available", sessions.size());
+            return List.of();
+        }
+
+        Map.Entry<LocalDate, Map<String, NaverFinanceService.NaverStockData>> latest =
+                sessions.entrySet().iterator().next();
+        List<Map<String, NaverFinanceService.NaverStockData>> history =
+                sessions.entrySet().stream().skip(1).limit(SWING_LOOKBACK_DAYS).map(Map.Entry::getValue).toList();
+
+        return latest.getValue().values().stream()
+                .map(stock -> toSwingCandidate(stock, latest.getKey(), history))
+                .filter(candidate -> candidate != null)
+                .sorted(
+                        Comparator.comparingDouble(KrSwingCandidate::volumeRatio)
+                                .thenComparingDouble(KrSwingCandidate::changePercent)
+                                .reversed())
+                .toList();
+    }
+
+    private KrSwingCandidate toSwingCandidate(
+            NaverFinanceService.NaverStockData stock,
+            LocalDate asOf,
+            List<Map<String, NaverFinanceService.NaverStockData>> history) {
+        if (stock.price() <= 0 || stock.volume() <= 0 || stock.changePercent() < SWING_MIN_CHANGE_PCT) {
+            return null;
+        }
+        List<Long> volumes =
+                history.stream()
+                        .map(day -> day.get(stock.symbol().toUpperCase()))
+                        .filter(item -> item != null && item.volume() > 0)
+                        .map(NaverFinanceService.NaverStockData::volume)
+                        .toList();
+        if (volumes.size() < SWING_LOOKBACK_DAYS) return null;
+
+        double averageVolume = volumes.stream().mapToLong(Long::longValue).average().orElse(0);
+        if (averageVolume <= 0) return null;
+        double volumeRatio = stock.volume() / averageVolume;
+        if (volumeRatio < SWING_MIN_VOLUME_RATIO) return null;
+
+        return new KrSwingCandidate(
+                stock.symbol(),
+                stock.name(),
+                stock.symbol().endsWith(".KQ") ? "KOSDAQ" : "KOSPI",
+                stock.price(),
+                stock.changePercent(),
+                stock.volume(),
+                Math.round(averageVolume),
+                Math.round(volumeRatio * 100.0) / 100.0,
+                asOf);
+    }
+
+    public record KrSwingCandidate(
+            String symbol,
+            String name,
+            String market,
+            double closePrice,
+            double changePercent,
+            long volume,
+            long average20DayVolume,
+            double volumeRatio,
+            LocalDate asOf) {}
 
     /** 해당 심볼이 ETN인지 여부 (검색 결과 타입 라벨 구분용). ETP 캐시 로드 후 판정. */
     public boolean isEtn(String symbol) {
@@ -218,6 +328,14 @@ public class KrxOpenApiService {
 
     private boolean isStale(long cacheTime) {
         return cacheTime == 0 || (System.currentTimeMillis() - cacheTime) > CACHE_TTL_MS;
+    }
+
+    private boolean isStale(long cacheTime, long ttlMs) {
+        return cacheTime == 0 || (System.currentTimeMillis() - cacheTime) > ttlMs;
+    }
+
+    private boolean hasApiKey() {
+        return apiKey != null && !apiKey.isBlank() && !apiKey.startsWith("여기에");
     }
 
     private Map<String, NaverFinanceService.NaverStockData> toMap(

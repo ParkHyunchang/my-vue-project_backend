@@ -83,6 +83,7 @@ public class StockService {
     private final YahooFinanceService yahooService;
     private final StockNewsService newsService;
     private final NaverFinanceService naverService;
+    private final ShortSwingCandidateService shortSwingCandidateService;
     private final ObjectMapper objectMapper;
 
     private record Top10Snapshot(
@@ -94,12 +95,14 @@ public class StockService {
             YahooFinanceService yahooService,
             StockNewsService newsService,
             NaverFinanceService naverService,
+            ShortSwingCandidateService shortSwingCandidateService,
             ObjectMapper objectMapper) {
         this.krxService = krxService;
         this.krxApiService = krxApiService;
         this.yahooService = yahooService;
         this.newsService = newsService;
         this.naverService = naverService;
+        this.shortSwingCandidateService = shortSwingCandidateService;
         this.objectMapper = objectMapper;
     }
 
@@ -214,6 +217,22 @@ public class StockService {
                 .nextUsRefresh("매일 23:30 KST (미국 장 개장 직전)")
                 .resetInfo(resetInfo)
                 .build();
+    }
+
+    /** 단기 스윙용 KRX 가격·거래량 1차 스크리닝 결과. */
+    public List<KrxOpenApiService.KrSwingCandidate> getKrShortSwingCandidates(int limit) {
+        return krxApiService.getShortSwingCandidates(Math.min(Math.max(limit, 1), 30));
+    }
+
+    /** 단기 스윙 KRX 후보에 DART 호재 공시·종목 뉴스를 결합한 촉매 확인 결과. */
+    public List<ShortSwingCandidateService.KrCandidateCatalyst> getKrCandidatesWithCatalysts(
+            int limit) {
+        return shortSwingCandidateService.getKrCandidatesWithCatalysts(Math.min(Math.max(limit, 1), 12));
+    }
+
+    /** 미국 단기 후보의 Alpha Vantage 감성·Yahoo 컨센서스 확인 결과. */
+    public List<ShortSwingCandidateService.UsCandidateSignal> getUsCandidatesWithSignals(int limit) {
+        return shortSwingCandidateService.getUsCandidatesWithSignals(Math.min(Math.max(limit, 1), 12));
     }
 
     /**

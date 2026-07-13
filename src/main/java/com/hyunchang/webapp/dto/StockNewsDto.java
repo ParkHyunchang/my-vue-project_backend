@@ -19,4 +19,6 @@ public class StockNewsDto {
     private String source;
     private String market; // "KR" or "US"
     private String imageUrl;
+    private Double sentimentScore; // Alpha Vantage ticker_sentiment_score
+    private Double relevanceScore; // Alpha Vantage relevance_score
 }

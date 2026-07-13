@@ -11,6 +11,7 @@ import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.news.NewsPromptFormatter;
 import com.hyunchang.webapp.service.portfolio.PortfolioAccountType;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
+import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.util.SecurityUtils;
 import com.hyunchang.webapp.util.Texts;
 import jakarta.annotation.PreDestroy;
@@ -63,6 +64,7 @@ public class PortfolioAnalysisService {
     private final AiProviderChain aiProviderChain;
     private final AiPromptService aiPromptService;
     private final FinancialDataService financialDataService;
+    private final ShortSwingCandidateService shortSwingCandidateService;
 
     public PortfolioAnalysisService(
             StockHoldingService stockHoldingService,
@@ -73,7 +75,8 @@ public class PortfolioAnalysisService {
             StockSymbolNewsService stockSymbolNewsService,
             AiProviderChain aiProviderChain,
             AiPromptService aiPromptService,
-            FinancialDataService financialDataService) {
+            FinancialDataService financialDataService,
+            ShortSwingCandidateService shortSwingCandidateService) {
         this.stockHoldingService = stockHoldingService;
         this.isaHoldingService = isaHoldingService;
         this.generalHoldingService = generalHoldingService;
@@ -83,6 +86,7 @@ public class PortfolioAnalysisService {
         this.aiProviderChain = aiProviderChain;
         this.aiPromptService = aiPromptService;
         this.financialDataService = financialDataService;
+        this.shortSwingCandidateService = shortSwingCandidateService;
     }
 
     @PreDestroy
@@ -641,20 +645,68 @@ public class PortfolioAnalysisService {
         vars.put("시장뉴스", newsBlock.toString());
         vars.put("보유종목목록", heldBlock.toString());
         vars.put("계좌비중점검", accountAllocationMemo(account, snapshots));
+        String candidateData = buildShortRecommendationData(account, snapshots);
         return aiPromptService.render(account.type.promptKey(), vars)
                 + "\n\n"
-                + additionalAccountInstruction(account, snapshots);
+                + additionalAccountInstruction(account, snapshots, candidateData);
+    }
+
+    private String buildShortRecommendationData(
+            AnalysisAccount account, List<HoldingSnapshot> snapshots) {
+        if (account.type != PortfolioAccountType.GENERAL && account.type != PortfolioAccountType.ALL) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder("=== 단기 종목 추가 후보 데이터 (출처별 사실만 사용) ===\n");
+        out.append("[KRX 스크리닝 + DART 공시 + 종목 뉴스]\n");
+        shortSwingCandidateService.getKrCandidatesWithCatalysts(12).stream()
+                .filter(c -> snapshots.stream().noneMatch(h -> h.symbol.equalsIgnoreCase(c.candidate().symbol())))
+                .forEach(c -> {
+                    var q = c.candidate();
+                    out.append("- ").append(q.name()).append(" (").append(q.symbol()).append(")")
+                            .append(": KRX ").append(q.market())
+                            .append(", 등락률 ").append(fmtPct(q.changePercent()))
+                            .append(", 거래량 ").append(q.volume())
+                            .append(", 20일 평균 대비 ").append(q.volumeRatio()).append("배\n");
+                    c.disclosures().forEach(d -> out.append("  - DART 공시: ").append(d.date()).append(" ").append(d.title()).append("\n"));
+                    c.news().forEach(n -> out.append("  - 종목 뉴스: ").append(n.title()).append(" (출처: ").append(n.source()).append(")\n"));
+                });
+        out.append("[US Alpha Vantage 감성 + Yahoo 컨센서스]\n");
+        shortSwingCandidateService.getUsCandidatesWithSignals(12).stream()
+                .filter(c -> snapshots.stream().noneMatch(h -> h.symbol.equalsIgnoreCase(c.candidate().symbol())))
+                .forEach(c -> {
+                    var q = c.candidate();
+                    out.append("- ").append(q.name()).append(" (").append(q.symbol()).append(")")
+                            .append(": Yahoo 등락률 ").append(fmtPct(q.changePercent()))
+                            .append(", Alpha Vantage 평균 감성 ").append(String.format(Locale.US, "%.2f", c.averageSentiment())).append("\n")
+                            .append("  - Yahoo 컨센서스: ").append(c.consensus()).append("\n");
+                    c.positiveSentimentNews().forEach(n -> out.append("  - Alpha Vantage 감성 뉴스: ").append(n.getTitle()).append(" (감성 ").append(n.getSentimentScore()).append(", 관련도 ").append(n.getRelevanceScore()).append(")\n"));
+                });
+        out.append("후보가 없으면 데이터 부족으로 간주하고 추천 후보 없음으로 출력하세요.");
+        return out.toString();
     }
 
     private String additionalAccountInstruction(
-            AnalysisAccount account, List<HoldingSnapshot> snapshots) {
+            AnalysisAccount account, List<HoldingSnapshot> snapshots, String candidateData) {
+        String accountInstruction;
         if (account.type == PortfolioAccountType.ISA) {
-            return account.type.additionalInstruction()
+            accountInstruction = account.type.additionalInstruction()
                     + isaTaxMemo()
                     + "\n"
                     + accountAllocationMemo(account, snapshots);
+        } else {
+            accountInstruction = account.type.additionalInstruction() + accountAllocationMemo(account, snapshots);
         }
-        return account.type.additionalInstruction() + accountAllocationMemo(account, snapshots);
+
+        // 단기 계좌의 신규 편입 후보는 별도 관리 프롬프트로 조합한다. 종합 진단에도
+        // 같은 섹션을 포함해 사용자가 단기 계좌에 추가할 후보를 한 번에 확인할 수 있다.
+        if (account.type == PortfolioAccountType.GENERAL || account.type == PortfolioAccountType.ALL) {
+            return accountInstruction
+                    + "\n\n"
+                    + candidateData
+                    + "\n\n"
+                    + aiPromptService.instruction(AiPromptCatalog.SHORT_STOCK_RECOMMENDATION);
+        }
+        return accountInstruction;
     }
 
     private String isaTaxMemo() {

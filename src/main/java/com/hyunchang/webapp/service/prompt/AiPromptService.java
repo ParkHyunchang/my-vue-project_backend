@@ -51,6 +51,18 @@ public class AiPromptService {
         return substitute(assembled, vars);
     }
 
+    /**
+     * 다른 분석 프롬프트에 조합할 수 있도록 관리자가 저장한 지침만 반환한다.
+     * 고정 데이터/응답 형식은 원래 분석 프롬프트가 이미 제공하므로 중복하지 않는다.
+     */
+    public String instruction(String key) {
+        PromptDefinition def = AiPromptCatalog.get(key);
+        if (def == null) {
+            throw new IllegalArgumentException("Unknown AI prompt key: " + key);
+        }
+        return effectiveInstruction(def).strip();
+    }
+
     /** {{name}} 토큰을 vars 값으로 치환. 값이 없는 토큰은 빈 문자열로 대체. */
     private String substitute(String template, Map<String, String> vars) {
         Matcher m = TOKEN.matcher(template);
@@ -87,10 +99,20 @@ public class AiPromptService {
     public void seedDefaults() {
         int created = 0;
         for (PromptDefinition def : AiPromptCatalog.all()) {
-            if (repository.existsByPromptKey(def.getKey())) continue;
-            repository.save(
-                    new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system"));
-            created++;
+            Optional<AiPromptOverride> existing = repository.findByPromptKey(def.getKey());
+            if (existing.isEmpty()) {
+                repository.save(
+                        new AiPromptOverride(def.getKey(), def.getDefaultInstruction(), "system"));
+                created++;
+                continue;
+            }
+            // 시스템이 만든 기본값만 코드 개선 내용으로 갱신한다. 관리자가 저장한 프롬프트는 보존한다.
+            AiPromptOverride entity = existing.get();
+            if ("system".equals(entity.getUpdatedBy())
+                    && !nz(entity.getContent()).strip().equals(nz(def.getDefaultInstruction()).strip())) {
+                entity.setContent(def.getDefaultInstruction());
+                repository.save(entity);
+            }
         }
         if (created > 0) {
             log.info("[AiPrompt] 기본 프롬프트 지침 {}건 DB 시드 완료", created);

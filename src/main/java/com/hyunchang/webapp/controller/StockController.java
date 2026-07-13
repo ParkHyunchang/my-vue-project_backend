@@ -93,6 +93,27 @@ public class StockController {
         return ResponseEntity.ok(stockService.getQuota());
     }
 
+    @Operation(summary = "단기 스윙 KRX 거래량·등락률 스크리닝")
+    @GetMapping("/swing-candidates/kr")
+    public ResponseEntity<?> getKrShortSwingCandidates(
+            @RequestParam(defaultValue = "20") int limit) {
+        return ResponseEntity.ok(stockService.getKrShortSwingCandidates(limit));
+    }
+
+    @Operation(summary = "단기 스윙 KRX 후보 촉매 확인 — DART 호재 공시·종목 뉴스 결합")
+    @GetMapping("/swing-candidates/kr/catalysts")
+    public ResponseEntity<?> getKrCandidatesWithCatalysts(
+            @RequestParam(defaultValue = "12") int limit) {
+        return ResponseEntity.ok(stockService.getKrCandidatesWithCatalysts(limit));
+    }
+
+    @Operation(summary = "미국 단기 후보 촉매 확인 — Alpha Vantage 감성·Yahoo 컨센서스 결합")
+    @GetMapping("/swing-candidates/us/signals")
+    public ResponseEntity<?> getUsCandidatesWithSignals(
+            @RequestParam(defaultValue = "12") int limit) {
+        return ResponseEntity.ok(stockService.getUsCandidatesWithSignals(limit));
+    }
+
     @Operation(summary = "잔고 조회 상태 (KFTC 연동 필요)")
     @GetMapping("/balance/status")
     public ResponseEntity<Map<String, Object>> getBalanceStatus() {
