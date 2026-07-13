@@ -54,6 +54,12 @@ public class CloudflareProvider implements AiProvider {
         return apiToken != null && !apiToken.isBlank() && accountId != null && !accountId.isBlank();
     }
 
+    /** Workers AI llama-3.3 컨텍스트(24k 토큰) 여유 기준 — 초과 시 chain 이 컴팩트 프롬프트로 대체. */
+    @Override
+    public int maxPromptChars() {
+        return 14_000;
+    }
+
     @Override
     public AiProviderResult generate(String prompt, boolean expectJson) {
         Map<String, Object> body =

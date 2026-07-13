@@ -226,6 +226,17 @@ public class YahooFinanceService {
      * 폴백을 처리합니다.
      */
     public List<RawQuote> fetchTopMarketCapUs(int count) {
+        List<RawQuote> out = doFetchTopMarketCapUs(count);
+        if (out == null) {
+            // 갓 발급한 crumb 도 간헐적으로 401 이 나온다 — 토큰 재발급 후 딱 1회 재시도
+            log.info("Yahoo screener 401 — 토큰 재발급 후 재시도");
+            out = doFetchTopMarketCapUs(count);
+        }
+        return out == null ? Collections.emptyList() : out;
+    }
+
+    /** 성공 시 종목 리스트, 401(토큰 거부) 시 crumb 초기화 후 null — 호출자가 재시도 여부 결정. */
+    private List<RawQuote> doFetchTopMarketCapUs(int count) {
         if (!refreshYahooAuth()) return Collections.emptyList();
         try {
             String body =
@@ -328,6 +339,7 @@ public class YahooFinanceService {
                 synchronized (crumbLock) {
                     cachedCrumb = null;
                 } // crumb 만료 — 재발급 유도
+                return null;
             }
             return Collections.emptyList();
         }

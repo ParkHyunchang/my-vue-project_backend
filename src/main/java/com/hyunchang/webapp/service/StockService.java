@@ -227,12 +227,15 @@ public class StockService {
     /** 단기 스윙 KRX 후보에 DART 호재 공시·종목 뉴스를 결합한 촉매 확인 결과. */
     public List<ShortSwingCandidateService.KrCandidateCatalyst> getKrCandidatesWithCatalysts(
             int limit) {
-        return shortSwingCandidateService.getKrCandidatesWithCatalysts(Math.min(Math.max(limit, 1), 12));
+        return shortSwingCandidateService.getKrCandidatesWithCatalysts(
+                Math.min(Math.max(limit, 1), 12));
     }
 
     /** 미국 단기 후보의 Alpha Vantage 감성·Yahoo 컨센서스 확인 결과. */
-    public List<ShortSwingCandidateService.UsCandidateSignal> getUsCandidatesWithSignals(int limit) {
-        return shortSwingCandidateService.getUsCandidatesWithSignals(Math.min(Math.max(limit, 1), 12));
+    public List<ShortSwingCandidateService.UsCandidateSignal> getUsCandidatesWithSignals(
+            int limit) {
+        return shortSwingCandidateService.getUsCandidatesWithSignals(
+                Math.min(Math.max(limit, 1), 12));
     }
 
     /**

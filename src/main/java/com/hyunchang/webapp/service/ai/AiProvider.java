@@ -24,6 +24,14 @@ public interface AiProvider {
     boolean isEnabled();
 
     /**
+     * 이 provider 가 무리 없이 받는 프롬프트 최대 길이(문자 수 기준 근사치). 0 이면 제한 없음. 무료 한도(TPM·컨텍스트)가 작은 provider 는 이
+     * 값을 넘는 프롬프트를 받으면 413 등으로 거부하므로, chain 이 컴팩트 프롬프트로 대체할 기준으로 쓴다.
+     */
+    default int maxPromptChars() {
+        return 0;
+    }
+
+    /**
      * 프롬프트를 보내 텍스트 응답을 받는다. expectJson=true 면 API 레벨 JSON 강제 모드까지 사용(여행/부동산 등 구조화 응답 소비자).
      * expectJson=false 면 순수 텍스트/마크다운 응답을 요청한다(주식·포트폴리오 자유리포트). 호출자(Chain)가
      * success/rateLimited/error 를 판단할 수 있도록 결과 객체로 반환한다.

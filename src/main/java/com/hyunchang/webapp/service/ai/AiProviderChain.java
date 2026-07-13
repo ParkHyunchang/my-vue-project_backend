@@ -47,6 +47,15 @@ public class AiProviderChain {
      * 모델이 마크다운 대신 JSON 객체로 응답한다).
      */
     public ChainResult analyze(String prompt, boolean expectJson) {
+        return analyze(prompt, null, expectJson);
+    }
+
+    /**
+     * compactPrompt: 입력 한도가 작은 provider(Groq 무료 TPM 등)로 폴백할 때 대신 보낼 축약 프롬프트. null 이면 항상 원본을 보낸다.
+     * 원본이 provider 의 maxPromptChars() 를 넘고 compactPrompt 가 있으면 그 provider 에만 축약본을 보낸다 — 폴백 시 근거
+     * 데이터가 줄어드는 대신 413 거부 없이 응답을 받는다.
+     */
+    public ChainResult analyze(String prompt, String compactPrompt, boolean expectJson) {
         for (AiProvider p : providers) {
             if (!p.isEnabled()) {
                 log.debug("[AI/Chain] {} skip (disabled)", p.getName());
@@ -60,8 +69,21 @@ public class AiProviderChain {
                 continue;
             }
 
+            String effectivePrompt = prompt;
+            if (compactPrompt != null
+                    && p.maxPromptChars() > 0
+                    && prompt.length() > p.maxPromptChars()) {
+                effectivePrompt = compactPrompt;
+                log.info(
+                        "[AI/Chain] {} 입력 한도({}자) 초과 — 컴팩트 프롬프트({}자 → {}자)로 대체",
+                        p.getName(),
+                        p.maxPromptChars(),
+                        prompt.length(),
+                        compactPrompt.length());
+            }
+
             log.info("[AI/Chain] {} 호출 시도", p.getName());
-            AiProviderResult r = p.generate(prompt, expectJson);
+            AiProviderResult r = p.generate(effectivePrompt, expectJson);
             if (r.success()) {
                 log.info("[AI/Chain] {} 응답 성공 ({}자)", p.getName(), r.text().length());
                 return new ChainResult(

@@ -2,12 +2,15 @@ package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hyunchang.webapp.util.TtlCache;
+import jakarta.annotation.PreDestroy;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -18,6 +21,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +50,9 @@ public class KrxOpenApiService {
     private static final int SWING_HISTORY_FETCH_DAYS = 35;
     private static final double SWING_MIN_CHANGE_PCT = 3.0;
     private static final double SWING_MIN_VOLUME_RATIO = 3.0;
+    // 콜드 캐시 시 일자별 히스토리 수집 동시 실행 수 — 다른 외부 API 병렬 풀(NEWS_POOL 등)과
+    // 동일하게 8로 맞춰 KRX 쪽 부하를 과하게 늘리지 않는다.
+    private static final int HISTORY_FETCH_PARALLELISM = 8;
     private static final long CACHE_TTL_MS = 6 * 60 * 60 * 1000L;
     private static final long FAIL_COOLDOWN_MS = 10 * 60 * 1000L; // 연속 실패 시 재시도 쿨다운
 
@@ -74,6 +83,21 @@ public class KrxOpenApiService {
 
     private volatile List<KrSwingCandidate> swingCandidatesCache = Collections.emptyList();
     private volatile long swingCandidatesCacheTime = 0;
+    // 스윙 스크리닝 전용 락 — KOSPI/KOSDAQ/ETP 캐시 로드(synchronized(this))와 분리해서
+    // 히스토리 수집이 오래 걸려도 앱 전체의 KR 시세 조회가 같이 막히지 않게 한다.
+    private final Object swingScreenLock = new Object();
+    // 일자별 전체 시장 세션 캐시 — 과거 거래일 데이터는 불변이므로 길게 보관하고,
+    // 빈 응답(공휴일·데이터 미발행)은 짧은 negative 캐시로 두어 발행 후 자동으로 채워진다.
+    // 덕분에 스크리닝 갱신 시 신규 발행된 1~2일치만 KRX API를 호출한다.
+    private final TtlCache<LocalDate, Map<String, NaverFinanceService.NaverStockData>>
+            swingSessionCache = new TtlCache<>(Duration.ofDays(30), Duration.ofMinutes(30));
+    private static final ExecutorService HISTORY_POOL =
+            Executors.newFixedThreadPool(HISTORY_FETCH_PARALLELISM);
+
+    @PreDestroy
+    void shutdownHistoryPool() {
+        HISTORY_POOL.shutdown();
+    }
 
     // ─────────────────────────────────────────────────────────────
     // 공개 메서드
@@ -98,9 +122,8 @@ public class KrxOpenApiService {
     }
 
     /**
-     * 단기 스윙 후보용 KRX 1차 스크리닝입니다. 최근 종가 기준으로 당일 3% 이상 상승하고
-     * 당일 거래량이 직전 20거래일 평균의 3배 이상인 종목만 반환합니다. 계산은 서버에서
-     * 끝내고 LLM에는 압축된 후보만 전달해 근거 없는 추천을 줄입니다.
+     * 단기 스윙 후보용 KRX 1차 스크리닝입니다. 최근 종가 기준으로 당일 3% 이상 상승하고 당일 거래량이 직전 20거래일 평균의 3배 이상인 종목만 반환합니다. 계산은
+     * 서버에서 끝내고 LLM에는 압축된 후보만 전달해 근거 없는 추천을 줄입니다.
      */
     public List<KrSwingCandidate> getShortSwingCandidates(int limit) {
         if (limit <= 0 || !hasApiKey()) return List.of();
@@ -108,7 +131,7 @@ public class KrxOpenApiService {
             return swingCandidatesCache.stream().limit(limit).toList();
         }
 
-        synchronized (this) {
+        synchronized (swingScreenLock) {
             if (isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
                 swingCandidatesCache = collectShortSwingCandidates();
                 swingCandidatesCacheTime = System.currentTimeMillis();
@@ -118,32 +141,56 @@ public class KrxOpenApiService {
     }
 
     private List<KrSwingCandidate> collectShortSwingCandidates() {
+        // 날짜별로 배치 병렬 수집 — 콜드 캐시(재시작 직후·30일 경과)에서는 21거래일치를
+        // 순차 호출하면 KRX 호출당 지연(수 초)이 그대로 누적돼 전체 수집이 수 분 걸린다.
+        // 배치 크기만큼 동시에 쏘고, 필요한 세션 수를 채우면 다음 배치를 시작하지 않는다.
         Map<LocalDate, Map<String, NaverFinanceService.NaverStockData>> sessions =
                 new LinkedHashMap<>();
-        for (LocalDate date : getRecentBusinessDays(SWING_HISTORY_FETCH_DAYS)) {
-            try {
-                Map<String, NaverFinanceService.NaverStockData> combined = new HashMap<>();
-                callKrxApi(KOSPI_URL, date.format(DATE_FMT), ".KS")
-                        .forEach(s -> combined.put(s.symbol().toUpperCase(), s));
-                callKrxApi(KOSDAQ_URL, date.format(DATE_FMT), ".KQ")
-                        .forEach(s -> combined.put(s.symbol().toUpperCase(), s));
-                if (!combined.isEmpty()) sessions.put(date, combined);
-            } catch (IOException | InterruptedException e) {
-                log.debug("KRX swing screening history unavailable for {}: {}", date, e.getMessage());
-                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+        List<LocalDate> businessDays = getRecentBusinessDays(SWING_HISTORY_FETCH_DAYS);
+        for (int start = 0;
+                start < businessDays.size() && sessions.size() < SWING_LOOKBACK_DAYS + 1;
+                start += HISTORY_FETCH_PARALLELISM) {
+            List<LocalDate> batch =
+                    businessDays.subList(
+                            start,
+                            Math.min(start + HISTORY_FETCH_PARALLELISM, businessDays.size()));
+            Map<LocalDate, CompletableFuture<Map<String, NaverFinanceService.NaverStockData>>>
+                    futures = new LinkedHashMap<>();
+            for (LocalDate date : batch) {
+                futures.put(
+                        date,
+                        CompletableFuture.supplyAsync(() -> loadSwingSession(date), HISTORY_POOL));
             }
-            if (sessions.size() >= SWING_LOOKBACK_DAYS + 1) break;
+            for (var entry : futures.entrySet()) {
+                Map<String, NaverFinanceService.NaverStockData> combined;
+                try {
+                    combined = entry.getValue().join();
+                } catch (Exception e) {
+                    log.debug(
+                            "KRX swing screening batch fetch failed for {}: {}",
+                            entry.getKey(),
+                            e.getMessage());
+                    continue;
+                }
+                if (combined != null && !combined.isEmpty()) sessions.put(entry.getKey(), combined);
+            }
         }
 
         if (sessions.size() < SWING_LOOKBACK_DAYS + 1) {
-            log.warn("KRX swing screening skipped: only {} trading sessions available", sessions.size());
+            log.warn(
+                    "KRX swing screening skipped: only {} trading sessions available",
+                    sessions.size());
             return List.of();
         }
 
         Map.Entry<LocalDate, Map<String, NaverFinanceService.NaverStockData>> latest =
                 sessions.entrySet().iterator().next();
         List<Map<String, NaverFinanceService.NaverStockData>> history =
-                sessions.entrySet().stream().skip(1).limit(SWING_LOOKBACK_DAYS).map(Map.Entry::getValue).toList();
+                sessions.entrySet().stream()
+                        .skip(1)
+                        .limit(SWING_LOOKBACK_DAYS)
+                        .map(Map.Entry::getValue)
+                        .toList();
 
         return latest.getValue().values().stream()
                 .map(stock -> toSwingCandidate(stock, latest.getKey(), history))
@@ -155,11 +202,43 @@ public class KrxOpenApiService {
                 .toList();
     }
 
+    /**
+     * 스크리닝용 일자별 세션 로드 (KOSPI+KOSDAQ 병합). 캐시 우선이며, 빈 응답은 negative 캐시로 짧게 기억해 공휴일 반복 조회를 막는다. 네트워크
+     * 오류는 캐시하지 않고 다음 갱신에서 재시도한다.
+     */
+    private Map<String, NaverFinanceService.NaverStockData> loadSwingSession(LocalDate date) {
+        TtlCache.Hit<Map<String, NaverFinanceService.NaverStockData>> hit =
+                swingSessionCache.lookup(date);
+        if (hit != null) return hit.negative() ? null : hit.value();
+
+        try {
+            Map<String, NaverFinanceService.NaverStockData> combined = new HashMap<>();
+            callKrxApi(KOSPI_URL, date.format(DATE_FMT), ".KS")
+                    .forEach(s -> combined.put(s.symbol().toUpperCase(), s));
+            callKrxApi(KOSDAQ_URL, date.format(DATE_FMT), ".KQ")
+                    .forEach(s -> combined.put(s.symbol().toUpperCase(), s));
+            if (combined.isEmpty()) {
+                swingSessionCache.putNegative(date);
+                return null;
+            }
+            Map<String, NaverFinanceService.NaverStockData> frozen =
+                    Collections.unmodifiableMap(combined);
+            swingSessionCache.put(date, frozen);
+            return frozen;
+        } catch (IOException | InterruptedException e) {
+            log.debug("KRX swing screening history unavailable for {}: {}", date, e.getMessage());
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
     private KrSwingCandidate toSwingCandidate(
             NaverFinanceService.NaverStockData stock,
             LocalDate asOf,
             List<Map<String, NaverFinanceService.NaverStockData>> history) {
-        if (stock.price() <= 0 || stock.volume() <= 0 || stock.changePercent() < SWING_MIN_CHANGE_PCT) {
+        if (stock.price() <= 0
+                || stock.volume() <= 0
+                || stock.changePercent() < SWING_MIN_CHANGE_PCT) {
             return null;
         }
         List<Long> volumes =

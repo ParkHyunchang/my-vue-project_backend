@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.StockNewsDto;
 import com.hyunchang.webapp.service.news.NewsPromptFormatter;
 import com.hyunchang.webapp.service.news.RssClient;
+import com.hyunchang.webapp.util.TtlCache;
 import jakarta.annotation.PreDestroy;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -19,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -42,7 +44,8 @@ import org.springframework.web.client.RestTemplate;
  * <p>소스: - KR: Google News RSS (종목명/투자 키워드/주요 경제지 검색) - US: Yahoo Finance RSS (ticker) +
  * AlphaVantage News & Sentiment + Google News RSS (영어 회사명/티커/주요 금융매체 검색)
  *
- * <p>캐싱은 하지 않는다 — StockAnalysisService 의 "매번 최신" 정책 일관성 유지.
+ * <p>종목별 결과는 10분 캐시한다 — 포트폴리오 진단·재진단·후보 갱신이 연달아 같은 종목을 재수집하며 매번 수 초를 쓰는 것을 방지 (뉴스 헤드라인 특성상 10분 내
+ * 변동은 무시 가능).
  */
 @Service
 public class StockSymbolNewsService {
@@ -55,7 +58,8 @@ public class StockSymbolNewsService {
     private static final DateTimeFormatter RFC_822 =
             DateTimeFormatter.ofPattern("EEE, dd MMM yyyy HH:mm:ss z", Locale.ENGLISH);
 
-    private static final ExecutorService POOL = Executors.newFixedThreadPool(8);
+    // RSS/HTTP IO 대기가 대부분이라 스레드를 넉넉히 — 보유 13종목 × 소스 4~6개가 한 번에 몰린다
+    private static final ExecutorService POOL = Executors.newFixedThreadPool(16);
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -69,6 +73,17 @@ public class StockSymbolNewsService {
     private static final Duration ALPHAVANTAGE_BACKOFF = Duration.ofHours(6);
     private volatile Instant alphaVantageBlockedUntil = null;
     private final Object alphaVantageLock = new Object();
+
+    // 종목별 뉴스 결과 캐시 — negative 캐시는 쓰지 않는다 (전 소스 일시 실패를 10분간 고정하지 않기 위해)
+    private final TtlCache<String, List<StockNewsDto>> symbolNewsCache =
+            new TtlCache<>(Duration.ofMinutes(10), Duration.ofMinutes(1));
+
+    // AlphaVantage 응답 재사용 — 무료 25회/일 한도를 후보 12종목 갱신에 다 태우지 않도록
+    // 성공 응답을 6시간 재사용하고, 한도 차단 중에는 티커별 마지막 성공 응답으로 대체한다.
+    // 감성 점수는 AV 가 유일한 소스라서, 차단 시 빈 값 대신 stale 데이터가 US 후보 신호를 유지시킨다.
+    private final TtlCache<String, List<StockNewsDto>> avFreshCache =
+            new TtlCache<>(Duration.ofHours(6), Duration.ofMinutes(1));
+    private final Map<String, List<StockNewsDto>> avLastGood = new ConcurrentHashMap<>();
 
     public StockSymbolNewsService(
             RestTemplate restTemplate,
@@ -97,6 +112,10 @@ public class StockSymbolNewsService {
     public List<StockNewsDto> fetchForSymbol(
             String symbol, String market, String name, String enName) {
         String mkt = market != null ? market.toUpperCase(Locale.ROOT) : "KR";
+        String cacheKey = mkt + "|" + (symbol == null ? "" : symbol.toUpperCase(Locale.ROOT));
+        TtlCache.Hit<List<StockNewsDto>> cached = symbolNewsCache.lookup(cacheKey);
+        if (cached != null && !cached.negative()) return cached.value();
+
         List<CompletableFuture<List<StockNewsDto>>> tasks = new ArrayList<>();
 
         if ("KR".equals(mkt)) {
@@ -165,7 +184,10 @@ public class StockSymbolNewsService {
                         Long.compare(
                                 RssClient.parsePubDateEpoch(b.getPubDate()),
                                 RssClient.parsePubDateEpoch(a.getPubDate())));
-        return deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
+        List<StockNewsDto> result = deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
+        // 빈 결과는 캐시하지 않는다 — 전 소스 일시 실패였다면 다음 호출에서 바로 재시도
+        if (!result.isEmpty()) symbolNewsCache.put(cacheKey, result);
+        return result;
     }
 
     private record NewsQuery(String query, String sourceLabel) {}
@@ -264,23 +286,38 @@ public class StockSymbolNewsService {
             log.debug("[SymbolNews/AV] api-key 없음 — skip");
             return List.of();
         }
-        // 빠른 경로: 직전 호출에서 한도 메시지를 받았다면 backoff 동안 호출 자체를 skip (lock 진입 없이 즉시 반환)
+        String key = ticker.toUpperCase(Locale.ROOT);
+        // 6시간 안에 받은 성공 응답은 재사용 — 무료 한도(25회/일)를 아낀다
+        TtlCache.Hit<List<StockNewsDto>> fresh = avFreshCache.lookup(key);
+        if (fresh != null && !fresh.negative()) return fresh.value();
+        // 빠른 경로: 한도 차단 중에는 호출 대신 마지막 성공 응답으로 대체 (lock 진입 없이 즉시 반환)
         Instant blockedUntil = alphaVantageBlockedUntil;
         if (blockedUntil != null && Instant.now().isBefore(blockedUntil)) {
-            log.debug("[SymbolNews/AV] 한도 메시지로 일시 차단 중 (until {}) — skip", blockedUntil);
-            return List.of();
+            log.debug("[SymbolNews/AV] 한도 차단 중 (until {}) — 마지막 성공 응답 사용", blockedUntil);
+            return avLastGood.getOrDefault(key, List.of());
         }
         // 실제 HTTP 호출은 직렬화 — 동시 진입한 thread 들이 모두 한도 메시지 받는 race 방지
         synchronized (alphaVantageLock) {
-            // double-check: 다른 thread 가 먼저 backoff 를 등록했을 수 있음
+            // double-check: 다른 thread 가 먼저 backoff 등록 또는 캐시를 채웠을 수 있음
             Instant b = alphaVantageBlockedUntil;
             if (b != null && Instant.now().isBefore(b)) {
-                return List.of();
+                return avLastGood.getOrDefault(key, List.of());
             }
-            return doFetchAlphaVantage(ticker);
+            TtlCache.Hit<List<StockNewsDto>> refetched = avFreshCache.lookup(key);
+            if (refetched != null && !refetched.negative()) return refetched.value();
+
+            List<StockNewsDto> out = doFetchAlphaVantage(ticker);
+            if (out == null) {
+                // 한도 메시지·호출 실패 — 캐시하지 않고 마지막 성공 응답으로 대체
+                return avLastGood.getOrDefault(key, List.of());
+            }
+            avFreshCache.put(key, out);
+            if (!out.isEmpty()) avLastGood.put(key, out);
+            return out;
         }
     }
 
+    /** 성공 시 뉴스 리스트(없으면 빈 리스트), 한도 메시지·호출 실패 시 null (캐시 금지 신호). */
     private List<StockNewsDto> doFetchAlphaVantage(String ticker) {
         String url =
                 "https://www.alphavantage.co/query"
@@ -297,7 +334,7 @@ public class StockSymbolNewsService {
                     restTemplate.exchange(
                             url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
             String body = resp.getBody();
-            if (body == null || body.isBlank()) return List.of();
+            if (body == null || body.isBlank()) return null;
 
             JsonNode root = objectMapper.readTree(body);
             // 한도 초과 또는 정보 메시지면 feed 가 비어있음 — 이후 호출은 backoff 동안 skip
@@ -312,10 +349,10 @@ public class StockSymbolNewsService {
                         msg,
                         ALPHAVANTAGE_BACKOFF.toMinutes(),
                         alphaVantageBlockedUntil);
-                return List.of();
+                return null;
             }
             JsonNode feed = root.path("feed");
-            if (!feed.isArray()) return List.of();
+            if (!feed.isArray()) return null;
 
             List<StockNewsDto> out = new ArrayList<>();
             for (JsonNode item : feed) {
@@ -348,7 +385,7 @@ public class StockSymbolNewsService {
             return out;
         } catch (Exception e) {
             log.warn("[SymbolNews/AV] 호출 실패: {}", summarize(e));
-            return List.of();
+            return null;
         }
     }
 

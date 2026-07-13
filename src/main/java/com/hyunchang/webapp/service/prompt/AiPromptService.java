@@ -51,10 +51,7 @@ public class AiPromptService {
         return substitute(assembled, vars);
     }
 
-    /**
-     * 다른 분석 프롬프트에 조합할 수 있도록 관리자가 저장한 지침만 반환한다.
-     * 고정 데이터/응답 형식은 원래 분석 프롬프트가 이미 제공하므로 중복하지 않는다.
-     */
+    /** 다른 분석 프롬프트에 조합할 수 있도록 관리자가 저장한 지침만 반환한다. 고정 데이터/응답 형식은 원래 분석 프롬프트가 이미 제공하므로 중복하지 않는다. */
     public String instruction(String key) {
         PromptDefinition def = AiPromptCatalog.get(key);
         if (def == null) {
@@ -109,7 +106,9 @@ public class AiPromptService {
             // 시스템이 만든 기본값만 코드 개선 내용으로 갱신한다. 관리자가 저장한 프롬프트는 보존한다.
             AiPromptOverride entity = existing.get();
             if ("system".equals(entity.getUpdatedBy())
-                    && !nz(entity.getContent()).strip().equals(nz(def.getDefaultInstruction()).strip())) {
+                    && !nz(entity.getContent())
+                            .strip()
+                            .equals(nz(def.getDefaultInstruction()).strip())) {
                 entity.setContent(def.getDefaultInstruction());
                 repository.save(entity);
             }

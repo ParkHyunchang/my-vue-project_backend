@@ -48,6 +48,15 @@ public class GroqProvider implements AiProvider {
         return apiKey != null && !apiKey.isBlank();
     }
 
+    /**
+     * llama-3.3-70b 무료 티어 TPM 12,000 — 한글 위주 프롬프트는 문자당 ~1.2 토큰이라 이 길이를 넘으면 입력+응답 합산이 한도를 초과해 413 으로
+     * 거부된다 (종합 포트폴리오 진단이 해당). chain 이 컴팩트 프롬프트로 대체하는 기준.
+     */
+    @Override
+    public int maxPromptChars() {
+        return 8_000;
+    }
+
     @Override
     public AiProviderResult generate(String prompt, boolean expectJson) {
         // expectJson=false(자유리포트 마크다운) 인 경우 API 레벨 JSON 강제를 걸지 않는다 —
