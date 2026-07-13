@@ -10,6 +10,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -24,13 +25,15 @@ public class GroqProvider implements AiProvider {
 
     private static final String BASE_URL = "https://api.groq.com";
     private static final String MODEL = "llama-3.3-70b-versatile";
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(20);
     private final RestClient restClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String apiKey;
 
     public GroqProvider(@Value("${groq.api-key:}") String apiKey) {
         this.apiKey = apiKey;
-        this.restClient = RestClient.builder().baseUrl(BASE_URL).build();
+        this.restClient =
+                RestClient.builder().baseUrl(BASE_URL).requestFactory(requestFactory()).build();
     }
 
     @Override
@@ -74,6 +77,7 @@ public class GroqProvider implements AiProvider {
                         Map.of("role", "user", "content", prompt)));
         if (expectJson) body.put("response_format", Map.of("type", "json_object"));
         body.put("temperature", 0.4);
+        body.put("max_tokens", 4096);
 
         try {
             String response =
@@ -105,9 +109,20 @@ public class GroqProvider implements AiProvider {
             log.warn("[AI/Groq] HTTP {} {}", status, truncate(e.getResponseBodyAsString(), 200));
             return AiProviderResult.error("Groq HTTP " + status);
         } catch (Exception e) {
+            if (AiProvider.isReadTimeout(e)) {
+                log.warn("[AI/Groq] 응답 대기 {}초 초과 (read timeout)", READ_TIMEOUT.toSeconds());
+                return AiProviderResult.error("응답 대기 시간 초과");
+            }
             log.warn("[AI/Groq] 호출 실패: {}", e.getMessage());
             return AiProviderResult.error(e.getMessage());
         }
+    }
+
+    private SimpleClientHttpRequestFactory requestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(3));
+        factory.setReadTimeout(READ_TIMEOUT);
+        return factory;
     }
 
     private Instant parseRetryAfter(RestClientResponseException e, Duration fallback) {

@@ -53,7 +53,12 @@ public class PortfolioAnalysisService {
     // 종목별 뉴스 병렬 수집 전용 풀 — 공용 ForkJoinPool은 NAS(저코어)에서 병렬도가 급감함
     private static final ExecutorService NEWS_POOL = Executors.newFixedThreadPool(8);
     // 종목별 뉴스 수집 전체 시간 예산 — 초과 시 남은 종목은 뉴스 없이 분석 진행
-    private static final long PER_SYMBOL_NEWS_BUDGET_MS = 25_000L;
+    private static final long PER_SYMBOL_NEWS_BUDGET_MS = 6_000L;
+    // 단기 후보 데이터(KRX·DART·감성) 수집 시간 예산 — 콜드 캐시(재시작 직후)에 20초 이상 걸리는
+    // 케이스에서 AI 호출 전에 전체 요청 예산을 소모하지 않도록 초과분은 후보 없음으로 진행
+    private static final long CANDIDATE_DATA_BUDGET_MS = 8_000L;
+    private static final String CANDIDATE_DATA_FALLBACK =
+            "=== 단기 종목 추가 후보 데이터 ===\n(후보 데이터 수집이 지연되어 이번 진단에서는 제공되지 않음 — 추천 후보 없음으로 출력하세요.)";
 
     private final StockHoldingService stockHoldingService;
     private final IsaHoldingService isaHoldingService;
@@ -126,14 +131,30 @@ public class PortfolioAnalysisService {
 
         // 1-1. 보유 종목별 뉴스 헤드라인 1~2건씩 병렬 수집
         //      (시세만 주면 "추세 양호" 같은 균일 답변이 나와서 종목별 차별화 컨텍스트 추가)
-        Map<String, List<String>> perSymbolNews = fetchPerSymbolNewsParallel(snapshots);
+        CompletableFuture<Map<String, List<String>>> perSymbolNewsFuture =
+                CompletableFuture.supplyAsync(
+                        () -> fetchPerSymbolNewsParallel(snapshots), NEWS_POOL);
+        CompletableFuture<String> financialsFuture =
+                CompletableFuture.supplyAsync(() -> fetchFinancials(snapshots));
+        // 시장 뉴스도 종목별 뉴스·재무 수집과 병렬 — 캐시 미스 시 직렬로 수 초를 더 쓰던 구간
+        CompletableFuture<List<String>> marketHeadlinesFuture =
+                CompletableFuture.supplyAsync(this::collectMarketHeadlines);
+        // 단기 후보 데이터(단기·종합 계좌 전용)도 병렬 + 예산 — 재시작 직후 콜드 캐시면 KRX·DART
+        // 수집에 20초 이상 걸려 AI 호출 전에 리버스 프록시 예산을 다 소모한다. 초과 시 후보 없이 진행.
+        CompletableFuture<String> candidateDataFuture =
+                CompletableFuture.supplyAsync(
+                        () -> buildShortRecommendationData(account, snapshots, false));
+        CompletableFuture<String> compactCandidateDataFuture =
+                CompletableFuture.supplyAsync(
+                        () -> buildShortRecommendationData(account, snapshots, true));
+        Map<String, List<String>> perSymbolNews;
 
         // 2. 추천에서 제외할 보유 종목 (이미 가진 종목은 추천하지 않음)
         List<String> heldLabels = new ArrayList<>();
         for (PortfolioHoldingInput h : holdings) heldLabels.add(h.name + " (" + h.symbol + ")");
 
-        // 3. 최근 시장 뉴스 헤드라인 — 추천의 핵심 근거
-        List<String> marketHeadlines = collectMarketHeadlines();
+        // 3. 최근 시장 뉴스 헤드라인 — 추천의 핵심 근거 (collectMarketHeadlines 는 내부에서 예외를 삼킨다)
+        List<String> marketHeadlines = marketHeadlinesFuture.join();
 
         // 3-1. 보유 종목 재무 데이터 (US: Yahoo, KR: 추후 DART) — 실패해도 분석 진행
         String financials;
@@ -146,7 +167,7 @@ public class PortfolioAnalysisService {
             financials =
                     finHoldings.isEmpty()
                             ? "(주식/ETF 보유분이 없어 재무 데이터 수집 대상 없음)"
-                            : financialDataService.holdingsSummary(finHoldings);
+                            : financialsFuture.join();
         } catch (Exception e) {
             log.warn("[Portfolio/Analysis] 재무 데이터 수집 실패: {}", e.getMessage());
             financials = "(재무 데이터 미수집)";
@@ -155,6 +176,11 @@ public class PortfolioAnalysisService {
         // 4. 프롬프트 + chain 호출 (자유리포트 마크다운 — API 레벨 JSON 강제 없이 요청)
         //    컴팩트 버전은 Groq 등 입력 한도가 작은 provider 폴백용 — 종합(ALL) 프롬프트는 무료
         //    TPM 한도를 넘어 413 으로 거부되므로, 근거를 줄인 축약본으로라도 응답을 받는다.
+        perSymbolNews = perSymbolNewsFuture.join();
+        long candidateDeadline = System.currentTimeMillis() + CANDIDATE_DATA_BUDGET_MS;
+        String candidateData = joinCandidateData(candidateDataFuture, candidateDeadline);
+        String compactCandidateData =
+                joinCandidateData(compactCandidateDataFuture, candidateDeadline);
         String prompt =
                 buildPrompt(
                         account,
@@ -163,6 +189,7 @@ public class PortfolioAnalysisService {
                         marketHeadlines,
                         heldLabels,
                         financials,
+                        candidateData,
                         false);
         String compactPrompt =
                 buildPrompt(
@@ -172,6 +199,7 @@ public class PortfolioAnalysisService {
                         marketHeadlines,
                         heldLabels,
                         financials,
+                        compactCandidateData,
                         true);
         AiProviderChain.ChainResult chainResult =
                 aiProviderChain.analyze(prompt, compactPrompt, false);
@@ -404,6 +432,15 @@ public class PortfolioAnalysisService {
             s.core = h.core;
             s.assetType = normalizeAssetType(h.assetType);
             s.accountLabel = h.accountLabel;
+            ClientHoldingContext clientPriceContext =
+                    clientContext == null
+                            ? null
+                            : clientContext.get(h.symbol.toUpperCase(Locale.ROOT));
+            if (clientPriceContext != null
+                    && clientPriceContext.currentPrice != null
+                    && clientPriceContext.currentPrice > 0) {
+                s.currentPrice = clientPriceContext.currentPrice;
+            }
 
             if (s.isCash()) {
                 s.currentPrice = 1.0;
@@ -413,7 +450,7 @@ public class PortfolioAnalysisService {
                     s.marketValue = s.quantity.doubleValue();
                     s.marketValueKRW = s.quantity.doubleValue();
                 }
-            } else {
+            } else if (s.currentPrice <= 0) {
                 try {
                     StockPriceDto p = stockService.getQuote(h.symbol, h.market);
                     if (p != null) {
@@ -478,6 +515,22 @@ public class PortfolioAnalysisService {
      * <p>공용 ForkJoinPool 은 NAS 처럼 코어가 적은 환경에서 병렬도가 1~3으로 떨어져 종합(4계좌) 분석이 리버스 프록시 타임아웃(60s)을 넘길 수
      * 있으므로 전용 풀을 사용하고, 수집 전체에 시간 예산을 걸어 초과분은 뉴스 없이 분석을 계속 진행한다.
      */
+    private String fetchFinancials(List<HoldingSnapshot> snapshots) {
+        try {
+            List<FinancialDataService.Holding> holdings =
+                    snapshots.stream()
+                            .filter(s -> !s.isCash())
+                            .map(s -> new FinancialDataService.Holding(s.symbol, s.name, s.market))
+                            .toList();
+            return holdings.isEmpty()
+                    ? "(No stock or ETF holdings to enrich.)"
+                    : financialDataService.holdingsSummary(holdings);
+        } catch (Exception e) {
+            log.warn("[Portfolio/Analysis] financial enrichment failed: {}", e.getMessage());
+            return "(Financial data unavailable.)";
+        }
+    }
+
     private Map<String, List<String>> fetchPerSymbolNewsParallel(List<HoldingSnapshot> snapshots) {
         List<CompletableFuture<Map.Entry<String, List<String>>>> futures = new ArrayList<>();
         Map<String, List<String>> result = new HashMap<>();
@@ -566,7 +619,7 @@ public class PortfolioAnalysisService {
 
     /**
      * compact=true 면 입력 한도가 작은 provider 폴백용 축약본을 만든다: 종목별 뉴스 1건(110자), 시장 뉴스 8건, 재무 데이터 생략, 단기 후보
-     * 요약(상세 근거 라인 생략). 보유 종목의 수치(수량·비중·손익률 등)는 그대로 유지한다.
+     * 요약(상세 근거 라인 생략). 보유 종목의 수치(수량·비중·손익률 등)는 그대로 유지한다. candidateData 는 병렬 수집을 위해 밖에서 미리 만들어 받는다.
      */
     private String buildPrompt(
             AnalysisAccount account,
@@ -575,6 +628,7 @@ public class PortfolioAnalysisService {
             List<String> marketHeadlines,
             List<String> heldLabels,
             String financials,
+            String candidateData,
             boolean compact) {
         StringBuilder holdingsBlock = new StringBuilder();
         int i = 1;
@@ -691,7 +745,6 @@ public class PortfolioAnalysisService {
         vars.put("시장뉴스", newsBlock.toString());
         vars.put("보유종목목록", heldBlock.toString());
         vars.put("계좌비중점검", accountAllocationMemo(account, snapshots));
-        String candidateData = buildShortRecommendationData(account, snapshots, compact);
         return aiPromptService.render(account.type.promptKey(), vars)
                 + "\n\n"
                 + additionalAccountInstruction(account, snapshots, candidateData);
@@ -700,6 +753,24 @@ public class PortfolioAnalysisService {
     private String shorten(String text, int maxChars) {
         if (text == null || text.length() <= maxChars) return text;
         return text.substring(0, maxChars) + "…";
+    }
+
+    /** 병렬 수집한 단기 후보 데이터를 공유 데드라인 안에서 회수 — 초과·실패 시 후보 없음 안내로 대체. */
+    private String joinCandidateData(CompletableFuture<String> future, long deadlineMs) {
+        try {
+            long remaining = Math.max(1, deadlineMs - System.currentTimeMillis());
+            return future.get(remaining, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            log.warn(
+                    "[Portfolio/Analysis] 단기 후보 데이터 수집 {}초 예산 초과 — 후보 없이 진단 진행",
+                    CANDIDATE_DATA_BUDGET_MS / 1000);
+            return CANDIDATE_DATA_FALLBACK;
+        } catch (Exception e) {
+            log.warn("[Portfolio/Analysis] 단기 후보 데이터 수집 실패: {}", e.getMessage());
+            if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+            return CANDIDATE_DATA_FALLBACK;
+        }
     }
 
     /** compact=true 면 후보 수를 줄이고(KR 5·US 3) 상세 근거 라인(공시·뉴스·컨센서스)을 생략한다. */

@@ -3,16 +3,23 @@ package com.hyunchang.webapp.service.ai;
 /**
  * 무료 AI Provider 추상화. 종목 분석용 체인의 각 단계.
  *
- * <p>구현체 (등록 순서대로 시도됨): 1. GeminiProvider (필수) 2. GroqProvider (선택) 3. CloudflareProvider (선택)
+ * <p>구현체 (등록 순서대로 시도됨): 1. GeminiProvider (필수) 2. GeminiFlashLiteProvider (같은 키) 3. GroqProvider
+ * (선택) 4. CloudflareProvider (선택)
  *
  * <p>isEnabled() 가 false 면 chain 에서 자동 skip 된다.
  */
 public interface AiProvider {
     String JSON_SYSTEM_MESSAGE =
             "You must respond with valid JSON only. Return only a JSON object.";
+    // 표 규칙: Gemini 2.5 Flash 가 열 정렬을 위해 구분선 행을 수백 개 하이픈으로 채우는 습관이 있어
+    // maxOutputTokens(4096)를 하이픈으로 소진 → 리포트 잘림(MAX_TOKENS) + 생성 시간 상시 최대화.
+    // 실측(2026-07): 동일 리포트가 3847→2429 토큰, 19.5→14.7초, MAX_TOKENS→STOP 으로 개선.
     String TEXT_SYSTEM_MESSAGE =
             "You are a helpful analysis assistant. Follow the output format the prompt requests "
-                    + "(e.g. plain markdown) exactly, and do not wrap your response in a JSON object.";
+                    + "(e.g. plain markdown) exactly, and do not wrap your response in a JSON object. "
+                    + "In markdown tables, write every separator row as exactly \"---\" per column "
+                    + "(e.g. | --- | --- |); never pad separator rows or cells with repeated "
+                    + "hyphens, colons, or spaces for column alignment.";
 
     /** Chain 로그·UI 표시용 식별자. 예: "Gemini Flash" */
     String getName();
@@ -41,5 +48,17 @@ public interface AiProvider {
     /** 기본값(expectJson=true) — 기존 호출부 호환용. */
     default AiProviderResult generate(String prompt) {
         return generate(prompt, true);
+    }
+
+    /**
+     * cause 체인에 소켓 read 타임아웃이 있는지. RestClient 가 SocketTimeoutException 을 "Error while extracting
+     * response for type ... and content type [application/octet-stream]" 같은 메시지로 감싸 Content-Type
+     * 문제처럼 보이므로, 각 provider 가 catch 에서 이걸로 판별해 명확히 로깅한다.
+     */
+    static boolean isReadTimeout(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (c instanceof java.net.SocketTimeoutException) return true;
+        }
+        return false;
     }
 }

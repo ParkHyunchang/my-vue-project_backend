@@ -26,7 +26,7 @@ public class FinancialDataService {
     // 보유 종목 재무 요약 병렬 수집 전용 풀 (외부 API 왕복이 병목이라 I/O 병렬화)
     private static final ExecutorService POOL = Executors.newFixedThreadPool(6);
     // 재무 요약 수집 전체 시간 예산 — 초과분은 "재무 데이터 없음"으로 분석 계속
-    private static final long HOLDINGS_SUMMARY_BUDGET_MS = 20_000L;
+    private static final long HOLDINGS_SUMMARY_BUDGET_MS = 6_000L;
 
     private final YahooFinanceService yahoo;
     private final DartFinancialService dart;

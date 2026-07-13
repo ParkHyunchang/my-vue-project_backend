@@ -9,6 +9,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -25,6 +26,7 @@ public class CloudflareProvider implements AiProvider {
 
     private static final String BASE_URL = "https://api.cloudflare.com";
     private static final String MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+    private static final Duration READ_TIMEOUT = Duration.ofSeconds(20);
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -36,7 +38,8 @@ public class CloudflareProvider implements AiProvider {
             @Value("${cloudflare.account-id:}") String accountId) {
         this.apiToken = apiToken;
         this.accountId = accountId;
-        this.restClient = RestClient.builder().baseUrl(BASE_URL).build();
+        this.restClient =
+                RestClient.builder().baseUrl(BASE_URL).requestFactory(requestFactory()).build();
     }
 
     @Override
@@ -73,7 +76,9 @@ public class CloudflareProvider implements AiProvider {
                                         expectJson ? JSON_SYSTEM_MESSAGE : TEXT_SYSTEM_MESSAGE),
                                 Map.of("role", "user", "content", prompt)),
                         "temperature",
-                        0.4);
+                        0.4,
+                        "max_tokens",
+                        4096);
 
         try {
             String response =
@@ -109,9 +114,20 @@ public class CloudflareProvider implements AiProvider {
                     truncate(e.getResponseBodyAsString(), 200));
             return AiProviderResult.error("Cloudflare HTTP " + status);
         } catch (Exception e) {
+            if (AiProvider.isReadTimeout(e)) {
+                log.warn("[AI/Cloudflare] 응답 대기 {}초 초과 (read timeout)", READ_TIMEOUT.toSeconds());
+                return AiProviderResult.error("응답 대기 시간 초과");
+            }
             log.warn("[AI/Cloudflare] 호출 실패: {}", e.getMessage());
             return AiProviderResult.error(e.getMessage());
         }
+    }
+
+    private SimpleClientHttpRequestFactory requestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(3));
+        factory.setReadTimeout(READ_TIMEOUT);
+        return factory;
     }
 
     private Instant parseRetryAfter(RestClientResponseException e, Duration fallback) {

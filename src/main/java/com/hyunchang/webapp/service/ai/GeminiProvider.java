@@ -9,7 +9,9 @@ import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientResponseException;
@@ -23,26 +25,43 @@ public class GeminiProvider implements AiProvider {
     private static final Logger log = LoggerFactory.getLogger(GeminiProvider.class);
 
     private static final String BASE_URL = "https://generativelanguage.googleapis.com";
-    // 2026-05 변경: gemini-2.0-flash 가 키 한도 이슈로 매번 429 — 최신 + 더 안정적인 모델로 교체
-    private static final String MODEL = "gemini-2.5-flash";
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final String apiKey;
+    private final String model;
+    private final String name;
+    private final int thinkingBudget;
+    private final Duration readTimeout;
 
+    // 2026-05 변경: gemini-2.0-flash 가 키 한도 이슈로 매번 429 — 최신 + 더 안정적인 모델로 교체.
+    // read timeout 30초: maxOutputTokens 5120 기준 최악 생성이 ~26초(실측 약 200 tok/s)라 그보다 여유.
+    // 비스트리밍이라 생성이 끝날 때까지 첫 바이트가 안 오므로 이 값이 사실상 생성 시간 상한이다.
+    // 생성자가 2개(스프링용 + 서브클래스용)라 @Autowired 로 스프링이 쓸 쪽을 명시해야 한다.
+    @Autowired
     public GeminiProvider(@Value("${gemini.api-key:}") String apiKey) {
+        this(apiKey, "gemini-2.5-flash", "Gemini Flash", 256, Duration.ofSeconds(30));
+    }
+
+    protected GeminiProvider(
+            String apiKey, String model, String name, int thinkingBudget, Duration readTimeout) {
         this.apiKey = apiKey;
-        this.restClient = RestClient.builder().baseUrl(BASE_URL).build();
+        this.model = model;
+        this.name = name;
+        this.thinkingBudget = thinkingBudget;
+        this.readTimeout = readTimeout;
+        this.restClient =
+                RestClient.builder().baseUrl(BASE_URL).requestFactory(requestFactory()).build();
     }
 
     @Override
     public String getName() {
-        return "Gemini Flash";
+        return name;
     }
 
     @Override
     public String getModel() {
-        return MODEL;
+        return model;
     }
 
     @Override
@@ -59,9 +78,12 @@ public class GeminiProvider implements AiProvider {
         generationConfig.put("temperature", 0.4);
         // 2.5 Flash 의 thinking 모드 — dynamic(-1)은 12~17초로 너무 느려서 제한.
         // 256: 4~6초 (살짝 떨어지지만 빠름), 512: 6~9초 (절충), -1: dynamic(원본).
-        // 포트폴리오 진단 같은 큰 컨텍스트에서 응답 시간을 더 줄이려고 256으로 축소.
-        // ※ dynamic thinking 모드로 되돌리려면 아래 한 줄만 주석 처리하면 된다.
-        generationConfig.put("thinkingConfig", Map.of("thinkingBudget", 256));
+        // ※ 모델별 유효 범위 주의 — flash-lite 는 512~24576 또는 0(off)만 허용 (256은 400 거부).
+        generationConfig.put("thinkingConfig", Map.of("thinkingBudget", thinkingBudget));
+        // 2026-07 실측: 종합(13종목) 리포트의 실제 내용이 3,890 토큰에서 MAX_TOKENS 로 잘렸다(마지막
+        // 단기 추천 섹션 유실). 5120 이면 완결 여유가 있으면서도 폭주 출력이 요청을 수 분짜리로
+        // 만드는 것은 막는다. 상향 시 read timeout 도 같이 늘려야 함 (생성 시간 ∝ 출력 토큰).
+        generationConfig.put("maxOutputTokens", 5120);
 
         Map<String, Object> body =
                 Map.of(
@@ -81,7 +103,7 @@ public class GeminiProvider implements AiProvider {
             String response =
                     restClient
                             .post()
-                            .uri("/v1beta/models/{model}:generateContent?key={key}", MODEL, apiKey)
+                            .uri("/v1beta/models/{model}:generateContent?key={key}", model, apiKey)
                             .header("Content-Type", "application/json")
                             .body(body)
                             .retrieve()
@@ -92,9 +114,16 @@ public class GeminiProvider implements AiProvider {
             if (!candidates.isArray() || candidates.isEmpty()) {
                 return AiProviderResult.error("응답에 candidate가 없습니다.");
             }
-            String text =
-                    candidates.get(0).path("content").path("parts").get(0).path("text").asText();
+            JsonNode candidate = candidates.get(0);
+            // 2.5 모델은 긴 응답을 여러 part 로 쪼개 반환할 수 있어 전부 이어붙인다 (thought part 제외).
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode part : candidate.path("content").path("parts")) {
+                if (part.path("thought").asBoolean(false)) continue;
+                sb.append(part.path("text").asText(""));
+            }
+            String text = sb.toString();
             if (text.isBlank()) return AiProviderResult.error("응답 텍스트가 비어있습니다.");
+            logUsage(candidate, root.path("usageMetadata"));
             return AiProviderResult.success(text);
 
         } catch (RestClientResponseException e) {
@@ -104,7 +133,10 @@ public class GeminiProvider implements AiProvider {
                 Instant retryAt = parseRetryAfter(e, Duration.ofMinutes(1));
                 // 본문에 RESOURCE_EXHAUSTED / quota / billing 같은 reason 이 들어있어 진단에 결정적
                 log.warn(
-                        "[AI/Gemini] 429 rate limited, retryAt={}, reason={}", retryAt, errSummary);
+                        "[AI/{}] 429 rate limited, retryAt={}, reason={}",
+                        name,
+                        retryAt,
+                        errSummary);
                 return AiProviderResult.rateLimited(retryAt);
             }
             if (status >= 500 && status < 600) {
@@ -112,18 +144,41 @@ public class GeminiProvider implements AiProvider {
                 // (Retry-After 헤더가 있으면 그 값 우선, 없으면 기본 60초)
                 Instant retryAt = parseRetryAfter(e, Duration.ofSeconds(60));
                 log.warn(
-                        "[AI/Gemini] HTTP {} (일시 장애) — backoff until {}: {}",
+                        "[AI/{}] HTTP {} (일시 장애) — backoff until {}: {}",
+                        name,
                         status,
                         retryAt,
                         errSummary);
                 return AiProviderResult.rateLimited(retryAt);
             }
-            log.warn("[AI/Gemini] HTTP {} — {}", status, errSummary);
-            return AiProviderResult.error("Gemini HTTP " + status);
+            log.warn("[AI/{}] HTTP {} — {}", name, status, errSummary);
+            return AiProviderResult.error(name + " HTTP " + status);
         } catch (Exception e) {
-            log.warn("[AI/Gemini] 호출 실패: {}", e.getMessage());
+            if (AiProvider.isReadTimeout(e)) {
+                log.warn("[AI/{}] 응답 대기 {}초 초과 (read timeout)", name, readTimeout.toSeconds());
+                return AiProviderResult.error("응답 대기 시간 초과");
+            }
+            log.warn("[AI/{}] 호출 실패: {}", name, e.getMessage());
             return AiProviderResult.error(e.getMessage());
         }
+    }
+
+    /** 응답 시간·잘림 진단용 — finishReason 이 MAX_TOKENS 면 리포트가 토큰 한도에서 끊긴 것. */
+    private void logUsage(JsonNode candidate, JsonNode usage) {
+        log.info(
+                "[AI/{}] finishReason={}, promptTokens={}, outputTokens={}, thoughtsTokens={}",
+                name,
+                candidate.path("finishReason").asText("?"),
+                usage.path("promptTokenCount").asInt(-1),
+                usage.path("candidatesTokenCount").asInt(-1),
+                usage.path("thoughtsTokenCount").asInt(-1));
+    }
+
+    private SimpleClientHttpRequestFactory requestFactory() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(Duration.ofSeconds(3));
+        factory.setReadTimeout(readTimeout);
+        return factory;
     }
 
     /** Gemini 에러 응답 body 의 JSON 에서 status·message 만 추출 (로그 가독성↑). */

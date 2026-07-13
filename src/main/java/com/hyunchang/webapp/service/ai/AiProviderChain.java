@@ -6,14 +6,18 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 /**
  * AI Provider 체인.
  *
- * <p>등록 순서대로 시도: 1. GeminiProvider 2. GroqProvider 3. CloudflareProvider
+ * <p>등록 순서대로 시도: 1. GeminiProvider 2. GeminiFlashLiteProvider 3. GroqProvider 4. CloudflareProvider
  *
  * <p>각 단계에서: - 키 미설정 → skip - rate-limit 메모리에 기록된 차단 시각 이전 → skip - 429 응답 → 차단 시각 등록 후 다음 단계로 -
  * 5xx/네트워크 실패 → 다음 단계로 (차단 등록은 안 함) - 성공 → return Success
@@ -24,16 +28,32 @@ import org.springframework.stereotype.Service;
 public class AiProviderChain {
     private static final Logger log = LoggerFactory.getLogger(AiProviderChain.class);
 
+    /**
+     * 전체 체인(폴백 포함)의 end-to-end 예산. 리버스 프록시 기본 read timeout(60초)에서 요청 전처리(뉴스·재무·후보 수집, 최대 ~10초)를 뺀
+     * 값보다 작게. 예산이 provider 하나의 소켓 타임아웃과 같으면 1차 provider 가 느린 순간 폴백 기회 없이 전체가 실패하므로 (2026-07 포트폴리오
+     * 진단 장애) 반드시 provider 상한보다 크게 유지할 것.
+     */
+    private static final long ANALYSIS_TIMEOUT_MS = 45_000L;
+
+    /**
+     * provider 1개가 전체 예산을 독식하지 못하게 하는 상한. 가장 긴 provider 소켓 타임아웃(Gemini Flash: 연결 3초 + 읽기 30초)보다 살짝
+     * 크게 잡아, 정상 경로에서는 provider 내부 read timeout 이 먼저 발동해 error 결과로 처리되고 이 값은 최후의 가드로만 동작한다.
+     */
+    private static final long PER_PROVIDER_TIMEOUT_MS = 35_000L;
+
     private final List<AiProvider> providers;
     private final RateLimitTracker rateLimitTracker;
 
     public AiProviderChain(
-            GeminiProvider gemini,
+            // GeminiFlashLiteProvider 가 GeminiProvider 를 상속해 타입만으로는 빈이 2개 매칭됨 — 이름으로 고정
+            @Qualifier("geminiProvider") GeminiProvider gemini,
+            GeminiFlashLiteProvider geminiLite,
             GroqProvider groq,
             CloudflareProvider cloudflare,
             RateLimitTracker rateLimitTracker) {
-        // 체인 순서 (Gemini → Groq → Cloudflare)
-        this.providers = List.of(gemini, groq, cloudflare);
+        // 체인 순서 (Gemini Flash → Gemini Flash Lite → Groq → Cloudflare)
+        // flash-lite 는 같은 키의 별도 용량 풀 — flash 혼잡(503) 시에도 전체 프롬프트 품질 유지용 2차
+        this.providers = List.of(gemini, geminiLite, groq, cloudflare);
         this.rateLimitTracker = rateLimitTracker;
     }
 
@@ -56,7 +76,13 @@ public class AiProviderChain {
      * 데이터가 줄어드는 대신 413 거부 없이 응답을 받는다.
      */
     public ChainResult analyze(String prompt, String compactPrompt, boolean expectJson) {
+        long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(ANALYSIS_TIMEOUT_MS);
         for (AiProvider p : providers) {
+            long remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+            if (remainingMs <= 0) {
+                log.warn("[AI/Chain] analysis time budget exhausted");
+                break;
+            }
             if (!p.isEnabled()) {
                 log.debug("[AI/Chain] {} skip (disabled)", p.getName());
                 continue;
@@ -83,7 +109,27 @@ public class AiProviderChain {
             }
 
             log.info("[AI/Chain] {} 호출 시도", p.getName());
-            AiProviderResult r = p.generate(effectivePrompt, expectJson);
+            final String requestPrompt = effectivePrompt;
+            long waitMs = Math.min(remainingMs, PER_PROVIDER_TIMEOUT_MS);
+            AiProviderResult r;
+            CompletableFuture<AiProviderResult> future =
+                    CompletableFuture.supplyAsync(() -> p.generate(requestPrompt, expectJson));
+            try {
+                r = future.get(waitMs, TimeUnit.MILLISECONDS);
+            } catch (TimeoutException e) {
+                // 백그라운드 호출은 소켓 read 가 인터럽트되지 않아 자체 타임아웃까지 이어질 수 있지만
+                // 결과는 버려진다 — 뒤늦게 남는 provider 로그는 이 케이스.
+                future.cancel(true);
+                log.warn(
+                        "[AI/Chain] {} 이(가) {}초 내 응답하지 않아 다음 provider 로 폴백",
+                        p.getName(),
+                        waitMs / 1000);
+                continue;
+            } catch (Exception e) {
+                log.warn("[AI/Chain] {} failed: {}", p.getName(), e.getMessage());
+                if (e instanceof InterruptedException) Thread.currentThread().interrupt();
+                continue;
+            }
             if (r.success()) {
                 log.info("[AI/Chain] {} 응답 성공 ({}자)", p.getName(), r.text().length());
                 return new ChainResult(
