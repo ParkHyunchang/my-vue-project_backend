@@ -121,7 +121,9 @@ public class KiwoomWebsocketClient implements WebSocket.Listener {
                 Map.of("type", type, "message", message, "at", System.currentTimeMillis()));
     }
 
-    private void publish(String type, String message) { publishEvent(type, message); }
+    private void publish(String type, String message) {
+        publishEvent(type, message);
+    }
 
     @PreDestroy
     public void close() {
