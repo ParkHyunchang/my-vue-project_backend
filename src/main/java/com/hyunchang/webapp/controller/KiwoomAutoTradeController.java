@@ -5,6 +5,7 @@ import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
+import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.KiwoomWebsocketClient;
 import java.util.Map;
@@ -30,6 +31,7 @@ public class KiwoomAutoTradeController {
     private final KiwoomWebsocketClient websocketClient;
     private final KiwoomAutoTradeState state;
     private final KiwoomStrategyService strategyService;
+    private final KiwoomStrategyAuditService audit;
 
     public KiwoomAutoTradeController(
             KiwoomProperties properties,
@@ -37,13 +39,15 @@ public class KiwoomAutoTradeController {
             KiwoomTradeService tradeService,
             KiwoomWebsocketClient websocketClient,
             KiwoomAutoTradeState state,
-            KiwoomStrategyService strategyService) {
+            KiwoomStrategyService strategyService,
+            KiwoomStrategyAuditService audit) {
         this.properties = properties;
         this.authService = authService;
         this.tradeService = tradeService;
         this.websocketClient = websocketClient;
         this.state = state;
         this.strategyService = strategyService;
+        this.audit = audit;
     }
 
     @GetMapping("/status")
@@ -57,6 +61,8 @@ public class KiwoomAutoTradeController {
                 authService.hasUsableToken(),
                 "autoTrading",
                 state.isAutoTrading(),
+                "emergencyStopped",
+                state.isEmergencyStopped(),
                 "mode",
                 properties.getMode(),
                 "orderEnabled",
@@ -74,6 +80,9 @@ public class KiwoomAutoTradeController {
     @PostMapping("/control")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> control(@RequestBody ControlRequest request) {
+        if (request.enabled() && state.isEmergencyStopped()) {
+            return ResponseEntity.status(409).body(Map.of("success", false, "message", "긴급 중지 상태입니다. 먼저 재개를 명시적으로 실행하세요."));
+        }
         if (request.enabled() && !properties.isConfigured()) {
             return ResponseEntity.status(409)
                     .body(
@@ -86,6 +95,23 @@ public class KiwoomAutoTradeController {
         state.setAutoTrading(request.enabled());
         if (request.enabled()) websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
         return ResponseEntity.ok(Map.of("success", true, "autoTrading", state.isAutoTrading()));
+    }
+
+    @PostMapping("/emergency-stop")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, Object> emergencyStop() {
+        state.emergencyStop();
+        websocketClient.publishEvent("system", "긴급 중지가 실행되었습니다. 자동 판단과 주문 전송을 중단합니다.");
+        audit.log("EMERGENCY_STOP", null, "관리자가 긴급 중지를 실행했습니다.");
+        return Map.of("success", true, "emergencyStopped", true);
+    }
+
+    @PostMapping("/emergency-resume")
+    @PreAuthorize("hasRole('ADMIN')")
+    public Map<String, Object> emergencyResume() {
+        state.clearEmergencyStop();
+        audit.log("EMERGENCY_RESUME", null, "관리자가 긴급 중지를 해제했습니다.");
+        return Map.of("success", true, "emergencyStopped", false);
     }
 
     @GetMapping("/summary")

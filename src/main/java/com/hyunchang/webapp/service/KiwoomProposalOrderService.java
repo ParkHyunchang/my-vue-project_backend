@@ -20,27 +20,29 @@ public class KiwoomProposalOrderService {
     private final KiwoomTradeService trade;
     private final KiwoomProperties props;
     private final KiwoomWebsocketClient events;
+    private final KiwoomAutoTradeState state;
+    private final KiwoomStrategyAuditService audit;
 
-    public KiwoomProposalOrderService(KiwoomTradeProposalRepository proposals, KiwoomTradeService trade, KiwoomProperties props, KiwoomWebsocketClient events) { this.proposals = proposals; this.trade = trade; this.props = props; this.events = events; }
+    public KiwoomProposalOrderService(KiwoomTradeProposalRepository proposals, KiwoomTradeService trade, KiwoomProperties props, KiwoomWebsocketClient events, KiwoomAutoTradeState state, KiwoomStrategyAuditService audit) { this.proposals = proposals; this.trade = trade; this.props = props; this.events = events; this.state = state; this.audit = audit; }
 
     public Result approve(long id) {
         KiwoomTradeProposal p = find(id);
         if (p.getAction() == KiwoomTradeProposal.Action.HOLD) return fail("HOLD 제안은 주문 승인 대상이 아닙니다.");
         if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED) return fail("PROPOSED 상태의 제안만 승인할 수 있습니다.");
         if (hasGuards(p)) return fail("안전 경고가 있는 제안은 승인할 수 없습니다.");
-        p.approve(); proposals.save(p); return ok(p, "제안을 승인했습니다. 주문은 아직 전송되지 않습니다.");
+        p.approve(); proposals.save(p); audit.log("PROPOSAL_APPROVED", p.getId(), "제안을 승인했습니다."); return ok(p, "제안을 승인했습니다. 주문은 아직 전송되지 않습니다.");
     }
 
     public Result reject(long id, String reason) {
         KiwoomTradeProposal p = find(id);
         if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED && p.getStatus() != KiwoomTradeProposal.Status.APPROVED) return fail("제안은 이미 처리되었습니다.");
-        p.reject(reason == null || reason.isBlank() ? "사용자 거절" : reason); proposals.save(p); return ok(p, "제안을 거절했습니다.");
+        p.reject(reason == null || reason.isBlank() ? "사용자 거절" : reason); proposals.save(p); audit.log("PROPOSAL_REJECTED", p.getId(), "제안을 거절했습니다."); return ok(p, "제안을 거절했습니다.");
     }
 
     public Result draft(long id) {
         KiwoomTradeProposal p = find(id);
         if (p.getStatus() != KiwoomTradeProposal.Status.APPROVED) return fail("승인된 제안만 주문 초안으로 만들 수 있습니다.");
-        p.draft(); proposals.save(p); return ok(p, "주문 초안을 만들었습니다. 최종 확인 전에는 전송되지 않습니다.");
+        p.draft(); proposals.save(p); audit.log("ORDER_DRAFTED", p.getId(), "주문 초안을 만들었습니다."); return ok(p, "주문 초안을 만들었습니다. 최종 확인 전에는 전송되지 않습니다.");
     }
 
     public synchronized Result execute(long id, boolean confirmed) {
@@ -51,13 +53,14 @@ public class KiwoomProposalOrderService {
         if (preflight != null) return fail(preflight);
         try {
             JsonNode response = trade.placeOrder(new KiwoomTradeService.OrderRequest(p.getAction().name(), p.getStockCode(), p.getQuantity(), p.getLimitPrice(), p.getOrderType().name(), "KRX")).block(Duration.ofSeconds(20));
-            p.ordered(response == null ? "" : response.toString()); proposals.save(p); events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode()); return ok(p, "주문 전송 요청이 완료되었습니다.");
+            p.ordered(response == null ? "" : response.toString()); proposals.save(p); audit.log("ORDER_SUBMITTED", p.getId(), "키움 주문 전송 요청을 완료했습니다."); events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode()); return ok(p, "주문 전송 요청이 완료되었습니다.");
         } catch (Exception e) {
-            p.orderFailed(trim(e.getMessage())); proposals.save(p); events.publishEvent("error", "주문 전송 실패: " + trim(e.getMessage())); return fail("주문 전송 실패: " + trim(e.getMessage()));
+            p.orderFailed(trim(e.getMessage())); proposals.save(p); audit.log("ORDER_FAILED", p.getId(), trim(e.getMessage())); events.publishEvent("error", "주문 전송 실패: " + trim(e.getMessage())); return fail("주문 전송 실패: " + trim(e.getMessage()));
         }
     }
 
     private String preflightError(KiwoomTradeProposal p) {
+        if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다. 현재는 안전한 dry-run 상태입니다.";
         if (hasGuards(p)) return "안전 경고가 있는 주문 초안은 전송할 수 없습니다.";
         if (!marketOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";

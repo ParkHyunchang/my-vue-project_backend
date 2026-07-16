@@ -9,6 +9,8 @@ import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import com.hyunchang.webapp.repository.KiwoomWatchItemRepository;
 import com.hyunchang.webapp.service.KiwoomProposalOrderService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
+import com.hyunchang.webapp.service.KiwoomAutoTradeState;
+import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -35,6 +37,8 @@ public class KiwoomStrategyController {
     private final KiwoomWatchItemRepository watch;
     private final KiwoomStrategyRunRepository runs;
     private final KiwoomTradeProposalRepository proposals;
+    private final KiwoomAutoTradeState state;
+    private final KiwoomStrategyAuditService audit;
 
     public KiwoomStrategyController(
             KiwoomStrategyService strategy,
@@ -42,13 +46,17 @@ public class KiwoomStrategyController {
             KiwoomProperties props,
             KiwoomWatchItemRepository watch,
             KiwoomStrategyRunRepository runs,
-            KiwoomTradeProposalRepository proposals) {
+            KiwoomTradeProposalRepository proposals,
+            KiwoomAutoTradeState state,
+            KiwoomStrategyAuditService audit) {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
         this.watch = watch;
         this.runs = runs;
         this.proposals = proposals;
+        this.state = state;
+        this.audit = audit;
     }
 
     @GetMapping("/watchlist")
@@ -82,6 +90,9 @@ public class KiwoomStrategyController {
 
     @GetMapping("/config")
     public Map<String, Object> config() { return Map.of("enabled", props.getStrategy().isEnabled(), "maxOrderAmount", props.getStrategy().getMaxOrderAmount(), "dailyMaxProposals", props.getStrategy().getDailyMaxProposals(), "cooldownMinutes", props.getStrategy().getCooldownMinutes(), "allowMarketOrders", props.getStrategy().isAllowMarketOrders(), "orderEnabled", props.isTradeEnabled(), "dryRun", !props.isTradeEnabled()); }
+
+    @GetMapping("/health")
+    public Map<String, Object> health() { return Map.of("configured", props.isConfigured(), "autoTrading", state.isAutoTrading(), "emergencyStopped", state.isEmergencyStopped(), "decisionRunning", state.isDeciding(), "lastRunAt", state.getLastRunAt() == null ? "" : state.getLastRunAt().toString(), "runCount", runs.count(), "proposalCount", proposals.count(), "recentAudit", audit.recent()); }
 
     @GetMapping("/runs")
     public List<Map<String, Object>> history(@RequestParam(defaultValue = "10") int limit) {
