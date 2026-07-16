@@ -23,6 +23,7 @@ public class KiwoomStrategyService {
  public KiwoomStrategyService(KiwoomProperties props, KiwoomTradeService trade, KiwoomAutoTradeState state, StockService stocks, AiPromptService prompts, AiProviderChain ai, ObjectMapper json, KiwoomWatchItemRepository watch, KiwoomStrategyRunRepository runs, KiwoomTradeProposalRepository proposals, KiwoomWebsocketClient events) { this.props=props;this.trade=trade;this.state=state;this.stocks=stocks;this.prompts=prompts;this.ai=ai;this.json=json;this.watch=watch;this.runs=runs;this.proposals=proposals;this.events=events; }
  @Scheduled(cron="0 0/30 9-15 * * MON-FRI", zone="Asia/Seoul") public void scheduledDecision(){ if(props.getStrategy().isEnabled() && state.isAutoTrading() && props.isConfigured() && marketOpen()) { try { runDecision("SCHEDULE"); } catch (IllegalStateException ignored) {} } }
  public synchronized DecisionResult runDecision(String by) {
+  if(state.isEmergencyStopped()) throw new IllegalStateException("긴급 중지 상태에서는 전략 판단을 실행할 수 없습니다.");
   if(!state.tryStartDecision()) throw new IllegalStateException("이미 전략 판단이 실행 중입니다.");
   KiwoomStrategyRun run=new KiwoomStrategyRun(); run.setTriggeredBy("SCHEDULE".equals(by)?KiwoomStrategyRun.TriggeredBy.SCHEDULE:KiwoomStrategyRun.TriggeredBy.MANUAL);
   try { events.publishEvent("strategy", "AI 전략 판단을 시작합니다. (dry-run)");
