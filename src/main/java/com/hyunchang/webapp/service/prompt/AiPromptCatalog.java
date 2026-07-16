@@ -65,10 +65,10 @@ public final class AiPromptCatalog {
 
     private static PromptDefinition kiwoomTradeStrategy() {
         return new PromptDefinition(KIWOOM_TRADE_STRATEGY, "키움 자동매매 전략 제안", "주식", "주문을 실행하지 않고 제안만 생성합니다.",
-                List.of(new PromptVariable("현재시각", "KST 현재 시각"), new PromptVariable("예수금", "주문 가능 금액"), new PromptVariable("보유종목", "보유 수량과 시세"), new PromptVariable("관심종목", "관심종목과 시세")),
-                "당신은 KRX 단기 트레이더입니다. 제공된 데이터만 근거로 판단하세요. 확신이 없으면 HOLD를 제안하세요. 목록 밖 종목은 제안하지 말고 SELL 수량은 보유 수량을 넘기지 마세요.",
-                "현재 시각: {{현재시각}}\n예수금: {{예수금}}\n보유 종목:\n{{보유종목}}\n관심 종목:\n{{관심종목}}",
-                "JSON만 반환하세요. {\"marketView\":\"1~2문장\",\"decisions\":[{\"action\":\"BUY|SELL|HOLD\",\"stockCode\":\"6자리\",\"stockName\":\"\",\"quantity\":0,\"orderType\":\"LIMIT|MARKET\",\"limitPrice\":null,\"confidence\":0,\"reason\":\"\"}]} 수량과 가격은 1 이상, HOLD도 허용, 종목당 하나만 반환하세요.");
+                List.of(new PromptVariable("현재시각", "KST 현재 시각"), new PromptVariable("예수금", "주문 가능 금액"), new PromptVariable("보유종목", "보유 수량과 시세"), new PromptVariable("관심종목", "관심종목과 시세"), new PromptVariable("스윙지표", "20일 평균 대비 거래량과 당일 등락률")),
+                "당신은 보수적 KRX 단기 스윙 트레이더입니다. 보유 기간은 최대 5거래일입니다. 제공된 데이터만 근거로 판단하고 데이터가 부족하면 반드시 HOLD를 제안하세요. BUY는 관심종목 안에서만, 스윙지표에 거래량 증가와 상승 모멘텀이 모두 확인되고 급등 추격이 아닌 지정가 진입이 가능한 경우에만 제안하세요. 매수마다 진입 지정가, 진입가 대비 -3% 손절가, +6% 익절가, 보유기간을 이유에 명시하세요. 목록 밖 종목은 제안하지 말고 SELL 수량은 보유 수량을 넘기지 마세요. 시장가 주문, 물타기, 손절가 없는 매수, 데이터 없는 추정은 금지합니다.",
+                "현재 시각: {{현재시각}}\n예수금: {{예수금}}\n보유 종목:\n{{보유종목}}\n관심 종목:\n{{관심종목}}\n스윙 지표:\n{{스윙지표}}",
+                "JSON만 반환하세요. {\"marketView\":\"1~2문장\",\"decisions\":[{\"action\":\"BUY|SELL|HOLD\",\"stockCode\":\"6자리\",\"stockName\":\"\",\"quantity\":0,\"orderType\":\"LIMIT\",\"limitPrice\":null,\"confidence\":0,\"reason\":\"근거와 손절/익절/최대보유일\"}]} BUY의 수량과 지정가는 1 이상, HOLD도 허용, 종목당 하나만 반환하세요.");
     }
 
     // ─────────────────────────────────────────────────────────────────────

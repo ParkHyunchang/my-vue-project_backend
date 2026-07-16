@@ -127,6 +127,11 @@ public class KiwoomProposalOrderService {
             if (deposit <= 0) return "주문 직전 예수금을 확인하지 못했습니다.";
             if (p.getLimitPrice() * p.getQuantity() > deposit) return "주문 금액이 현재 주문 가능 예수금을 초과합니다.";
         }
+        if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
+            long deposit = availableDeposit();
+            long buyBudget = Math.round(deposit * props.getStrategy().getMaxBuyDepositPercent() / 100.0);
+            if (p.getLimitPrice() * p.getQuantity() > buyBudget) return "Buy order exceeds the configured percentage of available deposit.";
+        }
         long orderedToday = proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL), List.of(KiwoomTradeProposal.Status.ORDERED), LocalDateTime.now(KST).toLocalDate().atStartOfDay());
         if (orderedToday >= props.getStrategy().getDailyMaxProposals()) return "오늘의 주문 전송 한도에 도달했습니다.";
         return null;

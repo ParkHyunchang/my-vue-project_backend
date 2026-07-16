@@ -26,6 +26,10 @@ public class KiwoomProperties {
         private boolean autoExecute;
         /** AI confidence required before an unattended proposal can be submitted. */
         private int autoExecuteMinConfidence = 85;
+        private double maxBuyDepositPercent = 10.0;
+        private double swingStopLossPercent = 3.0;
+        private double swingTakeProfitPercent = 6.0;
+        private int swingMaxHoldingDays = 5;
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public long getMaxOrderAmount() { return maxOrderAmount; }
@@ -40,6 +44,14 @@ public class KiwoomProperties {
         public void setAutoExecute(boolean autoExecute) { this.autoExecute = autoExecute; }
         public int getAutoExecuteMinConfidence() { return autoExecuteMinConfidence; }
         public void setAutoExecuteMinConfidence(int autoExecuteMinConfidence) { this.autoExecuteMinConfidence = Math.max(0, Math.min(100, autoExecuteMinConfidence)); }
+        public double getMaxBuyDepositPercent() { return maxBuyDepositPercent; }
+        public void setMaxBuyDepositPercent(double value) { maxBuyDepositPercent = Math.max(0, Math.min(100, value)); }
+        public double getSwingStopLossPercent() { return swingStopLossPercent; }
+        public void setSwingStopLossPercent(double value) { swingStopLossPercent = Math.max(0, Math.min(100, value)); }
+        public double getSwingTakeProfitPercent() { return swingTakeProfitPercent; }
+        public void setSwingTakeProfitPercent(double value) { swingTakeProfitPercent = Math.max(0, Math.min(100, value)); }
+        public int getSwingMaxHoldingDays() { return swingMaxHoldingDays; }
+        public void setSwingMaxHoldingDays(int value) { swingMaxHoldingDays = Math.max(1, Math.min(30, value)); }
     }
 
     public boolean isMock() {

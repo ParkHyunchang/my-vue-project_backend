@@ -135,3 +135,8 @@ kiwoom:
     # Automatic submission requires this explicit second switch in addition to trade-enabled.
     auto-execute: ${KIWOOM_STRATEGY_AUTO_EXECUTE:false}
     auto-execute-min-confidence: ${KIWOOM_STRATEGY_AUTO_EXECUTE_MIN_CONFIDENCE:85}
+    # Conservative short-swing guardrails. These are enforced server-side for BUY proposals.
+    max-buy-deposit-percent: ${KIWOOM_STRATEGY_MAX_BUY_DEPOSIT_PERCENT:10}
+    swing-stop-loss-percent: ${KIWOOM_STRATEGY_SWING_STOP_LOSS_PERCENT:3}
+    swing-take-profit-percent: ${KIWOOM_STRATEGY_SWING_TAKE_PROFIT_PERCENT:6}
+    swing-max-holding-days: ${KIWOOM_STRATEGY_SWING_MAX_HOLDING_DAYS:5}
