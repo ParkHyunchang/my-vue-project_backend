@@ -9,6 +9,8 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 /** Reconciles submitted domestic-stock orders with Kiwoom's unfilled/filled order inquiries. */
@@ -24,6 +26,10 @@ public class KiwoomOrderSyncService {
     @Scheduled(fixedDelay = 60000)
     public void scheduledSync() { if (props.isConfigured() && hasPendingOrders()) sync(); }
 
+    /** Reconcile persisted broker order numbers after a restart before new scheduled decisions. */
+    @EventListener(ApplicationReadyEvent.class)
+    public void recoverAfterRestart() { if (props.isConfigured() && hasPendingOrders()) { SyncResult result = sync(); audit.log("ORDER_RECOVERY_SYNC", null, "Restart recovery: " + result.message() + ", updated=" + result.updated()); } }
+
     public SyncResult sync() {
         if (!hasPendingOrders()) return new SyncResult(0, 0, "동기화 대상 주문이 없습니다.");
         try {
@@ -32,6 +38,10 @@ public class KiwoomOrderSyncService {
             collectRecords(trade.getFilledOrders().block(Duration.ofSeconds(15)), records);
             int updated = 0;
             for (JsonNode record : records) if (apply(record)) updated++;
+            for (KiwoomTradeProposal proposal : proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED))) {
+                boolean stillUnfilled = records.stream().anyMatch(record -> proposal.getBrokerOrderNo() != null && proposal.getBrokerOrderNo().equals(text(record, "ord_no", "order_no")));
+                if (!stillUnfilled) { proposal.cancelled(); proposals.save(proposal); audit.log("ORDER_CANCELLED_SYNC", proposal.getId(), "Cancellation was reconciled from broker order inquiries."); updated++; }
+            }
             return new SyncResult(records.size(), updated, "주문 상태 동기화 완료");
         } catch (Exception e) { return new SyncResult(0, 0, "주문 상태 동기화 실패: " + trim(e.getMessage())); }
     }
@@ -53,7 +63,7 @@ public class KiwoomOrderSyncService {
         }).orElse(false);
     }
 
-    private boolean hasPendingOrders() { return !proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.ORDERED, KiwoomTradeProposal.Status.PARTIALLY_FILLED)).isEmpty(); }
+    private boolean hasPendingOrders() { return !proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.ORDERED, KiwoomTradeProposal.Status.PARTIALLY_FILLED, KiwoomTradeProposal.Status.CANCEL_REQUESTED)).isEmpty(); }
     private void collectRecords(JsonNode node, List<JsonNode> result) { if (node == null) return; if (node.isArray()) { for (JsonNode child : node) collectRecords(child, result); return; } if (node.isObject()) { if (node.has("ord_no") || node.has("order_no")) result.add(node); Iterator<JsonNode> children = node.elements(); while (children.hasNext()) collectRecords(children.next(), result); } }
     private String text(JsonNode node, String... fields) { for (String field : fields) if (node.hasNonNull(field)) return node.path(field).asText(); return null; }
     private int number(JsonNode node, String... fields) { Long value = longValue(node, fields); return value == null ? 0 : value.intValue(); }

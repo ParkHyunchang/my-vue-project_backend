@@ -76,6 +76,33 @@ public class KiwoomTradeService {
                 body);
     }
 
+    /** kt10002: replace the remaining quantity/limit price of an open domestic-stock order. */
+    public Mono<JsonNode> amendOrder(AmendOrderRequest order) {
+        if (!properties.isTradeEnabled()) return Mono.error(new IllegalStateException("Order transmission is disabled."));
+        if (order.originalOrderNo() == null || order.originalOrderNo().isBlank() || order.quantity() <= 0 || order.price() == null || order.price() <= 0) return Mono.error(new IllegalArgumentException("Original order number, quantity, and limit price are required."));
+        Map<String, String> body = amendmentBody(order.originalOrderNo(), order.stockCode(), order.quantity(), order.price());
+        return request("kt10002", "/api/dostk/ordr", body);
+    }
+
+    /** kt10003: cancel all or part of the remaining quantity of an open order. */
+    public Mono<JsonNode> cancelOrder(CancelOrderRequest order) {
+        if (order.originalOrderNo() == null || order.originalOrderNo().isBlank() || order.quantity() <= 0) return Mono.error(new IllegalArgumentException("Original order number and cancellation quantity are required."));
+        Map<String, String> body = amendmentBody(order.originalOrderNo(), order.stockCode(), order.quantity(), null);
+        return request("kt10003", "/api/dostk/ordr", body);
+    }
+
+    private Map<String, String> amendmentBody(String originalOrderNo, String stockCode, int quantity, Long price) {
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("dmst_stex_tp", "KRX");
+        body.put("stk_cd", stockCode);
+        body.put("ord_qty", String.valueOf(quantity));
+        body.put("ord_uv", price == null ? "" : String.valueOf(price));
+        body.put("trde_tp", "0");
+        body.put("cond_uv", "");
+        body.put("org_ord_no", originalOrderNo);
+        return body;
+    }
+
     private Mono<JsonNode> request(String apiId, String path, Map<String, ?> body) {
         // 키움 호출 제한은 계정/서비스별로 달라질 수 있습니다. 아래 직렬화 간격은 보수적인 기본 보호막입니다.
         return authService
@@ -120,4 +147,6 @@ public class KiwoomTradeService {
             Long price,
             String orderType,
             String exchange) {}
+    public record AmendOrderRequest(String originalOrderNo, String stockCode, int quantity, Long price) {}
+    public record CancelOrderRequest(String originalOrderNo, String stockCode, int quantity) {}
 }

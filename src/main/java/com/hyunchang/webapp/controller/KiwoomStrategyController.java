@@ -96,6 +96,12 @@ public class KiwoomStrategyController {
     @PatchMapping("/proposals/{id}/draft")
     public ResponseEntity<?> updateDraft(@PathVariable long id, @RequestBody DraftUpdateRequest request) { return response(orders.updateDraft(id, request.quantity(), request.limitPrice())); }
 
+    @PatchMapping("/proposals/{id}/order")
+    public ResponseEntity<?> amendOrder(@PathVariable long id, @RequestBody OrderAmendRequest request) { return response(orders.amend(id, request.quantity(), request.limitPrice())); }
+
+    @PostMapping("/proposals/{id}/cancel")
+    public ResponseEntity<?> cancelOrder(@PathVariable long id, @RequestBody CancelRequest request) { return response(orders.cancel(id, request.quantity())); }
+
     @PostMapping("/orders/sync")
     public KiwoomOrderSyncService.SyncResult syncOrders() { return orderSync.sync(); }
 
@@ -118,4 +124,6 @@ public class KiwoomStrategyController {
     public record RejectRequest(String reason) {}
     public record ExecuteRequest(boolean confirmed) {}
     public record DraftUpdateRequest(int quantity, Long limitPrice) {}
+    public record OrderAmendRequest(int quantity, Long limitPrice) {}
+    public record CancelRequest(int quantity) {}
 }

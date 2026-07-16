@@ -87,6 +87,33 @@ public class KiwoomProposalOrderService {
         return submitted;
     }
 
+    public synchronized Result amend(long id, int quantity, Long limitPrice) {
+        KiwoomTradeProposal p = find(id);
+        if (state.isEmergencyStopped()) return fail("Emergency stop is active; order amendments are blocked.");
+        if (!props.isTradeEnabled()) return fail("Order transmission is disabled.");
+        if (!isOpenOrder(p)) return fail("Only open or partially-filled orders can be amended.");
+        if (p.getBrokerOrderNo() == null || p.getBrokerOrderNo().isBlank()) return fail("Broker order number is unavailable; synchronize the order first.");
+        if (quantity <= 0 || quantity > p.getRemainingQuantity() || limitPrice == null || limitPrice <= 0) return fail("Amendment quantity must be within the remaining quantity and price must be positive.");
+        if (limitPrice * quantity > props.getStrategy().getMaxOrderAmount()) return fail("Amended order exceeds the configured maximum order amount.");
+        try {
+            JsonNode response = trade.amendOrder(new KiwoomTradeService.AmendOrderRequest(p.getBrokerOrderNo(), p.getStockCode(), quantity, limitPrice)).block(Duration.ofSeconds(20));
+            String raw = response == null ? "" : response.toString(); String orderNo = response == null ? null : response.path("ord_no").asText(null);
+            p.amended(quantity, limitPrice, raw, orderNo); proposals.save(p); audit.log("ORDER_AMEND_REQUESTED", p.getId(), "Order amendment was accepted by the broker."); events.publishEvent("order", "Order amendment requested: " + p.getStockCode()); return ok(p, "Order amendment request was accepted.");
+        } catch (Exception e) { audit.log("ORDER_AMEND_FAILED", p.getId(), trim(e.getMessage())); return fail("Order amendment failed: " + trim(e.getMessage())); }
+    }
+
+    /** Cancellation remains available during emergency stop so exposure can always be reduced. */
+    public synchronized Result cancel(long id, int quantity) {
+        KiwoomTradeProposal p = find(id);
+        if (!isOpenOrder(p)) return fail("Only open or partially-filled orders can be cancelled.");
+        if (p.getBrokerOrderNo() == null || p.getBrokerOrderNo().isBlank()) return fail("Broker order number is unavailable; synchronize the order first.");
+        if (quantity <= 0 || quantity > p.getRemainingQuantity()) return fail("Cancellation quantity must be within the remaining quantity.");
+        try {
+            JsonNode response = trade.cancelOrder(new KiwoomTradeService.CancelOrderRequest(p.getBrokerOrderNo(), p.getStockCode(), quantity)).block(Duration.ofSeconds(20));
+            p.cancelRequested(response == null ? "" : response.toString()); proposals.save(p); audit.log("ORDER_CANCEL_REQUESTED", p.getId(), "Order cancellation was accepted by the broker."); events.publishEvent("order", "Order cancellation requested: " + p.getStockCode()); return ok(p, "Order cancellation request was accepted; it will be reconciled shortly.");
+        } catch (Exception e) { audit.log("ORDER_CANCEL_FAILED", p.getId(), trim(e.getMessage())); return fail("Order cancellation failed: " + trim(e.getMessage())); }
+    }
+
     private String preflightError(KiwoomTradeProposal p) {
         if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다. 현재는 안전한 dry-run 상태입니다.";
@@ -120,6 +147,7 @@ public class KiwoomProposalOrderService {
     private boolean marketOpen() { LocalDateTime now = LocalDateTime.now(KST); LocalTime time = now.toLocalTime(); return now.getDayOfWeek() != DayOfWeek.SATURDAY && now.getDayOfWeek() != DayOfWeek.SUNDAY && !time.isBefore(LocalTime.of(9, 0)) && !time.isAfter(LocalTime.of(15, 30)); }
     private KiwoomTradeProposal find(long id) { return proposals.findById(id).orElseThrow(() -> new IllegalArgumentException("제안을 찾을 수 없습니다.")); }
     private boolean hasGuards(KiwoomTradeProposal p) { return p.getGuardFlags() != null && !p.getGuardFlags().isBlank(); }
+    private boolean isOpenOrder(KiwoomTradeProposal p) { return p.getStatus() == KiwoomTradeProposal.Status.ORDERED || p.getStatus() == KiwoomTradeProposal.Status.PARTIALLY_FILLED; }
     private String trim(String s) { return s == null ? "unknown" : s.substring(0, Math.min(500, s.length())); }
     private Result ok(KiwoomTradeProposal p, String message) { return new Result(true, message, p); }
     private Result fail(String message) { return new Result(false, message, null); }
