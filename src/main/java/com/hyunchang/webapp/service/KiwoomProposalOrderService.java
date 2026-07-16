@@ -10,6 +10,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Iterator;
 import org.springframework.stereotype.Service;
 
 /** Broker submission is protected by both the approval state machine and pre-flight checks. */
@@ -45,6 +46,14 @@ public class KiwoomProposalOrderService {
         p.draft(); proposals.save(p); audit.log("ORDER_DRAFTED", p.getId(), "주문 초안을 만들었습니다."); return ok(p, "주문 초안을 만들었습니다. 최종 확인 전에는 전송되지 않습니다.");
     }
 
+    public Result updateDraft(long id, int quantity, Long limitPrice) {
+        KiwoomTradeProposal p = find(id);
+        if (p.getStatus() != KiwoomTradeProposal.Status.ORDER_DRAFT) return fail("주문 초안 상태에서만 수량과 가격을 수정할 수 있습니다.");
+        if (quantity <= 0 || limitPrice == null || limitPrice <= 0) return fail("수량과 지정가는 1 이상이어야 합니다.");
+        if (limitPrice * quantity > props.getStrategy().getMaxOrderAmount()) return fail("수정한 주문 금액이 전략 최대 한도를 초과합니다.");
+        p.updateDraft(quantity, limitPrice); proposals.save(p); audit.log("ORDER_DRAFT_UPDATED", p.getId(), "주문 초안의 수량 또는 가격을 수정했습니다."); return ok(p, "주문 초안을 수정했습니다.");
+    }
+
     public synchronized Result execute(long id, boolean confirmed) {
         KiwoomTradeProposal p = find(id);
         if (!confirmed) return fail("최종 확인이 필요합니다.");
@@ -67,9 +76,26 @@ public class KiwoomProposalOrderService {
         if (p.getOrderType() == KiwoomTradeProposal.OrderType.MARKET && !props.getStrategy().isAllowMarketOrders()) return "시장가 주문은 기본 차단되어 있습니다.";
         if (p.getOrderType() != KiwoomTradeProposal.OrderType.LIMIT || p.getLimitPrice() == null) return "실전 전송은 가격이 확정된 지정가 주문만 허용합니다.";
         if (p.getLimitPrice() * p.getQuantity() > props.getStrategy().getMaxOrderAmount()) return "주문 금액이 전략 최대 한도를 초과합니다.";
+        if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
+            long deposit = availableDeposit();
+            if (deposit <= 0) return "주문 직전 예수금을 확인하지 못했습니다.";
+            if (p.getLimitPrice() * p.getQuantity() > deposit) return "주문 금액이 현재 주문 가능 예수금을 초과합니다.";
+        }
         long orderedToday = proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL), List.of(KiwoomTradeProposal.Status.ORDERED), LocalDateTime.now(KST).toLocalDate().atStartOfDay());
         if (orderedToday >= props.getStrategy().getDailyMaxProposals()) return "오늘의 주문 전송 한도에 도달했습니다.";
         return null;
+    }
+
+    private long availableDeposit() {
+        try { return findNumber(trade.getDeposit().block(Duration.ofSeconds(10))); } catch (Exception ignored) { return 0; }
+    }
+
+    private long findNumber(JsonNode node) {
+        if (node == null) return 0;
+        for (String field : List.of("ord_alow_amt", "entr", "ord_psbl_cash")) if (node.hasNonNull(field) && node.path(field).asLong() > 0) return node.path(field).asLong();
+        if (node.isArray()) for (JsonNode child : node) { long value = findNumber(child); if (value > 0) return value; }
+        if (node.isObject()) { Iterator<JsonNode> values = node.elements(); while (values.hasNext()) { long value = findNumber(values.next()); if (value > 0) return value; } }
+        return 0;
     }
 
     private boolean marketOpen() { LocalDateTime now = LocalDateTime.now(KST); LocalTime time = now.toLocalTime(); return now.getDayOfWeek() != DayOfWeek.SATURDAY && now.getDayOfWeek() != DayOfWeek.SUNDAY && !time.isBefore(LocalTime.of(9, 0)) && !time.isAfter(LocalTime.of(15, 30)); }
