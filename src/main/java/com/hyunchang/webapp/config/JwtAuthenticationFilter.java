@@ -11,9 +11,12 @@ import java.io.IOException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.security.web.context.RequestAttributeSecurityContextRepository;
+import org.springframework.security.web.context.SecurityContextRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
@@ -24,6 +27,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JwtUtil jwtUtil;
     private final UserService userService;
     private final TokenService tokenService;
+
+    /**
+     * Mono/Flux 반환 컨트롤러는 ASYNC 디스패치로 응답을 쓰는데, 이 필터는 그때 재실행되지 않는다. 요청 속성 저장소에 컨텍스트를 보존해야 ASYNC 디스패치의
+     * 인가 검사가 인증 상태를 복원할 수 있다 (없으면 Mono 엔드포인트가 전부 401).
+     */
+    private final SecurityContextRepository securityContextRepository =
+            new RequestAttributeSecurityContextRepository();
 
     @Override
     protected void doFilterInternal(
@@ -54,7 +64,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         new UsernamePasswordAuthenticationToken(
                                 userDetails, null, userDetails.getAuthorities());
                 authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                SecurityContextHolder.getContext().setAuthentication(authToken);
+                SecurityContext context = SecurityContextHolder.createEmptyContext();
+                context.setAuthentication(authToken);
+                SecurityContextHolder.setContext(context);
+                securityContextRepository.saveContext(context, request, response);
             }
         }
 
