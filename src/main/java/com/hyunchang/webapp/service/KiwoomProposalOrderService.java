@@ -22,9 +22,9 @@ public class KiwoomProposalOrderService {
     private final KiwoomProperties props;
     private final KiwoomWebsocketClient events;
     private final KiwoomAutoTradeState state;
-    private final KiwoomStrategyAuditService audit;
+    private final KiwoomStrategyAuditService audit; private final KiwoomStrategySettingsService settings;
 
-    public KiwoomProposalOrderService(KiwoomTradeProposalRepository proposals, KiwoomTradeService trade, KiwoomProperties props, KiwoomWebsocketClient events, KiwoomAutoTradeState state, KiwoomStrategyAuditService audit) { this.proposals = proposals; this.trade = trade; this.props = props; this.events = events; this.state = state; this.audit = audit; }
+    public KiwoomProposalOrderService(KiwoomTradeProposalRepository proposals, KiwoomTradeService trade, KiwoomProperties props, KiwoomWebsocketClient events, KiwoomAutoTradeState state, KiwoomStrategyAuditService audit, KiwoomStrategySettingsService settings) { this.proposals = proposals; this.trade = trade; this.props = props; this.events = events; this.state = state; this.audit = audit; this.settings=settings; }
 
     public Result approve(long id) {
         KiwoomTradeProposal p = find(id);
@@ -71,11 +71,11 @@ public class KiwoomProposalOrderService {
     /** Uses the normal approval and pre-flight path; unattended submission is opt-in. */
     public synchronized Result autoExecute(long id) {
         KiwoomTradeProposal p = find(id);
-        if (!props.getStrategy().isAutoExecute()) return fail("Automatic submission is disabled.");
+        if (!settings.current().isAutoExecute()) return fail("Automatic submission is disabled.");
         if (!state.isAutoTrading()) return fail("Auto-trading engine is not running.");
         if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED) return fail("Proposal is not eligible for automatic submission.");
         if (p.getAction() == KiwoomTradeProposal.Action.HOLD) return fail("HOLD proposals cannot be submitted.");
-        if (p.getConfidence() < props.getStrategy().getAutoExecuteMinConfidence()) return fail("Confidence is below automatic submission threshold.");
+        if (p.getConfidence() < settings.current().getAutoExecuteMinConfidence()) return fail("Confidence is below automatic submission threshold.");
         if (p.getOrderType() != KiwoomTradeProposal.OrderType.LIMIT || p.getLimitPrice() == null) return fail("Only limit orders can be submitted automatically.");
         if (hasGuards(p)) return fail("Proposal has safety guards.");
         Result approved = approve(id);
@@ -129,7 +129,7 @@ public class KiwoomProposalOrderService {
         }
         if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
             long deposit = availableDeposit();
-            long buyBudget = Math.round(deposit * props.getStrategy().getMaxBuyDepositPercent() / 100.0);
+            long buyBudget = Math.round(deposit * settings.current().getMaxBuyDepositPercent() / 100.0);
             if (p.getLimitPrice() * p.getQuantity() > buyBudget) return "Buy order exceeds the configured percentage of available deposit.";
         }
         long orderedToday = proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL), List.of(KiwoomTradeProposal.Status.ORDERED), LocalDateTime.now(KST).toLocalDate().atStartOfDay());

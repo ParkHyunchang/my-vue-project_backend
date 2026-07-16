@@ -12,6 +12,9 @@ import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import com.hyunchang.webapp.service.KiwoomOrderSyncService;
+import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
+import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
+import com.hyunchang.webapp.service.prompt.AiPromptService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -42,6 +45,8 @@ public class KiwoomStrategyController {
     private final KiwoomAutoTradeState state;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomOrderSyncService orderSync;
+    private final KiwoomStrategySettingsService settings;
+    private final AiPromptService promptService;
 
     public KiwoomStrategyController(
             KiwoomStrategyService strategy,
@@ -52,7 +57,7 @@ public class KiwoomStrategyController {
             KiwoomTradeProposalRepository proposals,
             KiwoomAutoTradeState state,
             KiwoomStrategyAuditService audit,
-            KiwoomOrderSyncService orderSync) {
+            KiwoomOrderSyncService orderSync, KiwoomStrategySettingsService settings, AiPromptService promptService) {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
@@ -62,6 +67,8 @@ public class KiwoomStrategyController {
         this.state = state;
         this.audit = audit;
         this.orderSync = orderSync;
+        this.settings = settings;
+        this.promptService = promptService;
     }
 
     @GetMapping("/watchlist")
@@ -105,6 +112,12 @@ public class KiwoomStrategyController {
     @PostMapping("/orders/sync")
     public KiwoomOrderSyncService.SyncResult syncOrders() { return orderSync.sync(); }
 
+    @GetMapping("/settings")
+    public Map<String,Object> settings() { var s=settings.current(); return Map.of("autoExecute",s.isAutoExecute(),"autoExecuteMinConfidence",s.getAutoExecuteMinConfidence(),"maxBuyDepositPercent",s.getMaxBuyDepositPercent(),"swingStopLossPercent",s.getSwingStopLossPercent(),"swingTakeProfitPercent",s.getSwingTakeProfitPercent(),"swingMaxHoldingDays",s.getSwingMaxHoldingDays(),"prompt",promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY)); }
+
+    @PatchMapping("/settings")
+    public Map<String,Object> updateSettings(@RequestBody StrategySettingsRequest request) { var s=settings.save(new KiwoomStrategySettingsService.Update(request.autoExecute(),request.autoExecuteMinConfidence(),request.maxBuyDepositPercent(),request.swingStopLossPercent(),request.swingTakeProfitPercent(),request.swingMaxHoldingDays(),request.prompt()),"admin"); audit.log("STRATEGY_SETTINGS_UPDATED",null,"Runtime strategy settings were updated."); return Map.of("success",true,"updatedAt",s.getUpdatedAt().toString()); }
+
     @GetMapping("/config")
     public Map<String, Object> config() { Map<String,Object> result = new HashMap<>(); result.put("enabled", props.getStrategy().isEnabled()); result.put("maxOrderAmount", props.getStrategy().getMaxOrderAmount()); result.put("dailyMaxProposals", props.getStrategy().getDailyMaxProposals()); result.put("cooldownMinutes", props.getStrategy().getCooldownMinutes()); result.put("allowMarketOrders", props.getStrategy().isAllowMarketOrders()); result.put("autoExecute", props.getStrategy().isAutoExecute()); result.put("autoExecuteMinConfidence", props.getStrategy().getAutoExecuteMinConfidence()); result.put("maxBuyDepositPercent", props.getStrategy().getMaxBuyDepositPercent()); result.put("swingStopLossPercent", props.getStrategy().getSwingStopLossPercent()); result.put("swingTakeProfitPercent", props.getStrategy().getSwingTakeProfitPercent()); result.put("swingMaxHoldingDays", props.getStrategy().getSwingMaxHoldingDays()); result.put("orderEnabled", props.isTradeEnabled()); result.put("dryRun", !props.isTradeEnabled()); return result; }
 
@@ -126,4 +139,5 @@ public class KiwoomStrategyController {
     public record DraftUpdateRequest(int quantity, Long limitPrice) {}
     public record OrderAmendRequest(int quantity, Long limitPrice) {}
     public record CancelRequest(int quantity) {}
+    public record StrategySettingsRequest(boolean autoExecute,int autoExecuteMinConfidence,double maxBuyDepositPercent,double swingStopLossPercent,double swingTakeProfitPercent,int swingMaxHoldingDays,String prompt) {}
 }
