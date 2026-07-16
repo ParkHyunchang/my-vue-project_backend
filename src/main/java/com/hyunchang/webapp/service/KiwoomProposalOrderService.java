@@ -68,6 +68,25 @@ public class KiwoomProposalOrderService {
         }
     }
 
+    /** Uses the normal approval and pre-flight path; unattended submission is opt-in. */
+    public synchronized Result autoExecute(long id) {
+        KiwoomTradeProposal p = find(id);
+        if (!props.getStrategy().isAutoExecute()) return fail("Automatic submission is disabled.");
+        if (!state.isAutoTrading()) return fail("Auto-trading engine is not running.");
+        if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED) return fail("Proposal is not eligible for automatic submission.");
+        if (p.getAction() == KiwoomTradeProposal.Action.HOLD) return fail("HOLD proposals cannot be submitted.");
+        if (p.getConfidence() < props.getStrategy().getAutoExecuteMinConfidence()) return fail("Confidence is below automatic submission threshold.");
+        if (p.getOrderType() != KiwoomTradeProposal.OrderType.LIMIT || p.getLimitPrice() == null) return fail("Only limit orders can be submitted automatically.");
+        if (hasGuards(p)) return fail("Proposal has safety guards.");
+        Result approved = approve(id);
+        if (!approved.success()) return approved;
+        Result drafted = draft(id);
+        if (!drafted.success()) return drafted;
+        Result submitted = execute(id, true);
+        if (submitted.success()) audit.log("ORDER_AUTO_SUBMITTED", id, "Automatic policy submitted this order.");
+        return submitted;
+    }
+
     private String preflightError(KiwoomTradeProposal p) {
         if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다. 현재는 안전한 dry-run 상태입니다.";

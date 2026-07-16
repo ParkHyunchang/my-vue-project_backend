@@ -22,6 +22,10 @@ public class KiwoomProperties {
         private int dailyMaxProposals = 10;
         private int cooldownMinutes = 120;
         private boolean allowMarketOrders;
+        /** Explicit second switch for unattended broker submissions. Defaults to safe/off. */
+        private boolean autoExecute;
+        /** AI confidence required before an unattended proposal can be submitted. */
+        private int autoExecuteMinConfidence = 85;
         public boolean isEnabled() { return enabled; }
         public void setEnabled(boolean enabled) { this.enabled = enabled; }
         public long getMaxOrderAmount() { return maxOrderAmount; }
@@ -32,6 +36,10 @@ public class KiwoomProperties {
         public void setCooldownMinutes(int cooldownMinutes) { this.cooldownMinutes = cooldownMinutes; }
         public boolean isAllowMarketOrders() { return allowMarketOrders; }
         public void setAllowMarketOrders(boolean allowMarketOrders) { this.allowMarketOrders = allowMarketOrders; }
+        public boolean isAutoExecute() { return autoExecute; }
+        public void setAutoExecute(boolean autoExecute) { this.autoExecute = autoExecute; }
+        public int getAutoExecuteMinConfidence() { return autoExecuteMinConfidence; }
+        public void setAutoExecuteMinConfidence(int autoExecuteMinConfidence) { this.autoExecuteMinConfidence = Math.max(0, Math.min(100, autoExecuteMinConfidence)); }
     }
 
     public boolean isMock() {

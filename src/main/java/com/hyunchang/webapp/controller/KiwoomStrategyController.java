@@ -100,7 +100,7 @@ public class KiwoomStrategyController {
     public KiwoomOrderSyncService.SyncResult syncOrders() { return orderSync.sync(); }
 
     @GetMapping("/config")
-    public Map<String, Object> config() { return Map.of("enabled", props.getStrategy().isEnabled(), "maxOrderAmount", props.getStrategy().getMaxOrderAmount(), "dailyMaxProposals", props.getStrategy().getDailyMaxProposals(), "cooldownMinutes", props.getStrategy().getCooldownMinutes(), "allowMarketOrders", props.getStrategy().isAllowMarketOrders(), "orderEnabled", props.isTradeEnabled(), "dryRun", !props.isTradeEnabled()); }
+    public Map<String, Object> config() { return Map.of("enabled", props.getStrategy().isEnabled(), "maxOrderAmount", props.getStrategy().getMaxOrderAmount(), "dailyMaxProposals", props.getStrategy().getDailyMaxProposals(), "cooldownMinutes", props.getStrategy().getCooldownMinutes(), "allowMarketOrders", props.getStrategy().isAllowMarketOrders(), "autoExecute", props.getStrategy().isAutoExecute(), "autoExecuteMinConfidence", props.getStrategy().getAutoExecuteMinConfidence(), "orderEnabled", props.isTradeEnabled(), "dryRun", !props.isTradeEnabled()); }
 
     @GetMapping("/health")
     public Map<String, Object> health() { return Map.of("configured", props.isConfigured(), "autoTrading", state.isAutoTrading(), "emergencyStopped", state.isEmergencyStopped(), "decisionRunning", state.isDeciding(), "lastRunAt", state.getLastRunAt() == null ? "" : state.getLastRunAt().toString(), "runCount", runs.count(), "proposalCount", proposals.count(), "recentAudit", audit.recent()); }

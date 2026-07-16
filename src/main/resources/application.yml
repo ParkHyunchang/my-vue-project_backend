@@ -132,3 +132,6 @@ kiwoom:
     daily-max-proposals: ${KIWOOM_STRATEGY_DAILY_MAX_PROPOSALS:10}
     cooldown-minutes: ${KIWOOM_STRATEGY_COOLDOWN_MINUTES:120}
     allow-market-orders: ${KIWOOM_STRATEGY_ALLOW_MARKET_ORDERS:false}
+    # Automatic submission requires this explicit second switch in addition to trade-enabled.
+    auto-execute: ${KIWOOM_STRATEGY_AUTO_EXECUTE:false}
+    auto-execute-min-confidence: ${KIWOOM_STRATEGY_AUTO_EXECUTE_MIN_CONFIDENCE:85}
