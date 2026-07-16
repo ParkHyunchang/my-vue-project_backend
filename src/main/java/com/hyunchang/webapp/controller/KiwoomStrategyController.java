@@ -11,6 +11,7 @@ import com.hyunchang.webapp.service.KiwoomProposalOrderService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
+import com.hyunchang.webapp.service.KiwoomOrderSyncService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -40,6 +41,7 @@ public class KiwoomStrategyController {
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomAutoTradeState state;
     private final KiwoomStrategyAuditService audit;
+    private final KiwoomOrderSyncService orderSync;
 
     public KiwoomStrategyController(
             KiwoomStrategyService strategy,
@@ -49,7 +51,8 @@ public class KiwoomStrategyController {
             KiwoomStrategyRunRepository runs,
             KiwoomTradeProposalRepository proposals,
             KiwoomAutoTradeState state,
-            KiwoomStrategyAuditService audit) {
+            KiwoomStrategyAuditService audit,
+            KiwoomOrderSyncService orderSync) {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
@@ -58,6 +61,7 @@ public class KiwoomStrategyController {
         this.proposals = proposals;
         this.state = state;
         this.audit = audit;
+        this.orderSync = orderSync;
     }
 
     @GetMapping("/watchlist")
@@ -91,6 +95,9 @@ public class KiwoomStrategyController {
 
     @PatchMapping("/proposals/{id}/draft")
     public ResponseEntity<?> updateDraft(@PathVariable long id, @RequestBody DraftUpdateRequest request) { return response(orders.updateDraft(id, request.quantity(), request.limitPrice())); }
+
+    @PostMapping("/orders/sync")
+    public KiwoomOrderSyncService.SyncResult syncOrders() { return orderSync.sync(); }
 
     @GetMapping("/config")
     public Map<String, Object> config() { return Map.of("enabled", props.getStrategy().isEnabled(), "maxOrderAmount", props.getStrategy().getMaxOrderAmount(), "dailyMaxProposals", props.getStrategy().getDailyMaxProposals(), "cooldownMinutes", props.getStrategy().getCooldownMinutes(), "allowMarketOrders", props.getStrategy().isAllowMarketOrders(), "orderEnabled", props.isTradeEnabled(), "dryRun", !props.isTradeEnabled()); }

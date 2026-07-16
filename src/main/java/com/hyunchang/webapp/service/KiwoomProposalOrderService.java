@@ -62,7 +62,7 @@ public class KiwoomProposalOrderService {
         if (preflight != null) return fail(preflight);
         try {
             JsonNode response = trade.placeOrder(new KiwoomTradeService.OrderRequest(p.getAction().name(), p.getStockCode(), p.getQuantity(), p.getLimitPrice(), p.getOrderType().name(), "KRX")).block(Duration.ofSeconds(20));
-            p.ordered(response == null ? "" : response.toString()); proposals.save(p); audit.log("ORDER_SUBMITTED", p.getId(), "키움 주문 전송 요청을 완료했습니다."); events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode()); return ok(p, "주문 전송 요청이 완료되었습니다.");
+            String raw = response == null ? "" : response.toString(); String orderNo = response == null ? null : response.path("ord_no").asText(null); p.ordered(raw, orderNo); proposals.save(p); audit.log("ORDER_SUBMITTED", p.getId(), "키움 주문 전송 요청을 완료했습니다. 주문번호=" + (orderNo == null ? "미확인" : orderNo)); events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode()); return ok(p, "주문 전송 요청이 완료되었습니다.");
         } catch (Exception e) {
             p.orderFailed(trim(e.getMessage())); proposals.save(p); audit.log("ORDER_FAILED", p.getId(), trim(e.getMessage())); events.publishEvent("error", "주문 전송 실패: " + trim(e.getMessage())); return fail("주문 전송 실패: " + trim(e.getMessage()));
         }

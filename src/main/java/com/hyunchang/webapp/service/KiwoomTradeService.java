@@ -39,6 +39,15 @@ public class KiwoomTradeService {
         return request("kt00018", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
     }
 
+    /** Domestic-stock unfilled and filled order lookups used to reconcile submitted proposals. */
+    public Mono<JsonNode> getUnfilledOrders() {
+        return request("ka10075", "/api/dostk/acnt", Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "KRX"));
+    }
+
+    public Mono<JsonNode> getFilledOrders() {
+        return request("ka10076", "/api/dostk/acnt", Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "KRX"));
+    }
+
     /** 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다. */
     public Mono<JsonNode> placeOrder(OrderRequest order) {
         if (!properties.isTradeEnabled()) {
