@@ -4,8 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
-import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
+import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.KiwoomWebsocketClient;
 import java.util.Map;
@@ -81,19 +81,22 @@ public class KiwoomAutoTradeController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> control(@RequestBody ControlRequest request) {
         if (request.enabled() && state.isEmergencyStopped()) {
-            return ResponseEntity.status(409).body(Map.of("success", false, "message", "긴급 중지 상태입니다. 먼저 재개를 명시적으로 실행하세요."));
+            return ResponseEntity.status(409)
+                    .body(Map.of("success", false, "message", "긴급 중지 상태입니다. 먼저 재개를 명시적으로 실행하세요."));
         }
         if (request.enabled() && !properties.isConfigured()) {
+            // 자동매매 ON은 'AI 판단 스케줄 시작'만 의미한다. 주문 전송은 KIWOOM_TRADE_ENABLED가 별도로 게이트한다.
             return ResponseEntity.status(409)
                     .body(
                             Map.of(
                                     "success",
                                     false,
                                     "message",
-                                    "App Key 설정 및 KIWOOM_TRADE_ENABLED=true가 필요합니다."));
+                                    "KIWOOM_APP_KEY / KIWOOM_SECRET_KEY 설정이 필요합니다."));
         }
         state.setAutoTrading(request.enabled());
-        if (request.enabled()) websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
+        if (request.enabled())
+            websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
         return ResponseEntity.ok(Map.of("success", true, "autoTrading", state.isAutoTrading()));
     }
 

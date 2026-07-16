@@ -39,13 +39,22 @@ public class KiwoomTradeService {
         return request("kt00018", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
     }
 
-    /** Domestic-stock unfilled and filled order lookups used to reconcile submitted proposals. */
+    /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. 필드값은 모의 모드에서 실측 확인 필요. */
     public Mono<JsonNode> getUnfilledOrders() {
-        return request("ka10075", "/api/dostk/acnt", Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "KRX"));
+        // all_stk_tp 0:전체 1:종목, trde_tp 0:전체 1:매도 2:매수, stex_tp 0:통합 1:KRX 2:NXT
+        return request(
+                "ka10075",
+                "/api/dostk/acnt",
+                Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "0"));
     }
 
+    /** 체결(ka10076) 조회 — 미체결과 파라미터 구성이 다르다(qry_tp/sell_tp). */
     public Mono<JsonNode> getFilledOrders() {
-        return request("ka10076", "/api/dostk/acnt", Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "KRX"));
+        // qry_tp 0:전체 1:종목, sell_tp 0:전체 1:매도 2:매수, stex_tp 0:통합 1:KRX 2:NXT
+        return request(
+                "ka10076",
+                "/api/dostk/acnt",
+                Map.of("stk_cd", "", "qry_tp", "0", "sell_tp", "0", "ord_no", "", "stex_tp", "0"));
     }
 
     /** 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다. */
@@ -76,31 +85,40 @@ public class KiwoomTradeService {
                 body);
     }
 
-    /** kt10002: replace the remaining quantity/limit price of an open domestic-stock order. */
+    /** kt10002(정정): 미체결 주문의 수량·지정가를 변경합니다. 필드명은 모의 모드에서 실측 확인 필요. */
     public Mono<JsonNode> amendOrder(AmendOrderRequest order) {
-        if (!properties.isTradeEnabled()) return Mono.error(new IllegalStateException("Order transmission is disabled."));
-        if (order.originalOrderNo() == null || order.originalOrderNo().isBlank() || order.quantity() <= 0 || order.price() == null || order.price() <= 0) return Mono.error(new IllegalArgumentException("Original order number, quantity, and limit price are required."));
-        Map<String, String> body = amendmentBody(order.originalOrderNo(), order.stockCode(), order.quantity(), order.price());
+        if (!properties.isTradeEnabled())
+            return Mono.error(
+                    new IllegalStateException(
+                            "주문 전송이 비활성화되어 있습니다. KIWOOM_TRADE_ENABLED=true를 확인하세요."));
+        if (order.originalOrderNo() == null
+                || order.originalOrderNo().isBlank()
+                || order.quantity() <= 0
+                || order.price() == null
+                || order.price() <= 0)
+            return Mono.error(new IllegalArgumentException("원주문번호, 정정 수량, 지정가가 모두 필요합니다."));
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("dmst_stex_tp", "KRX");
+        body.put("orig_ord_no", order.originalOrderNo());
+        body.put("stk_cd", order.stockCode());
+        body.put("mdfy_qty", String.valueOf(order.quantity()));
+        body.put("mdfy_uv", String.valueOf(order.price()));
+        body.put("mdfy_cond_uv", "");
         return request("kt10002", "/api/dostk/ordr", body);
     }
 
-    /** kt10003: cancel all or part of the remaining quantity of an open order. */
+    /** kt10003(취소): 미체결 주문의 잔량 일부/전부를 취소합니다. */
     public Mono<JsonNode> cancelOrder(CancelOrderRequest order) {
-        if (order.originalOrderNo() == null || order.originalOrderNo().isBlank() || order.quantity() <= 0) return Mono.error(new IllegalArgumentException("Original order number and cancellation quantity are required."));
-        Map<String, String> body = amendmentBody(order.originalOrderNo(), order.stockCode(), order.quantity(), null);
-        return request("kt10003", "/api/dostk/ordr", body);
-    }
-
-    private Map<String, String> amendmentBody(String originalOrderNo, String stockCode, int quantity, Long price) {
+        if (order.originalOrderNo() == null
+                || order.originalOrderNo().isBlank()
+                || order.quantity() <= 0)
+            return Mono.error(new IllegalArgumentException("원주문번호와 취소 수량이 필요합니다."));
         Map<String, String> body = new LinkedHashMap<>();
         body.put("dmst_stex_tp", "KRX");
-        body.put("stk_cd", stockCode);
-        body.put("ord_qty", String.valueOf(quantity));
-        body.put("ord_uv", price == null ? "" : String.valueOf(price));
-        body.put("trde_tp", "0");
-        body.put("cond_uv", "");
-        body.put("org_ord_no", originalOrderNo);
-        return body;
+        body.put("orig_ord_no", order.originalOrderNo());
+        body.put("stk_cd", order.stockCode());
+        body.put("cncl_qty", String.valueOf(order.quantity()));
+        return request("kt10003", "/api/dostk/ordr", body);
     }
 
     private Mono<JsonNode> request(String apiId, String path, Map<String, ?> body) {
@@ -147,6 +165,9 @@ public class KiwoomTradeService {
             Long price,
             String orderType,
             String exchange) {}
-    public record AmendOrderRequest(String originalOrderNo, String stockCode, int quantity, Long price) {}
+
+    public record AmendOrderRequest(
+            String originalOrderNo, String stockCode, int quantity, Long price) {}
+
     public record CancelOrderRequest(String originalOrderNo, String stockCode, int quantity) {}
 }
