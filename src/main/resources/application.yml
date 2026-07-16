@@ -110,3 +110,15 @@ app:
     land-key: ${REALLAND_API_KEY:}
     # VWorld 키 발급 시 등록한 서비스 URL/도메인 (요청 도메인 검증용)
     land-domain: ${VWORLD_DOMAIN:hyunchang.synology.me:3101}
+
+# 키움 REST / WebSocket 설정
+# 실제 키는 절대 저장소에 넣지 말고 환경 변수(KIWOOM_APP_KEY, KIWOOM_SECRET_KEY)로만 주입합니다.
+# 안전을 위해 기본값은 모의투자이며, 주문 전송은 별도의 명시적 환경 변수로만 켜집니다.
+kiwoom:
+  mode: ${KIWOOM_MODE:mock} # mock | live
+  app-key: ${KIWOOM_APP_KEY:}
+  secret-key: ${KIWOOM_SECRET_KEY:}
+  account-no: ${KIWOOM_ACCOUNT_NO:}
+  trade-enabled: ${KIWOOM_TRADE_ENABLED:false}
+  refresh-before-seconds: ${KIWOOM_REFRESH_BEFORE_SECONDS:300}
+  min-request-interval-ms: ${KIWOOM_MIN_REQUEST_INTERVAL_MS:250}

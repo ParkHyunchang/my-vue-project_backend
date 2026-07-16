@@ -106,6 +106,10 @@ public class SecurityConfig {
                                     .authenticated()
                                     .requestMatchers("/api/admin/**")
                                     .hasRole("ADMIN")
+                                    // 키움 실계좌 API: 잔고 조회(summary)·체결 이벤트(events)도 실계좌
+                                    // 정보라 일반 로그인 사용자에게 노출하면 안 됨
+                                    .requestMatchers("/api/kiwoom/**")
+                                    .hasRole("ADMIN")
                                     .requestMatchers("/api/premium/**")
                                     .hasAnyRole("ADMIN", "PREMIUM")
                                     .anyRequest()
