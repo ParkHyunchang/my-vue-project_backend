@@ -81,7 +81,7 @@ public class KiwoomStrategyController {
     public ResponseEntity<?> execute(@PathVariable long id, @RequestBody ExecuteRequest request) { return response(orders.execute(id, request != null && request.confirmed())); }
 
     @GetMapping("/config")
-    public Map<String, Object> config() { return Map.of("enabled", props.getStrategy().isEnabled(), "maxOrderAmount", props.getStrategy().getMaxOrderAmount(), "dailyMaxProposals", props.getStrategy().getDailyMaxProposals(), "cooldownMinutes", props.getStrategy().getCooldownMinutes(), "orderEnabled", props.isTradeEnabled(), "dryRun", !props.isTradeEnabled()); }
+    public Map<String, Object> config() { return Map.of("enabled", props.getStrategy().isEnabled(), "maxOrderAmount", props.getStrategy().getMaxOrderAmount(), "dailyMaxProposals", props.getStrategy().getDailyMaxProposals(), "cooldownMinutes", props.getStrategy().getCooldownMinutes(), "allowMarketOrders", props.getStrategy().isAllowMarketOrders(), "orderEnabled", props.isTradeEnabled(), "dryRun", !props.isTradeEnabled()); }
 
     @GetMapping("/runs")
     public List<Map<String, Object>> history(@RequestParam(defaultValue = "10") int limit) {

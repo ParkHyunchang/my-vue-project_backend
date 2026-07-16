@@ -131,3 +131,4 @@ kiwoom:
     max-order-amount: ${KIWOOM_STRATEGY_MAX_ORDER_AMOUNT:500000}
     daily-max-proposals: ${KIWOOM_STRATEGY_DAILY_MAX_PROPOSALS:10}
     cooldown-minutes: ${KIWOOM_STRATEGY_COOLDOWN_MINUTES:120}
+    allow-market-orders: ${KIWOOM_STRATEGY_ALLOW_MARKET_ORDERS:false}
