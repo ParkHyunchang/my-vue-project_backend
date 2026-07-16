@@ -132,10 +132,10 @@ kiwoom:
     daily-max-proposals: ${KIWOOM_STRATEGY_DAILY_MAX_PROPOSALS:10}
     cooldown-minutes: ${KIWOOM_STRATEGY_COOLDOWN_MINUTES:120}
     allow-market-orders: ${KIWOOM_STRATEGY_ALLOW_MARKET_ORDERS:false}
-    # Automatic submission requires this explicit second switch in addition to trade-enabled.
-    auto-execute: ${KIWOOM_STRATEGY_AUTO_EXECUTE:false}
+    # 자동 주문 전송(autoExecute)은 env로 켤 수 없음 — DB 설정(kiwoom_strategy_settings)에서 관리자가 명시적으로만 활성화.
+    # 아래 값은 최초 시드용 기본값이며 이후에는 DB 설정이 우선한다.
     auto-execute-min-confidence: ${KIWOOM_STRATEGY_AUTO_EXECUTE_MIN_CONFIDENCE:85}
-    # Conservative short-swing guardrails. These are enforced server-side for BUY proposals.
+    # 보수적 단기 스윙 가드 — BUY 제안에 대해 서버측에서도 강제 검사.
     max-buy-deposit-percent: ${KIWOOM_STRATEGY_MAX_BUY_DEPOSIT_PERCENT:10}
     swing-stop-loss-percent: ${KIWOOM_STRATEGY_SWING_STOP_LOSS_PERCENT:3}
     swing-take-profit-percent: ${KIWOOM_STRATEGY_SWING_TAKE_PROFIT_PERCENT:6}
