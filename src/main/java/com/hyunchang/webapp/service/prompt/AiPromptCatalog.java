@@ -27,6 +27,7 @@ public final class AiPromptCatalog {
     public static final String REALESTATE_TRADE = "REALESTATE_TRADE";
     public static final String REALESTATE_LAND = "REALESTATE_LAND";
     public static final String DIARY_ANALYSIS = "DIARY_ANALYSIS";
+    public static final String KIWOOM_TRADE_STRATEGY = "KIWOOM_TRADE_STRATEGY";
 
     private static final Map<String, PromptDefinition> CATALOG = new LinkedHashMap<>();
 
@@ -59,6 +60,15 @@ public final class AiPromptCatalog {
         register(realEstateLand());
         // 일기
         register(diaryAnalysis());
+        register(kiwoomTradeStrategy());
+    }
+
+    private static PromptDefinition kiwoomTradeStrategy() {
+        return new PromptDefinition(KIWOOM_TRADE_STRATEGY, "키움 자동매매 전략 제안", "주식", "주문을 실행하지 않고 제안만 생성합니다.",
+                List.of(new PromptVariable("현재시각", "KST 현재 시각"), new PromptVariable("예수금", "주문 가능 금액"), new PromptVariable("보유종목", "보유 수량과 시세"), new PromptVariable("관심종목", "관심종목과 시세")),
+                "당신은 KRX 단기 트레이더입니다. 제공된 데이터만 근거로 판단하세요. 확신이 없으면 HOLD를 제안하세요. 목록 밖 종목은 제안하지 말고 SELL 수량은 보유 수량을 넘기지 마세요.",
+                "현재 시각: {{현재시각}}\n예수금: {{예수금}}\n보유 종목:\n{{보유종목}}\n관심 종목:\n{{관심종목}}",
+                "JSON만 반환하세요. {\"marketView\":\"1~2문장\",\"decisions\":[{\"action\":\"BUY|SELL|HOLD\",\"stockCode\":\"6자리\",\"stockName\":\"\",\"quantity\":0,\"orderType\":\"LIMIT|MARKET\",\"limitPrice\":null,\"confidence\":0,\"reason\":\"\"}]} 수량과 가격은 1 이상, HOLD도 허용, 종목당 하나만 반환하세요.");
     }
 
     // ─────────────────────────────────────────────────────────────────────

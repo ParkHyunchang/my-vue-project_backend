@@ -14,6 +14,22 @@ public class KiwoomProperties {
     private boolean tradeEnabled;
     private long refreshBeforeSeconds = 300;
     private long minRequestIntervalMs = 250;
+    private Strategy strategy = new Strategy();
+
+    public static class Strategy {
+        private boolean enabled = true;
+        private long maxOrderAmount = 500_000;
+        private int dailyMaxProposals = 10;
+        private int cooldownMinutes = 120;
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean enabled) { this.enabled = enabled; }
+        public long getMaxOrderAmount() { return maxOrderAmount; }
+        public void setMaxOrderAmount(long maxOrderAmount) { this.maxOrderAmount = maxOrderAmount; }
+        public int getDailyMaxProposals() { return dailyMaxProposals; }
+        public void setDailyMaxProposals(int dailyMaxProposals) { this.dailyMaxProposals = dailyMaxProposals; }
+        public int getCooldownMinutes() { return cooldownMinutes; }
+        public void setCooldownMinutes(int cooldownMinutes) { this.cooldownMinutes = cooldownMinutes; }
+    }
 
     public boolean isMock() {
         return !"live".equalsIgnoreCase(mode);
@@ -87,4 +103,7 @@ public class KiwoomProperties {
     public void setMinRequestIntervalMs(long minRequestIntervalMs) {
         this.minRequestIntervalMs = minRequestIntervalMs;
     }
+
+    public Strategy getStrategy() { return strategy; }
+    public void setStrategy(Strategy strategy) { this.strategy = strategy == null ? new Strategy() : strategy; }
 }

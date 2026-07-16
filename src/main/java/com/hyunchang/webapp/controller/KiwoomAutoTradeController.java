@@ -3,11 +3,11 @@ package com.hyunchang.webapp.controller;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.KiwoomAuthService;
+import com.hyunchang.webapp.service.KiwoomAutoTradeState;
+import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.KiwoomWebsocketClient;
-import java.util.List;
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
@@ -28,17 +28,22 @@ public class KiwoomAutoTradeController {
     private final KiwoomAuthService authService;
     private final KiwoomTradeService tradeService;
     private final KiwoomWebsocketClient websocketClient;
-    private final AtomicBoolean autoTrading = new AtomicBoolean(false);
+    private final KiwoomAutoTradeState state;
+    private final KiwoomStrategyService strategyService;
 
     public KiwoomAutoTradeController(
             KiwoomProperties properties,
             KiwoomAuthService authService,
             KiwoomTradeService tradeService,
-            KiwoomWebsocketClient websocketClient) {
+            KiwoomWebsocketClient websocketClient,
+            KiwoomAutoTradeState state,
+            KiwoomStrategyService strategyService) {
         this.properties = properties;
         this.authService = authService;
         this.tradeService = tradeService;
         this.websocketClient = websocketClient;
+        this.state = state;
+        this.strategyService = strategyService;
     }
 
     @GetMapping("/status")
@@ -51,7 +56,7 @@ public class KiwoomAutoTradeController {
                 "tokenValid",
                 authService.hasUsableToken(),
                 "autoTrading",
-                autoTrading.get(),
+                state.isAutoTrading(),
                 "mode",
                 properties.getMode(),
                 "orderEnabled",
@@ -69,7 +74,7 @@ public class KiwoomAutoTradeController {
     @PostMapping("/control")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> control(@RequestBody ControlRequest request) {
-        if (request.enabled() && (!properties.isConfigured() || !properties.isTradeEnabled())) {
+        if (request.enabled() && !properties.isConfigured()) {
             return ResponseEntity.status(409)
                     .body(
                             Map.of(
@@ -78,9 +83,9 @@ public class KiwoomAutoTradeController {
                                     "message",
                                     "App Key 설정 및 KIWOOM_TRADE_ENABLED=true가 필요합니다."));
         }
-        autoTrading.set(request.enabled());
-        if (request.enabled()) websocketClient.connectAndSubscribe(List.of("005930", "000660"));
-        return ResponseEntity.ok(Map.of("success", true, "autoTrading", autoTrading.get()));
+        state.setAutoTrading(request.enabled());
+        if (request.enabled()) websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
+        return ResponseEntity.ok(Map.of("success", true, "autoTrading", state.isAutoTrading()));
     }
 
     @GetMapping("/summary")

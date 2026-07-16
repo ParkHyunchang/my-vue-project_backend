@@ -4,6 +4,10 @@
 
 # JPA Configuration
 spring:
+  task:
+    scheduling:
+      pool:
+        size: 3
   jpa:
     database-platform: org.hibernate.dialect.MySQLDialect
 
@@ -122,3 +126,8 @@ kiwoom:
   trade-enabled: ${KIWOOM_TRADE_ENABLED:false}
   refresh-before-seconds: ${KIWOOM_REFRESH_BEFORE_SECONDS:300}
   min-request-interval-ms: ${KIWOOM_MIN_REQUEST_INTERVAL_MS:250}
+  strategy:
+    enabled: ${KIWOOM_STRATEGY_ENABLED:true}
+    max-order-amount: ${KIWOOM_STRATEGY_MAX_ORDER_AMOUNT:500000}
+    daily-max-proposals: ${KIWOOM_STRATEGY_DAILY_MAX_PROPOSALS:10}
+    cooldown-minutes: ${KIWOOM_STRATEGY_COOLDOWN_MINUTES:120}
