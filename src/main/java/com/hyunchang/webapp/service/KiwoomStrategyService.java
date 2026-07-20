@@ -3,13 +3,10 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
-import com.hyunchang.webapp.dto.StockPriceDto;
 import com.hyunchang.webapp.entity.KiwoomStrategyRun;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
-import com.hyunchang.webapp.entity.KiwoomWatchItem;
 import com.hyunchang.webapp.repository.KiwoomStrategyRunRepository;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
-import com.hyunchang.webapp.repository.KiwoomWatchItemRepository;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
@@ -29,24 +26,26 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * 키움 자동매매 전략 엔진 — 계좌 잔고·관심종목·스윙지표를 모아 AI에 구조화 JSON 판단을 요청하고, 제안(proposal)으로 저장하는 데까지만 담당한다. 주문 전송은
- * KiwoomProposalOrderService가 별도의 승인·사전점검 게이트를 거쳐 수행한다.
+ * 키움 자동매매 전략 엔진 — 계좌 잔고·KRX 자동 스캔 스윙 후보·스윙지표를 모아 AI에 구조화 JSON 판단을 요청하고, 제안(proposal)으로 저장하는 데까지만
+ * 담당한다. 사람이 등록하는 관심종목은 없다 — 매수 후보군은 전부 자동 스캔에서 나온다. 주문 전송은 KiwoomProposalOrderService가 별도의 승인·사전점검
+ * 게이트를 거쳐 수행한다.
  */
 @Service
 public class KiwoomStrategyService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
-    /** 압축 프롬프트에서 보유·관심·스윙 목록에 남기는 최대 줄 수 (Groq 8000자 한도 대응) */
+    /** 압축 프롬프트에서 보유·매매후보·스윙 목록에 남기는 최대 줄 수 (Groq 8000자 한도 대응) */
     private static final int COMPACT_MAX_LINES = 10;
+
+    /** 유니버스에 편입되는 스윙 후보 상한 — ShortSwingCandidateService.MAX_SCREENED_CANDIDATES와 동일한 관례. */
+    private static final int SWING_CANDIDATE_LIMIT = 20;
 
     private final KiwoomProperties props;
     private final KiwoomTradeService trade;
     private final KiwoomAutoTradeState state;
-    private final StockService stocks;
     private final AiPromptService prompts;
     private final AiProviderChain ai;
     private final ObjectMapper json;
-    private final KiwoomWatchItemRepository watch;
     private final KiwoomStrategyRunRepository runs;
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomWebsocketClient events;
@@ -59,11 +58,9 @@ public class KiwoomStrategyService {
             KiwoomProperties props,
             KiwoomTradeService trade,
             KiwoomAutoTradeState state,
-            StockService stocks,
             AiPromptService prompts,
             AiProviderChain ai,
             ObjectMapper json,
-            KiwoomWatchItemRepository watch,
             KiwoomStrategyRunRepository runs,
             KiwoomTradeProposalRepository proposals,
             KiwoomWebsocketClient events,
@@ -74,11 +71,9 @@ public class KiwoomStrategyService {
         this.props = props;
         this.trade = trade;
         this.state = state;
-        this.stocks = stocks;
         this.prompts = prompts;
         this.ai = ai;
         this.json = json;
-        this.watch = watch;
         this.runs = runs;
         this.proposals = proposals;
         this.events = events;
@@ -125,7 +120,8 @@ public class KiwoomStrategyService {
                 events.publishEvent("strategy", "일일 손실 한도 발동 — 오늘 남은 시간 동안 신규 매수를 차단합니다.");
             }
 
-            // 유니버스 = 실계좌 보유 종목 ∪ 관심종목. 보유 종목이 있어야 SELL 판단이 가능하다.
+            // 유니버스 = 실계좌 보유 종목 ∪ KRX 자동 스캔 스윙 후보(최대 SWING_CANDIDATE_LIMIT개).
+            // 사람이 등록하는 관심종목은 없다 — 보유 종목이 있어야 SELL 판단이 가능하다.
             List<KiwoomTradeService.Holding> holdings = trade.parseHoldings(balance);
             Map<String, String> universe = new LinkedHashMap<>();
             Map<String, Integer> sellableQty = new HashMap<>();
@@ -135,24 +131,35 @@ public class KiwoomStrategyService {
                 sellableQty.put(h.code(), h.sellable());
                 holdingLines.add(promptLine(h));
             }
-            List<String> watchLines = new ArrayList<>();
-            for (KiwoomWatchItem item : watch.findAll()) {
-                universe.putIfAbsent(item.getStockCode(), item.getStockName());
-                if (!sellableQty.containsKey(item.getStockCode())) {
-                    watchLines.add(
-                            quoteLine(item.getStockCode(), item.getStockName(), item.getNote()));
+            // 스윙 후보는 이번 판단 안에서 한 번만 조회해 유니버스 구성·신호 텍스트·BUY 검증에 함께 재사용한다.
+            Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates =
+                    indexByCode(currentSwingCandidates());
+            List<String> candidateLines = new ArrayList<>();
+            for (KrxOpenApiService.KrSwingCandidate c : swingCandidates.values()) {
+                universe.putIfAbsent(c.bareCode(), c.name());
+                if (!sellableQty.containsKey(c.bareCode())) {
+                    candidateLines.add(candidateLine(c));
                 }
             }
-            // 스윙 후보는 이번 판단 안에서 한 번만 조회해 신호 텍스트 생성과 BUY 검증에 함께 재사용한다.
-            Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates =
-                    indexByCode(fetchSwingCandidates());
             String swing = swingSignals(swingCandidates, universe.keySet());
             String guardRules = guardRules(deposit);
 
             String prompt =
-                    render(deposit, holdingLines, watchLines, swing, guardRules, Integer.MAX_VALUE);
+                    render(
+                            deposit,
+                            holdingLines,
+                            candidateLines,
+                            swing,
+                            guardRules,
+                            Integer.MAX_VALUE);
             String compactPrompt =
-                    render(deposit, holdingLines, watchLines, swing, guardRules, COMPACT_MAX_LINES);
+                    render(
+                            deposit,
+                            holdingLines,
+                            candidateLines,
+                            swing,
+                            guardRules,
+                            COMPACT_MAX_LINES);
             run.setPromptChars(prompt.length());
 
             AiProviderChain.ChainResult result = ai.analyze(prompt, compactPrompt, true);
@@ -215,7 +222,7 @@ public class KiwoomStrategyService {
         }
     }
 
-    /** 실시간 시세(0B) 구독 대상 — 보유 종목 ∪ 관심종목. 잔고 조회 실패 시 관심종목만 사용한다. */
+    /** 실시간 시세(0B) 구독 대상 — 보유 종목 ∪ 스윙 후보. 잔고 조회 실패 시 후보만 사용한다. */
     public List<String> subscriptionCodes() {
         LinkedHashSet<String> codes = new LinkedHashSet<>();
         try {
@@ -226,8 +233,17 @@ public class KiwoomStrategyService {
         } catch (Exception ignored) {
             // 잔고 조회 실패는 구독 대상 축소로만 반영한다.
         }
-        watch.findAll().forEach(item -> codes.add(item.getStockCode()));
+        currentSwingCandidates().forEach(c -> codes.add(c.bareCode()));
         return List.copyOf(codes);
+    }
+
+    /** 지금 유니버스에 편입되는 스윙 후보 — 컨트롤러의 읽기전용 조회(/universe)와 실시간 구독 대상이 이걸 공유한다. */
+    public List<KrxOpenApiService.KrSwingCandidate> currentSwingCandidates() {
+        try {
+            return krx.getShortSwingCandidates(SWING_CANDIDATE_LIMIT);
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     private KiwoomTradeProposal validated(
@@ -327,7 +343,7 @@ public class KiwoomStrategyService {
     private String render(
             long deposit,
             List<String> holdingLines,
-            List<String> watchLines,
+            List<String> candidateLines,
             String swing,
             String guardRules,
             int maxLines) {
@@ -335,7 +351,7 @@ public class KiwoomStrategyService {
         vars.put("현재시각", LocalDateTime.now(KST).toString());
         vars.put("예수금", String.format("%,d", deposit));
         vars.put("보유종목", joinCapped(holdingLines, maxLines, "보유 종목 없음"));
-        vars.put("관심종목", joinCapped(watchLines, maxLines, "관심 종목 없음"));
+        vars.put("매매후보", joinCapped(candidateLines, maxLines, "매매 후보 없음"));
         vars.put("스윙지표", capLines(swing, maxLines));
         vars.put("하드가드규칙", guardRules);
         return prompts.render(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, vars);
@@ -378,15 +394,6 @@ public class KiwoomStrategyService {
         return String.join("\n", java.util.Arrays.copyOf(lines, maxLines));
     }
 
-    /** 스윙 후보 조회 실패는 빈 목록으로 처리한다 — 이후 BUY 검증은 자연히 전부 막힌다. */
-    private List<KrxOpenApiService.KrSwingCandidate> fetchSwingCandidates() {
-        try {
-            return krx.getShortSwingCandidates(200);
-        } catch (Exception e) {
-            return List.of();
-        }
-    }
-
     private Map<String, KrxOpenApiService.KrSwingCandidate> indexByCode(
             List<KrxOpenApiService.KrSwingCandidate> candidates) {
         Map<String, KrxOpenApiService.KrSwingCandidate> indexed = new LinkedHashMap<>();
@@ -422,23 +429,19 @@ public class KiwoomStrategyService {
         }
     }
 
-    private String quoteLine(String code, String name, String note) {
-        StockPriceDto q = stocks.getQuote(code, "KR");
-        String priceText =
-                q == null
-                        ? "시세 미확인"
-                        : "현재가 "
-                                + String.format("%,d", Math.round(q.getPrice()))
-                                + "원 ("
-                                + (q.getChangePercent() >= 0 ? "+" : "")
-                                + q.getChangePercent()
-                                + "%)";
-        return name
+    /** KrSwingCandidate가 이미 가진 시세로 문자열을 만든다 — 추가 API 호출이 없다. */
+    private String candidateLine(KrxOpenApiService.KrSwingCandidate c) {
+        return c.name()
                 + "("
-                + code
-                + ") "
-                + priceText
-                + (note == null || note.isBlank() ? "" : " 메모: " + note);
+                + c.bareCode()
+                + ") 현재가 "
+                + String.format("%,d", Math.round(c.closePrice()))
+                + "원 ("
+                + (c.changePercent() >= 0 ? "+" : "")
+                + c.changePercent()
+                + "%) · 거래량 20일평균 대비 "
+                + c.volumeRatio()
+                + "배";
     }
 
     private long number(JsonNode n, String... names) {

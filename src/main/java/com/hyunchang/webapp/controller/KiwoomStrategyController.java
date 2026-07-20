@@ -3,10 +3,8 @@ package com.hyunchang.webapp.controller;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomStrategyRun;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
-import com.hyunchang.webapp.entity.KiwoomWatchItem;
 import com.hyunchang.webapp.repository.KiwoomStrategyRunRepository;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
-import com.hyunchang.webapp.repository.KiwoomWatchItemRepository;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomOrderSyncService;
 import com.hyunchang.webapp.service.KiwoomProposalOrderService;
@@ -23,7 +21,6 @@ import java.util.Map;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -40,7 +37,6 @@ public class KiwoomStrategyController {
     private final KiwoomStrategyService strategy;
     private final KiwoomProposalOrderService orders;
     private final KiwoomProperties props;
-    private final KiwoomWatchItemRepository watch;
     private final KiwoomStrategyRunRepository runs;
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomAutoTradeState state;
@@ -54,7 +50,6 @@ public class KiwoomStrategyController {
             KiwoomStrategyService strategy,
             KiwoomProposalOrderService orders,
             KiwoomProperties props,
-            KiwoomWatchItemRepository watch,
             KiwoomStrategyRunRepository runs,
             KiwoomTradeProposalRepository proposals,
             KiwoomAutoTradeState state,
@@ -66,7 +61,6 @@ public class KiwoomStrategyController {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
-        this.watch = watch;
         this.runs = runs;
         this.proposals = proposals;
         this.state = state;
@@ -77,31 +71,21 @@ public class KiwoomStrategyController {
         this.risk = risk;
     }
 
-    @GetMapping("/watchlist")
-    public List<KiwoomWatchItem> list() {
-        return watch.findAll();
-    }
-
-    @PostMapping("/watchlist")
-    public ResponseEntity<?> add(@RequestBody WatchRequest request) {
-        if (request.stockCode() == null || !request.stockCode().matches("\\d{6}"))
-            return ResponseEntity.badRequest().body(Map.of("message", "종목코드는 6자리 숫자여야 합니다."));
-        if (watch.existsByStockCode(request.stockCode()))
-            return ResponseEntity.status(409).body(Map.of("message", "이미 관심종목에 있습니다."));
-        KiwoomWatchItem item = new KiwoomWatchItem();
-        item.setStockCode(request.stockCode());
-        item.setStockName(
-                request.stockName() == null || request.stockName().isBlank()
-                        ? request.stockCode()
-                        : request.stockName());
-        item.setNote(request.note());
-        return ResponseEntity.ok(watch.save(item));
-    }
-
-    @DeleteMapping("/watchlist/{id}")
-    public ResponseEntity<Void> remove(@PathVariable Long id) {
-        watch.deleteById(id);
-        return ResponseEntity.noContent().build();
+    /** 지금 유니버스에 편입된 KRX 자동 스캔 매매 후보 — 읽기 전용. 사람이 등록하는 관심종목은 없다. */
+    @GetMapping("/universe")
+    public List<Map<String, Object>> universe() {
+        return strategy.currentSwingCandidates().stream()
+                .map(
+                        c ->
+                                Map.<String, Object>of(
+                                        "code", c.bareCode(),
+                                        "name", c.name(),
+                                        "market", c.market(),
+                                        "closePrice", c.closePrice(),
+                                        "changePercent", c.changePercent(),
+                                        "volumeRatio", c.volumeRatio(),
+                                        "asOf", c.asOf().toString()))
+                .toList();
     }
 
     @PostMapping("/decide")
@@ -307,8 +291,6 @@ public class KiwoomStrategyController {
                 ? ResponseEntity.ok(result)
                 : ResponseEntity.status(409).body(Map.of("message", result.message()));
     }
-
-    public record WatchRequest(String stockCode, String stockName, String note) {}
 
     public record RejectRequest(String reason) {}
 
