@@ -143,7 +143,10 @@ public class KiwoomStrategyService {
                             quoteLine(item.getStockCode(), item.getStockName(), item.getNote()));
                 }
             }
-            String swing = swingSignals(universe.keySet());
+            // 스윙 후보는 이번 판단 안에서 한 번만 조회해 신호 텍스트 생성과 BUY 검증에 함께 재사용한다.
+            Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates =
+                    indexByCode(fetchSwingCandidates());
+            String swing = swingSignals(swingCandidates, universe.keySet());
             String guardRules = guardRules(deposit);
 
             String prompt =
@@ -176,7 +179,8 @@ public class KiwoomStrategyService {
             int saved = 0;
             Set<String> unique = new HashSet<>();
             for (JsonNode d : root.path("decisions")) {
-                KiwoomTradeProposal p = validated(d, universe, sellableQty, unique);
+                KiwoomTradeProposal p =
+                        validated(d, universe, sellableQty, swingCandidates, unique);
                 if (p == null) continue;
                 applyGuardFlags(p, deposit);
                 p.setRun(run);
@@ -230,6 +234,7 @@ public class KiwoomStrategyService {
             JsonNode d,
             Map<String, String> universe,
             Map<String, Integer> sellableQty,
+            Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
             Set<String> unique) {
         try {
             String code = d.path("stockCode").asText();
@@ -240,7 +245,7 @@ public class KiwoomStrategyService {
                     || !unique.add(code)
                     || d.path("confidence").asInt(-1) < 0
                     || d.path("confidence").asInt() > 100) return null;
-            if (action == KiwoomTradeProposal.Action.BUY && !hasVerifiedSwingSignal(code))
+            if (action == KiwoomTradeProposal.Action.BUY && !swingCandidates.containsKey(code))
                 return null;
             int qty = d.path("quantity").asInt();
             if (action != KiwoomTradeProposal.Action.HOLD && qty <= 0) return null;
@@ -373,37 +378,38 @@ public class KiwoomStrategyService {
         return String.join("\n", java.util.Arrays.copyOf(lines, maxLines));
     }
 
-    private String swingSignals(Set<String> universeCodes) {
+    /** 스윙 후보 조회 실패는 빈 목록으로 처리한다 — 이후 BUY 검증은 자연히 전부 막힌다. */
+    private List<KrxOpenApiService.KrSwingCandidate> fetchSwingCandidates() {
         try {
-            Map<String, KrxOpenApiService.KrSwingCandidate> indexed = new HashMap<>();
-            for (KrxOpenApiService.KrSwingCandidate c : krx.getShortSwingCandidates(200)) {
-                indexed.put(c.symbol().replaceAll("\\.(KS|KQ)$", ""), c);
-            }
-            StringBuilder text = new StringBuilder();
-            for (String code : universeCodes) {
-                KrxOpenApiService.KrSwingCandidate c = indexed.get(code);
-                if (c != null) {
-                    text.append(code)
-                            .append(" 등락 ")
-                            .append(c.changePercent())
-                            .append("% · 거래량 20일평균 대비 ")
-                            .append(c.volumeRatio())
-                            .append("배\n");
-                }
-            }
-            return text.length() == 0 ? "검증된 스윙 신호가 없습니다. BUY를 제안하지 마세요." : text.toString();
+            return krx.getShortSwingCandidates(200);
         } catch (Exception e) {
-            return "스윙 신호 조회에 실패했습니다. BUY를 제안하지 마세요.";
+            return List.of();
         }
     }
 
-    private boolean hasVerifiedSwingSignal(String code) {
-        try {
-            return krx.getShortSwingCandidates(200).stream()
-                    .anyMatch(c -> code.equals(c.symbol().replaceAll("\\.(KS|KQ)$", "")));
-        } catch (Exception e) {
-            return false;
+    private Map<String, KrxOpenApiService.KrSwingCandidate> indexByCode(
+            List<KrxOpenApiService.KrSwingCandidate> candidates) {
+        Map<String, KrxOpenApiService.KrSwingCandidate> indexed = new LinkedHashMap<>();
+        for (KrxOpenApiService.KrSwingCandidate c : candidates) indexed.put(c.bareCode(), c);
+        return indexed;
+    }
+
+    private String swingSignals(
+            Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
+            Set<String> universeCodes) {
+        StringBuilder text = new StringBuilder();
+        for (String code : universeCodes) {
+            KrxOpenApiService.KrSwingCandidate c = swingCandidates.get(code);
+            if (c != null) {
+                text.append(code)
+                        .append(" 등락 ")
+                        .append(c.changePercent())
+                        .append("% · 거래량 20일평균 대비 ")
+                        .append(c.volumeRatio())
+                        .append("배\n");
+            }
         }
+        return text.length() == 0 ? "검증된 스윙 신호가 없습니다. BUY를 제안하지 마세요." : text.toString();
     }
 
     private JsonNode parse(String s) {

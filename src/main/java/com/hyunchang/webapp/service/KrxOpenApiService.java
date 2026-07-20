@@ -275,7 +275,12 @@ public class KrxOpenApiService {
             long volume,
             long average20DayVolume,
             double volumeRatio,
-            LocalDate asOf) {}
+            LocalDate asOf) {
+        /** symbol의 ".KS"/".KQ" 접미사를 제거한 6자리 코드. Holding.code()와 같은 포맷으로 맞춘다. */
+        public String bareCode() {
+            return symbol.replaceAll("\\.(KS|KQ)$", "");
+        }
+    }
 
     /** 해당 심볼이 ETN인지 여부 (검색 결과 타입 라벨 구분용). ETP 캐시 로드 후 판정. */
     public boolean isEtn(String symbol) {
