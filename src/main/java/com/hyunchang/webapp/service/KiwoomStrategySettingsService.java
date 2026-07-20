@@ -37,6 +37,9 @@ public class KiwoomStrategySettingsService {
         s.setSwingStopLossPercent(p.getSwingStopLossPercent());
         s.setSwingTakeProfitPercent(p.getSwingTakeProfitPercent());
         s.setSwingMaxHoldingDays(p.getSwingMaxHoldingDays());
+        // 리스크 루프와 일일 손실 한도도 관리자 opt-in 전용 — env 시드 없이 항상 꺼진 상태로 시작한다.
+        s.setRiskLoopEnabled(false);
+        s.setDailyLossLimitAmount(0);
         repo.save(s);
     }
 
@@ -53,6 +56,8 @@ public class KiwoomStrategySettingsService {
         s.setSwingStopLossPercent(clamp(u.swingStopLossPercent, 0, 100));
         s.setSwingTakeProfitPercent(clamp(u.swingTakeProfitPercent, 0, 100));
         s.setSwingMaxHoldingDays(clamp(u.swingMaxHoldingDays, 1, 30));
+        s.setRiskLoopEnabled(u.riskLoopEnabled);
+        s.setDailyLossLimitAmount(Math.max(0, u.dailyLossLimitAmount));
         prompts.saveOverride(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, u.prompt, user);
         return repo.save(s);
     }
@@ -72,5 +77,7 @@ public class KiwoomStrategySettingsService {
             double swingStopLossPercent,
             double swingTakeProfitPercent,
             int swingMaxHoldingDays,
+            boolean riskLoopEnabled,
+            long dailyLossLimitAmount,
             String prompt) {}
 }

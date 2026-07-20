@@ -13,10 +13,9 @@ import com.hyunchang.webapp.repository.KiwoomWatchItemRepository;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
-import java.time.DayOfWeek;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -54,6 +53,7 @@ public class KiwoomStrategyService {
     private final KiwoomProposalOrderService orders;
     private final KrxOpenApiService krx;
     private final KiwoomStrategySettingsService settings;
+    private final KiwoomStrategyAuditService audit;
 
     public KiwoomStrategyService(
             KiwoomProperties props,
@@ -69,7 +69,8 @@ public class KiwoomStrategyService {
             KiwoomWebsocketClient events,
             KiwoomProposalOrderService orders,
             KrxOpenApiService krx,
-            KiwoomStrategySettingsService settings) {
+            KiwoomStrategySettingsService settings,
+            KiwoomStrategyAuditService audit) {
         this.props = props;
         this.trade = trade;
         this.state = state;
@@ -84,6 +85,7 @@ public class KiwoomStrategyService {
         this.orders = orders;
         this.krx = krx;
         this.settings = settings;
+        this.audit = audit;
     }
 
     @Scheduled(cron = "0 0/30 9-15 * * MON-FRI", zone = "Asia/Seoul")
@@ -91,7 +93,7 @@ public class KiwoomStrategyService {
         if (props.getStrategy().isEnabled()
                 && state.isAutoTrading()
                 && props.isConfigured()
-                && marketOpen()) {
+                && KiwoomMarketHours.isOpen()) {
             try {
                 runDecision("SCHEDULE");
             } catch (IllegalStateException ignored) {
@@ -115,15 +117,23 @@ public class KiwoomStrategyService {
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
             long deposit = number(depositNode, "ord_alow_amt", "entr");
 
+            // 일일 손실 한도 체크 — 이미 조회한 예수금·잔고를 재사용하므로 추가 API 호출이 없다.
+            if (state.recordDailyLossCheck(
+                    deposit + trade.totalEvaluationAmount(balance),
+                    settings.current().getDailyLossLimitAmount())) {
+                audit.log("DAILY_LOSS_TRIGGERED", null, "일일 손실 한도에 도달해 신규 매수를 차단합니다.");
+                events.publishEvent("strategy", "일일 손실 한도 발동 — 오늘 남은 시간 동안 신규 매수를 차단합니다.");
+            }
+
             // 유니버스 = 실계좌 보유 종목 ∪ 관심종목. 보유 종목이 있어야 SELL 판단이 가능하다.
-            List<Holding> holdings = parseHoldings(balance);
+            List<KiwoomTradeService.Holding> holdings = trade.parseHoldings(balance);
             Map<String, String> universe = new LinkedHashMap<>();
             Map<String, Integer> sellableQty = new HashMap<>();
             List<String> holdingLines = new ArrayList<>();
-            for (Holding h : holdings) {
+            for (KiwoomTradeService.Holding h : holdings) {
                 universe.put(h.code(), h.name());
                 sellableQty.put(h.code(), h.sellable());
-                holdingLines.add(h.toPromptLine());
+                holdingLines.add(promptLine(h));
             }
             List<String> watchLines = new ArrayList<>();
             for (KiwoomWatchItem item : watch.findAll()) {
@@ -205,7 +215,8 @@ public class KiwoomStrategyService {
     public List<String> subscriptionCodes() {
         LinkedHashSet<String> codes = new LinkedHashSet<>();
         try {
-            for (Holding h : parseHoldings(trade.getBalance().block(Duration.ofSeconds(5)))) {
+            for (KiwoomTradeService.Holding h :
+                    trade.parseHoldings(trade.getBalance().block(Duration.ofSeconds(5)))) {
                 codes.add(h.code());
             }
         } catch (Exception ignored) {
@@ -270,13 +281,14 @@ public class KiwoomStrategyService {
         List<String> flags = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now(KST);
         long amount = p.getLimitPrice() == null ? 0 : p.getLimitPrice() * p.getQuantity();
-        if (!marketOpen()) flags.add("MARKET_CLOSED");
+        if (!KiwoomMarketHours.isOpen()) flags.add("MARKET_CLOSED");
         if (amount > props.getStrategy().getMaxOrderAmount()) flags.add("MAX_ORDER_AMOUNT");
         if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
             if (amount > deposit) flags.add("INSUFFICIENT_DEPOSIT");
             long buyBudget =
                     Math.round(deposit * settings.current().getMaxBuyDepositPercent() / 100.0);
             if (amount > buyBudget) flags.add("MAX_BUY_BUDGET");
+            if (state.isDailyLossTriggered()) flags.add("DAILY_LOSS_LIMIT");
         }
         LocalDateTime start = now.toLocalDate().atStartOfDay();
         long today =
@@ -292,38 +304,19 @@ public class KiwoomStrategyService {
         p.setGuardFlags(String.join(",", flags));
     }
 
-    /** kt00018 계좌평가잔고의 종목 배열을 파싱한다. 필드명은 모의 모드 실측으로 확정 필요 — 대체 이름을 함께 시도한다. */
-    private List<Holding> parseHoldings(JsonNode balance) {
-        List<Holding> out = new ArrayList<>();
-        if (balance == null) return out;
-        JsonNode arr = balance.path("acnt_evlt_remn_indv_tot");
-        if (!arr.isArray()) arr = firstHoldingsArray(balance);
-        if (arr == null || !arr.isArray()) return out;
-        for (JsonNode item : arr) {
-            // kt00018 종목코드는 A005930 처럼 접두 문자가 붙는다.
-            String code = item.path("stk_cd").asText("").replaceAll("^[A-Za-z]+", "");
-            if (!code.matches("\\d{6}")) continue;
-            int qty = (int) number(item, "rmnd_qty", "qty");
-            if (qty <= 0) continue;
-            int sellable = (int) number(item, "trde_able_qty", "rmnd_qty");
-            out.add(
-                    new Holding(
-                            code,
-                            item.path("stk_nm").asText(code),
-                            qty,
-                            sellable > 0 ? sellable : qty,
-                            number(item, "pur_pric", "avg_prc"),
-                            number(item, "cur_prc", "prpr"),
-                            item.path("prft_rt").asDouble(0)));
-        }
-        return out;
-    }
-
-    private JsonNode firstHoldingsArray(JsonNode node) {
-        for (JsonNode child : node) {
-            if (child.isArray() && child.size() > 0 && child.get(0).has("stk_cd")) return child;
-        }
-        return null;
+    private String promptLine(KiwoomTradeService.Holding h) {
+        return h.name()
+                + "("
+                + h.code()
+                + ") 보유 "
+                + h.quantity()
+                + "주 · 평단 "
+                + String.format("%,d", h.avgPrice())
+                + "원 · 현재가 "
+                + String.format("%,d", h.curPrice())
+                + "원 · 손익 "
+                + h.plPct()
+                + "%";
     }
 
     private String render(
@@ -442,15 +435,6 @@ public class KiwoomStrategyService {
                 + (note == null || note.isBlank() ? "" : " 메모: " + note);
     }
 
-    private boolean marketOpen() {
-        LocalDateTime now = LocalDateTime.now(KST);
-        LocalTime t = now.toLocalTime();
-        return now.getDayOfWeek() != DayOfWeek.SATURDAY
-                && now.getDayOfWeek() != DayOfWeek.SUNDAY
-                && !t.isBefore(LocalTime.of(9, 0))
-                && !t.isAfter(LocalTime.of(15, 30));
-    }
-
     private long number(JsonNode n, String... names) {
         if (n != null) for (String x : names) if (n.has(x)) return n.path(x).asLong();
         return 0;
@@ -458,30 +442,6 @@ public class KiwoomStrategyService {
 
     private String trim(String s) {
         return s == null ? "unknown" : s.substring(0, Math.min(s.length(), 500));
-    }
-
-    private record Holding(
-            String code,
-            String name,
-            int quantity,
-            int sellable,
-            long avgPrice,
-            long curPrice,
-            double plPct) {
-        String toPromptLine() {
-            return name
-                    + "("
-                    + code
-                    + ") 보유 "
-                    + quantity
-                    + "주 · 평단 "
-                    + String.format("%,d", avgPrice)
-                    + "원 · 현재가 "
-                    + String.format("%,d", curPrice)
-                    + "원 · 손익 "
-                    + plPct
-                    + "%";
-        }
     }
 
     public record DecisionResult(Long runId, String status, int proposalCount) {}

@@ -4,10 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
-import java.time.DayOfWeek;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.Iterator;
 import java.util.List;
@@ -135,6 +134,8 @@ public class KiwoomProposalOrderService {
         if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED)
             return fail("자동 전송 대상 상태(PROPOSED)가 아닙니다.");
         if (p.getAction() == KiwoomTradeProposal.Action.HOLD) return fail("HOLD 제안은 전송 대상이 아닙니다.");
+        if (p.getAction() == KiwoomTradeProposal.Action.BUY && state.isDailyLossTriggered())
+            return fail("일일 손실 한도에 도달해 신규 매수 자동 전송이 차단되었습니다.");
         if (p.getConfidence() < settings.current().getAutoExecuteMinConfidence())
             return fail("신뢰도가 자동 전송 임계값보다 낮습니다.");
         if (p.getOrderType() != KiwoomTradeProposal.OrderType.LIMIT || p.getLimitPrice() == null)
@@ -213,7 +214,7 @@ public class KiwoomProposalOrderService {
         if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다. 현재는 안전한 dry-run 상태입니다.";
         if (hasGuards(p)) return "안전 경고가 있는 주문 초안은 전송할 수 없습니다.";
-        if (!marketOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";
+        if (!KiwoomMarketHours.isOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";
         if (p.getOrderType() == KiwoomTradeProposal.OrderType.MARKET
                 && !props.getStrategy().isAllowMarketOrders()) return "시장가 주문은 기본 차단되어 있습니다.";
         if (p.getOrderType() != KiwoomTradeProposal.OrderType.LIMIT || p.getLimitPrice() == null)
@@ -221,6 +222,7 @@ public class KiwoomProposalOrderService {
         if (p.getLimitPrice() * p.getQuantity() > props.getStrategy().getMaxOrderAmount())
             return "주문 금액이 전략 최대 한도를 초과합니다.";
         if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
+            if (state.isDailyLossTriggered()) return "일일 손실 한도에 도달했습니다. 오늘은 신규 매수를 전송할 수 없습니다.";
             long deposit = availableDeposit();
             if (deposit <= 0) return "주문 직전 예수금을 확인하지 못했습니다.";
             long amount = p.getLimitPrice() * p.getQuantity();
@@ -265,15 +267,6 @@ public class KiwoomProposalOrderService {
             }
         }
         return 0;
-    }
-
-    private boolean marketOpen() {
-        LocalDateTime now = LocalDateTime.now(KST);
-        LocalTime time = now.toLocalTime();
-        return now.getDayOfWeek() != DayOfWeek.SATURDAY
-                && now.getDayOfWeek() != DayOfWeek.SUNDAY
-                && !time.isBefore(LocalTime.of(9, 0))
-                && !time.isAfter(LocalTime.of(15, 30));
     }
 
     private KiwoomTradeProposal find(long id) {

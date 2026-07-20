@@ -5,6 +5,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Entity
@@ -12,6 +13,14 @@ import java.time.LocalDateTime;
 public class KiwoomStrategyControlState {
     @Id private Long id = 1L;
     private boolean emergencyStopped;
+
+    // 일일 손실 한도 — 거래일 최초 체크 시 총자산(예수금+평가금액)을 스냅샷으로 잡고, 이후 하락폭을 비교한다.
+    private LocalDate dailyLossSnapshotDate;
+    private long dailyLossBaseAsset;
+    private long dailyLossLastAsset;
+    private LocalDateTime dailyLossLastCheckedAt;
+    private boolean dailyLossTriggered;
+
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -26,5 +35,45 @@ public class KiwoomStrategyControlState {
 
     public void setEmergencyStopped(boolean value) {
         emergencyStopped = value;
+    }
+
+    public LocalDate getDailyLossSnapshotDate() {
+        return dailyLossSnapshotDate;
+    }
+
+    public void setDailyLossSnapshotDate(LocalDate v) {
+        dailyLossSnapshotDate = v;
+    }
+
+    public long getDailyLossBaseAsset() {
+        return dailyLossBaseAsset;
+    }
+
+    public void setDailyLossBaseAsset(long v) {
+        dailyLossBaseAsset = v;
+    }
+
+    public long getDailyLossLastAsset() {
+        return dailyLossLastAsset;
+    }
+
+    public void setDailyLossLastAsset(long v) {
+        dailyLossLastAsset = v;
+    }
+
+    public LocalDateTime getDailyLossLastCheckedAt() {
+        return dailyLossLastCheckedAt;
+    }
+
+    public void setDailyLossLastCheckedAt(LocalDateTime v) {
+        dailyLossLastCheckedAt = v;
+    }
+
+    public boolean isDailyLossTriggered() {
+        return dailyLossTriggered;
+    }
+
+    public void setDailyLossTriggered(boolean v) {
+        dailyLossTriggered = v;
     }
 }

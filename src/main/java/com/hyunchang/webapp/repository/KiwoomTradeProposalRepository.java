@@ -22,4 +22,12 @@ public interface KiwoomTradeProposalRepository extends JpaRepository<KiwoomTrade
 
     boolean existsByStockCodeAndActionInAndCreatedAtGreaterThanEqual(
             String code, Collection<KiwoomTradeProposal.Action> actions, LocalDateTime at);
+
+    boolean existsByStockCodeAndActionAndStatusIn(
+            String code,
+            KiwoomTradeProposal.Action action,
+            Collection<KiwoomTradeProposal.Status> statuses);
+
+    Optional<KiwoomTradeProposal> findFirstByStockCodeAndActionAndStatusOrderByCreatedAtDesc(
+            String code, KiwoomTradeProposal.Action action, KiwoomTradeProposal.Status status);
 }

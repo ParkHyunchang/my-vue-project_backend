@@ -3,7 +3,9 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -121,6 +123,54 @@ public class KiwoomTradeService {
         return request("kt10003", "/api/dostk/ordr", body);
     }
 
+    /** kt00018 계좌평가잔고의 종목 배열을 파싱한다. 필드명은 실측으로 확정되지 않아 대체 이름을 함께 시도한다. */
+    public List<Holding> parseHoldings(JsonNode balance) {
+        List<Holding> out = new ArrayList<>();
+        if (balance == null) return out;
+        JsonNode arr = balance.path("acnt_evlt_remn_indv_tot");
+        if (!arr.isArray()) arr = firstHoldingsArray(balance);
+        if (arr == null || !arr.isArray()) return out;
+        for (JsonNode item : arr) {
+            // kt00018 종목코드는 A005930 처럼 접두 문자가 붙는다.
+            String code = item.path("stk_cd").asText("").replaceAll("^[A-Za-z]+", "");
+            if (!code.matches("\\d{6}")) continue;
+            int qty = (int) number(item, "rmnd_qty", "qty");
+            if (qty <= 0) continue;
+            int sellable = (int) number(item, "trde_able_qty", "rmnd_qty");
+            out.add(
+                    new Holding(
+                            code,
+                            item.path("stk_nm").asText(code),
+                            qty,
+                            sellable > 0 ? sellable : qty,
+                            number(item, "pur_pric", "avg_prc"),
+                            number(item, "cur_prc", "prpr"),
+                            item.path("prft_rt").asDouble(0)));
+        }
+        return out;
+    }
+
+    /** kt00018의 총평가금액 — 합산 필드가 없으면 보유 종목의 현재가×수량 합으로 폴백한다. */
+    public long totalEvaluationAmount(JsonNode balance) {
+        long total = number(balance, "tot_evlt_amt", "evlt_amt");
+        if (total > 0) return total;
+        long sum = 0;
+        for (Holding h : parseHoldings(balance)) sum += h.curPrice() * h.quantity();
+        return sum;
+    }
+
+    private JsonNode firstHoldingsArray(JsonNode node) {
+        for (JsonNode child : node) {
+            if (child.isArray() && child.size() > 0 && child.get(0).has("stk_cd")) return child;
+        }
+        return null;
+    }
+
+    private long number(JsonNode n, String... names) {
+        if (n != null) for (String x : names) if (n.has(x)) return n.path(x).asLong();
+        return 0;
+    }
+
     private Mono<JsonNode> request(String apiId, String path, Map<String, ?> body) {
         // 키움 호출 제한은 계정/서비스별로 달라질 수 있습니다. 아래 직렬화 간격은 보수적인 기본 보호막입니다.
         return authService
@@ -157,6 +207,15 @@ public class KiwoomTradeService {
         nextRequestAt = Math.max(now, nextRequestAt) + properties.getMinRequestIntervalMs();
         return delay == 0 ? Mono.empty() : Mono.delay(Duration.ofMillis(delay)).then();
     }
+
+    public record Holding(
+            String code,
+            String name,
+            int quantity,
+            int sellable,
+            long avgPrice,
+            long curPrice,
+            double plPct) {}
 
     public record OrderRequest(
             String side,

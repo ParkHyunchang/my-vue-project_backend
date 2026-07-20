@@ -15,7 +15,8 @@ public class KiwoomStrategyRun {
 
     public enum TriggeredBy {
         MANUAL,
-        SCHEDULE
+        SCHEDULE,
+        RISK
     }
 
     @Id

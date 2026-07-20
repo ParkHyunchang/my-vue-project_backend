@@ -10,6 +10,7 @@ import com.hyunchang.webapp.repository.KiwoomWatchItemRepository;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomOrderSyncService;
 import com.hyunchang.webapp.service.KiwoomProposalOrderService;
+import com.hyunchang.webapp.service.KiwoomRiskManagerService;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
@@ -47,6 +48,7 @@ public class KiwoomStrategyController {
     private final KiwoomOrderSyncService orderSync;
     private final KiwoomStrategySettingsService settings;
     private final AiPromptService promptService;
+    private final KiwoomRiskManagerService risk;
 
     public KiwoomStrategyController(
             KiwoomStrategyService strategy,
@@ -59,7 +61,8 @@ public class KiwoomStrategyController {
             KiwoomStrategyAuditService audit,
             KiwoomOrderSyncService orderSync,
             KiwoomStrategySettingsService settings,
-            AiPromptService promptService) {
+            AiPromptService promptService,
+            KiwoomRiskManagerService risk) {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
@@ -71,6 +74,7 @@ public class KiwoomStrategyController {
         this.orderSync = orderSync;
         this.settings = settings;
         this.promptService = promptService;
+        this.risk = risk;
     }
 
     @GetMapping("/watchlist")
@@ -106,6 +110,15 @@ public class KiwoomStrategyController {
             return ResponseEntity.ok(strategy.runDecision("MANUAL"));
         } catch (IllegalStateException e) {
             // 긴급 중지 또는 판단 중복 실행 — 서버 오류(500)가 아니라 상태 충돌(409)로 응답한다.
+            return ResponseEntity.status(409).body(Map.of("message", e.getMessage()));
+        }
+    }
+
+    @PostMapping("/risk/scan")
+    public ResponseEntity<?> riskScan() {
+        try {
+            return ResponseEntity.ok(risk.runRiskScan("MANUAL"));
+        } catch (IllegalStateException e) {
             return ResponseEntity.status(409).body(Map.of("message", e.getMessage()));
         }
     }
@@ -157,21 +170,17 @@ public class KiwoomStrategyController {
     @GetMapping("/settings")
     public Map<String, Object> settings() {
         var s = settings.current();
-        return Map.of(
-                "autoExecute",
-                s.isAutoExecute(),
-                "autoExecuteMinConfidence",
-                s.getAutoExecuteMinConfidence(),
-                "maxBuyDepositPercent",
-                s.getMaxBuyDepositPercent(),
-                "swingStopLossPercent",
-                s.getSwingStopLossPercent(),
-                "swingTakeProfitPercent",
-                s.getSwingTakeProfitPercent(),
-                "swingMaxHoldingDays",
-                s.getSwingMaxHoldingDays(),
-                "prompt",
-                promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
+        Map<String, Object> result = new HashMap<>();
+        result.put("autoExecute", s.isAutoExecute());
+        result.put("autoExecuteMinConfidence", s.getAutoExecuteMinConfidence());
+        result.put("maxBuyDepositPercent", s.getMaxBuyDepositPercent());
+        result.put("swingStopLossPercent", s.getSwingStopLossPercent());
+        result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
+        result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
+        result.put("riskLoopEnabled", s.isRiskLoopEnabled());
+        result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put("prompt", promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
+        return result;
     }
 
     @PatchMapping("/settings")
@@ -185,6 +194,8 @@ public class KiwoomStrategyController {
                                 request.swingStopLossPercent(),
                                 request.swingTakeProfitPercent(),
                                 request.swingMaxHoldingDays(),
+                                request.riskLoopEnabled(),
+                                request.dailyLossLimitAmount(),
                                 request.prompt()),
                         "admin");
         audit.log("STRATEGY_SETTINGS_UPDATED", null, "Runtime strategy settings were updated.");
@@ -208,6 +219,8 @@ public class KiwoomStrategyController {
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
+        result.put("riskLoopEnabled", s.isRiskLoopEnabled());
+        result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
         result.put("orderEnabled", props.isTradeEnabled());
         result.put("dryRun", !props.isTradeEnabled());
         return result;
@@ -230,8 +243,31 @@ public class KiwoomStrategyController {
                 runs.count(),
                 "proposalCount",
                 proposals.count(),
+                "risk",
+                riskStatus(),
                 "recentAudit",
                 audit.recent());
+    }
+
+    private Map<String, Object> riskStatus() {
+        var s = settings.current();
+        Map<String, Object> result = new HashMap<>();
+        result.put("riskLoopEnabled", s.isRiskLoopEnabled());
+        result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put(
+                "lastScanAt", risk.getLastScanAt() == null ? "" : risk.getLastScanAt().toString());
+        KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
+        result.put("triggered", state.isDailyLossTriggered());
+        result.put("snapshotDate", loss == null ? "" : loss.snapshotDate().toString());
+        result.put("baseAsset", loss == null ? 0 : loss.baseAsset());
+        result.put("lastAsset", loss == null ? 0 : loss.lastAsset());
+        result.put("drawdown", loss == null ? 0 : loss.drawdown());
+        result.put(
+                "lastCheckedAt",
+                loss == null || loss.lastCheckedAt() == null
+                        ? ""
+                        : loss.lastCheckedAt().toString());
+        return result;
     }
 
     @GetMapping("/runs")
@@ -291,5 +327,7 @@ public class KiwoomStrategyController {
             double swingStopLossPercent,
             double swingTakeProfitPercent,
             int swingMaxHoldingDays,
+            boolean riskLoopEnabled,
+            long dailyLossLimitAmount,
             String prompt) {}
 }
