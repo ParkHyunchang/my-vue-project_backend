@@ -138,7 +138,8 @@ public class SecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         // allowCredentials=true 사용 시 origin은 정확히 매칭되어야 한다 (와일드카드 금지)
         configuration.setAllowedOrigins(corsProperties.getAllowedOriginsList());
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        configuration.setAllowedMethods(
+                Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(
                 Arrays.asList(
                         "Authorization",
