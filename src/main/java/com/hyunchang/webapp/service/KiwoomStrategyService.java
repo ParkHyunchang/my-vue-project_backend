@@ -39,6 +39,7 @@ public class KiwoomStrategyService {
 
     /** 유니버스에 편입되는 스윙 후보 상한 — ShortSwingCandidateService.MAX_SCREENED_CANDIDATES와 동일한 관례. */
     private static final int SWING_CANDIDATE_LIMIT = 20;
+    private volatile String lastCandidateSignature;
 
     private final KiwoomProperties props;
     private final KiwoomTradeService trade;
@@ -83,7 +84,7 @@ public class KiwoomStrategyService {
         this.audit = audit;
     }
 
-    @Scheduled(cron = "0 0/30 9-15 * * MON-FRI", zone = "Asia/Seoul")
+    @Scheduled(cron = "0 0/15 9-15 * * MON-FRI", zone = "Asia/Seoul")
     public void scheduledDecision() {
         if (props.getStrategy().isEnabled()
                 && state.isAutoTrading()
@@ -108,6 +109,9 @@ public class KiwoomStrategyService {
                         : KiwoomStrategyRun.TriggeredBy.MANUAL);
         try {
             events.publishEvent("strategy", "AI 전략 판단을 시작합니다.");
+            if ("SCHEDULE".equals(by) && dailyProposalLimitReached()) {
+                return skipped(run, "Daily proposal/order limit reached; AI call skipped.");
+            }
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
             long deposit = number(depositNode, "ord_alow_amt", "entr");
@@ -151,6 +155,12 @@ public class KiwoomStrategyService {
             }
             String swing = swingSignals(swingCandidates, universe.keySet());
             String guardRules = guardRules(deposit);
+            String candidateSignature = candidateSignature(catalystCandidates);
+            if ("SCHEDULE".equals(by)
+                    && candidateSignature.equals(lastCandidateSignature)
+                    && !holdingExitTriggered(holdings)) {
+                return skipped(run, "No candidate change or holding stop-loss/take-profit signal; AI call skipped.");
+            }
 
             String prompt =
                     render(
@@ -169,6 +179,8 @@ public class KiwoomStrategyService {
                             guardRules,
                             COMPACT_MAX_LINES);
             run.setPromptChars(prompt.length());
+            run.setInputTokens(estimateTokens(prompt));
+            run.setAiCalled(true);
 
             AiProviderChain.ChainResult result = ai.analyze(prompt, compactPrompt, true);
             if (!result.success()) {
@@ -181,6 +193,7 @@ public class KiwoomStrategyService {
             }
             run.setProviderName(result.providerName());
             run.setModel(result.model());
+            run.setOutputTokens(estimateTokens(result.text()));
             JsonNode root = parse(result.text());
             if (root == null || !root.has("decisions")) {
                 run.setStatus(KiwoomStrategyRun.Status.PARSE_FAILED);
@@ -204,6 +217,7 @@ public class KiwoomStrategyService {
                 if ("SCHEDULE".equals(by)) autoSubmit(p);
             }
             state.markRun();
+            lastCandidateSignature = candidateSignature;
             events.publishEvent("strategy", "AI 전략 제안 " + saved + "건을 생성했습니다.");
             return new DecisionResult(run.getId(), run.getStatus().name(), saved);
         } catch (Exception e) {
@@ -215,6 +229,41 @@ public class KiwoomStrategyService {
         } finally {
             state.finishDecision();
         }
+    }
+
+    private boolean dailyProposalLimitReached() {
+        long today = proposals.countByActionInAndCreatedAtGreaterThanEqual(
+                List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
+                LocalDateTime.now(KST).toLocalDate().atStartOfDay());
+        return today >= settings.current().getDailyMaxProposals();
+    }
+
+    private boolean holdingExitTriggered(List<KiwoomTradeService.Holding> holdings) {
+        var s = settings.current();
+        return holdings.stream().anyMatch(h -> h.plPct() <= -s.getSwingStopLossPercent()
+                || h.plPct() >= s.getSwingTakeProfitPercent());
+    }
+
+    private String candidateSignature(List<ShortSwingCandidateService.KrCandidateCatalyst> candidates) {
+        return candidates.stream()
+                .map(cc -> {
+                    KrxOpenApiService.KrSwingCandidate c = cc.candidate();
+                    return c.bareCode() + ':' + Math.round(c.changePercent() * 10)
+                            + ':' + Math.round(c.volumeRatio() * 10) + ':' + describeCatalyst(cc);
+                })
+                .collect(java.util.stream.Collectors.joining("|"));
+    }
+
+    private DecisionResult skipped(KiwoomStrategyRun run, String reason) {
+        run.setStatus(KiwoomStrategyRun.Status.SKIPPED);
+        run.setErrorMessage(reason);
+        runs.save(run);
+        events.publishEvent("strategy", reason);
+        return new DecisionResult(run.getId(), run.getStatus().name(), 0);
+    }
+
+    private int estimateTokens(String text) {
+        return text == null || text.isBlank() ? 0 : Math.max(1, (text.length() + 3) / 4);
     }
 
     private void autoSubmit(KiwoomTradeProposal proposal) {

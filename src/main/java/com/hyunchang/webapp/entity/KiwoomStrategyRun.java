@@ -10,7 +10,8 @@ public class KiwoomStrategyRun {
         SUCCESS,
         FAILED,
         PARSE_FAILED,
-        BLOCKED
+        BLOCKED,
+        SKIPPED
     }
 
     public enum TriggeredBy {
@@ -41,6 +42,10 @@ public class KiwoomStrategyRun {
     private String errorMessage;
 
     private int promptChars;
+    /** Token counts are estimates when the provider does not return usage metadata. */
+    private int inputTokens;
+    private int outputTokens;
+    private boolean aiCalled;
     private LocalDateTime createdAt;
 
     @PrePersist
@@ -107,6 +112,13 @@ public class KiwoomStrategyRun {
     public void setPromptChars(int v) {
         promptChars = v;
     }
+
+    public int getInputTokens() { return inputTokens; }
+    public void setInputTokens(int v) { inputTokens = v; }
+    public int getOutputTokens() { return outputTokens; }
+    public void setOutputTokens(int v) { outputTokens = v; }
+    public boolean isAiCalled() { return aiCalled; }
+    public void setAiCalled(boolean v) { aiCalled = v; }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;
