@@ -50,7 +50,7 @@ public class KiwoomStrategyService {
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomWebsocketClient events;
     private final KiwoomProposalOrderService orders;
-    private final KrxOpenApiService krx;
+    private final ShortSwingCandidateService catalystService;
     private final KiwoomStrategySettingsService settings;
     private final KiwoomStrategyAuditService audit;
 
@@ -65,7 +65,7 @@ public class KiwoomStrategyService {
             KiwoomTradeProposalRepository proposals,
             KiwoomWebsocketClient events,
             KiwoomProposalOrderService orders,
-            KrxOpenApiService krx,
+            ShortSwingCandidateService catalystService,
             KiwoomStrategySettingsService settings,
             KiwoomStrategyAuditService audit) {
         this.props = props;
@@ -78,7 +78,7 @@ public class KiwoomStrategyService {
         this.proposals = proposals;
         this.events = events;
         this.orders = orders;
-        this.krx = krx;
+        this.catalystService = catalystService;
         this.settings = settings;
         this.audit = audit;
     }
@@ -132,13 +132,21 @@ public class KiwoomStrategyService {
                 holdingLines.add(promptLine(h));
             }
             // 스윙 후보는 이번 판단 안에서 한 번만 조회해 유니버스 구성·신호 텍스트·BUY 검증에 함께 재사용한다.
+            // DART 공시·뉴스 촉매까지 확인된 후보만 남기므로(ShortSwingCandidateService), 숫자만으로
+            // 급등을 판단하지 않고 실제 근거가 있는지까지 반영한다.
+            List<ShortSwingCandidateService.KrCandidateCatalyst> catalystCandidates =
+                    fetchCatalystCandidates();
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates =
-                    indexByCode(currentSwingCandidates());
+                    indexByCode(
+                            catalystCandidates.stream()
+                                    .map(ShortSwingCandidateService.KrCandidateCatalyst::candidate)
+                                    .toList());
             List<String> candidateLines = new ArrayList<>();
-            for (KrxOpenApiService.KrSwingCandidate c : swingCandidates.values()) {
+            for (ShortSwingCandidateService.KrCandidateCatalyst cc : catalystCandidates) {
+                KrxOpenApiService.KrSwingCandidate c = cc.candidate();
                 universe.putIfAbsent(c.bareCode(), c.name());
                 if (!sellableQty.containsKey(c.bareCode())) {
-                    candidateLines.add(candidateLine(c));
+                    candidateLines.add(candidateLine(c, describeCatalyst(cc)));
                 }
             }
             String swing = swingSignals(swingCandidates, universe.keySet());
@@ -239,11 +247,32 @@ public class KiwoomStrategyService {
 
     /** 지금 유니버스에 편입되는 스윙 후보 — 컨트롤러의 읽기전용 조회(/universe)와 실시간 구독 대상이 이걸 공유한다. */
     public List<KrxOpenApiService.KrSwingCandidate> currentSwingCandidates() {
+        return fetchCatalystCandidates().stream()
+                .map(ShortSwingCandidateService.KrCandidateCatalyst::candidate)
+                .toList();
+    }
+
+    /** DART 공시·뉴스 촉매까지 확인된 후보 목록. 조회 실패는 빈 목록으로 처리한다(이후 BUY 검증은 자연히 전부 막힌다). */
+    private List<ShortSwingCandidateService.KrCandidateCatalyst> fetchCatalystCandidates() {
         try {
-            return krx.getShortSwingCandidates(SWING_CANDIDATE_LIMIT);
+            return catalystService.getKrCandidatesWithCatalysts(SWING_CANDIDATE_LIMIT);
         } catch (Exception e) {
             return List.of();
         }
+    }
+
+    /** 공시 1건 + 뉴스 1건까지만 요약한다 — 프롬프트 비대화 방지. 근거가 없으면 빈 문자열. */
+    private String describeCatalyst(ShortSwingCandidateService.KrCandidateCatalyst cc) {
+        List<String> parts = new ArrayList<>();
+        if (!cc.disclosures().isEmpty()) {
+            var d = cc.disclosures().get(0);
+            parts.add(d.date() + " 공시: " + d.title());
+        }
+        if (!cc.news().isEmpty()) {
+            var n = cc.news().get(0);
+            parts.add("뉴스: " + n.title() + " (" + n.source() + ")");
+        }
+        return String.join(" / ", parts);
     }
 
     private KiwoomTradeProposal validated(
@@ -449,19 +478,23 @@ public class KiwoomStrategyService {
         }
     }
 
-    /** KrSwingCandidate가 이미 가진 시세로 문자열을 만든다 — 추가 API 호출이 없다. */
-    private String candidateLine(KrxOpenApiService.KrSwingCandidate c) {
-        return c.name()
-                + "("
-                + c.bareCode()
-                + ") 현재가 "
-                + String.format("%,d", Math.round(c.closePrice()))
-                + "원 ("
-                + (c.changePercent() >= 0 ? "+" : "")
-                + c.changePercent()
-                + "%) · 거래량 20일평균 대비 "
-                + c.volumeRatio()
-                + "배";
+    /** KrSwingCandidate가 이미 가진 시세로 문자열을 만든다 — 추가 API 호출이 없다. catalystText가 있으면 근거를 덧붙인다. */
+    private String candidateLine(KrxOpenApiService.KrSwingCandidate c, String catalystText) {
+        String base =
+                c.name()
+                        + "("
+                        + c.bareCode()
+                        + ") 현재가 "
+                        + String.format("%,d", Math.round(c.closePrice()))
+                        + "원 ("
+                        + (c.changePercent() >= 0 ? "+" : "")
+                        + c.changePercent()
+                        + "%) · 거래량 20일평균 대비 "
+                        + c.volumeRatio()
+                        + "배";
+        return catalystText == null || catalystText.isBlank()
+                ? base
+                : base + " · 근거: " + catalystText;
     }
 
     private long number(JsonNode n, String... names) {
