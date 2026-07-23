@@ -30,4 +30,6 @@ public interface KiwoomTradeProposalRepository extends JpaRepository<KiwoomTrade
 
     Optional<KiwoomTradeProposal> findFirstByStockCodeAndActionAndStatusOrderByCreatedAtDesc(
             String code, KiwoomTradeProposal.Action action, KiwoomTradeProposal.Status status);
+
+    long deleteByRunIdIn(Collection<Long> runIds);
 }
