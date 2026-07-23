@@ -84,13 +84,19 @@ class KiwoomStrategyServiceTest {
         lenient().when(state.recordDailyLossCheck(anyLong(), anyLong())).thenReturn(false);
         lenient().when(state.isDailyLossTriggered()).thenReturn(false);
         lenient().when(settingsService.current()).thenReturn(settings);
-        lenient().when(trade.getDeposit()).thenReturn(Mono.just(emptyNode));
+        lenient().when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000_000)));
         lenient().when(trade.getBalance()).thenReturn(Mono.just(emptyNode));
         lenient().when(trade.totalEvaluationAmount(any())).thenReturn(0L);
         lenient().when(trade.parseHoldings(any())).thenReturn(List.of());
         lenient().when(prompts.render(anyString(), any())).thenReturn("prompt");
         lenient().when(runs.save(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient().when(proposals.save(any())).thenAnswer(inv -> inv.getArgument(0));
+    }
+
+    private com.fasterxml.jackson.databind.JsonNode depositNode(long amount) {
+        ObjectNode node = mapper.createObjectNode();
+        node.put("ord_alow_amt", amount);
+        return node;
     }
 
     private KrxOpenApiService.KrSwingCandidate candidate(String code) {
@@ -107,11 +113,24 @@ class KiwoomStrategyServiceTest {
     }
 
     private AiProviderChain.ChainResult buyDecision(String code) {
+        return decisionJson("BUY", code, 1, 70000, "80");
+    }
+
+    /** confidence는 raw JSON 리터럴을 그대로 끼워 넣는다 — 정수("80")·소수("0.82") 양쪽을 테스트하기 위함. */
+    private AiProviderChain.ChainResult decisionJson(
+            String action, String code, int qty, long price, String confidenceLiteral) {
         String json =
-                "{\"marketView\":\"m\",\"decisions\":[{\"action\":\"BUY\",\"stockCode\":\""
+                "{\"marketView\":\"m\",\"decisions\":[{\"action\":\""
+                        + action
+                        + "\",\"stockCode\":\""
                         + code
-                        + "\",\"stockName\":\"n\",\"quantity\":1,\"orderType\":\"LIMIT\","
-                        + "\"limitPrice\":70000,\"confidence\":80,\"reason\":\"r\"}]}";
+                        + "\",\"stockName\":\"n\",\"quantity\":"
+                        + qty
+                        + ",\"orderType\":\"LIMIT\",\"limitPrice\":"
+                        + price
+                        + ",\"confidence\":"
+                        + confidenceLiteral
+                        + ",\"reason\":\"r\"}]}";
         return new AiProviderChain.ChainResult(true, "provider", "model", json, null, List.of());
     }
 
@@ -137,6 +156,64 @@ class KiwoomStrategyServiceTest {
         when(trade.parseHoldings(any())).thenReturn(List.of(held));
         when(krx.getShortSwingCandidates(20)).thenReturn(List.of(candidate("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("003550"));
+
+        service.runDecision("MANUAL");
+
+        verify(proposals, never()).save(any());
+    }
+
+    @Test
+    void confidenceAcceptsFractionalZeroToOneScale() {
+        // 일부 모델이 0~100 정수 대신 0.0~1.0 비율로 confidence를 응답하는 경우를 보정해야 한다.
+        when(krx.getShortSwingCandidates(20)).thenReturn(List.of(candidate("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true)))
+                .thenReturn(decisionJson("BUY", "005930", 1, 70000, "0.82"));
+
+        service.runDecision("MANUAL");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(82, captor.getValue().getConfidence());
+    }
+
+    @Test
+    void confidenceAcceptsPlainIntegerPercent() {
+        when(krx.getShortSwingCandidates(20)).thenReturn(List.of(candidate("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true)))
+                .thenReturn(decisionJson("BUY", "005930", 1, 70000, "80"));
+
+        service.runDecision("MANUAL");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(80, captor.getValue().getConfidence());
+    }
+
+    @Test
+    void buyQuantityIsClampedToBudgetInsteadOfRejected() {
+        // 예수금 100,000원 · 매수 비율 100% → 예산 100,000원. 가격 70,000원이면 최대 1주인데
+        // AI는 5주를 요청 — 통째로 버리지 않고 1주로 깎아서 살려야 한다.
+        when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000)));
+        when(krx.getShortSwingCandidates(20)).thenReturn(List.of(candidate("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true)))
+                .thenReturn(decisionJson("BUY", "005930", 5, 70000, "80"));
+
+        service.runDecision("MANUAL");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(1, captor.getValue().getQuantity());
+    }
+
+    @Test
+    void buyIsDroppedWhenBudgetCannotAffordEvenOneShare() {
+        when(trade.getDeposit()).thenReturn(Mono.just(depositNode(1_000)));
+        when(krx.getShortSwingCandidates(20)).thenReturn(List.of(candidate("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true)))
+                .thenReturn(decisionJson("BUY", "005930", 5, 70000, "80"));
 
         service.runDecision("MANUAL");
 

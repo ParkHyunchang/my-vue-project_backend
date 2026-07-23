@@ -187,7 +187,7 @@ public class KiwoomStrategyService {
             Set<String> unique = new HashSet<>();
             for (JsonNode d : root.path("decisions")) {
                 KiwoomTradeProposal p =
-                        validated(d, universe, sellableQty, swingCandidates, unique);
+                        validated(d, universe, sellableQty, swingCandidates, deposit, unique);
                 if (p == null) continue;
                 applyGuardFlags(p, deposit);
                 p.setRun(run);
@@ -251,37 +251,50 @@ public class KiwoomStrategyService {
             Map<String, String> universe,
             Map<String, Integer> sellableQty,
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
+            long deposit,
             Set<String> unique) {
         try {
             String code = d.path("stockCode").asText();
             KiwoomTradeProposal.Action action =
                     KiwoomTradeProposal.Action.valueOf(d.path("action").asText());
-            if (!code.matches("\\d{6}")
-                    || !universe.containsKey(code)
-                    || !unique.add(code)
-                    || d.path("confidence").asInt(-1) < 0
-                    || d.path("confidence").asInt() > 100) return null;
+            int confidence = parseConfidence(d.path("confidence"));
+            if (!code.matches("\\d{6}") || !universe.containsKey(code) || !unique.add(code))
+                return null;
             if (action == KiwoomTradeProposal.Action.BUY && !swingCandidates.containsKey(code))
                 return null;
             int qty = d.path("quantity").asInt();
             if (action != KiwoomTradeProposal.Action.HOLD && qty <= 0) return null;
+            Long price = null;
+            if (action != KiwoomTradeProposal.Action.HOLD) {
+                long p0 = d.path("limitPrice").asLong();
+                if (p0 <= 0) return null;
+                price = p0;
+            }
+            var s = settings.current();
             if (action == KiwoomTradeProposal.Action.SELL) {
                 Integer held = sellableQty.get(code);
                 if (held == null || held <= 0) return null;
                 qty = Math.min(qty, held);
+            } else if (action == KiwoomTradeProposal.Action.BUY) {
+                // AI가 예산보다 큰 수량을 제안해도 전체를 버리지 않고 1회 주문 한도·예수금 비율 안으로
+                // 수량을 깎아서 살린다 — 매번 통째로 거부되면 좋은 후보를 놓치게 된다.
+                long cap =
+                        Math.min(
+                                props.getStrategy().getMaxOrderAmount(),
+                                Math.round(deposit * s.getMaxBuyDepositPercent() / 100.0));
+                long maxQtyByCap = price > 0 ? cap / price : 0;
+                if (maxQtyByCap <= 0) return null;
+                qty = (int) Math.min(qty, maxQtyByCap);
             }
             KiwoomTradeProposal p = new KiwoomTradeProposal();
             p.setAction(action);
             p.setStockCode(code);
             p.setStockName(d.path("stockName").asText(universe.get(code)));
             p.setQuantity(Math.max(qty, 0));
-            p.setConfidence(d.path("confidence").asInt());
+            p.setConfidence(confidence);
             p.setReason(d.path("reason").asText(""));
             p.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
-            if (action != KiwoomTradeProposal.Action.HOLD) {
-                long price = d.path("limitPrice").asLong();
-                if (price <= 0) return null;
-                var s = settings.current();
+            if (price != null) {
                 p.setLimitPrice(price);
                 p.setStopLossPrice(
                         Math.max(1, Math.round(price * (100 - s.getSwingStopLossPercent()) / 100)));
@@ -295,6 +308,13 @@ public class KiwoomStrategyService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /** 일부 모델이 0~100 정수 대신 0.0~1.0 비율로 응답하는 경우를 보정한다 (예: 0.82 → 82). */
+    private int parseConfidence(JsonNode node) {
+        double raw = node.asDouble(0);
+        double scaled = raw > 0 && raw <= 1 ? raw * 100 : raw;
+        return Math.max(0, Math.min(100, (int) Math.round(scaled)));
     }
 
     private void applyGuardFlags(KiwoomTradeProposal p, long deposit) {
