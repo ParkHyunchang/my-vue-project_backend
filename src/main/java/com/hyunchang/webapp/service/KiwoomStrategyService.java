@@ -336,7 +336,7 @@ public class KiwoomStrategyService {
                 proposals.countByActionInAndCreatedAtGreaterThanEqual(
                         List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
                         start);
-        if (today >= props.getStrategy().getDailyMaxProposals()) flags.add("DAILY_LIMIT");
+        if (today >= settings.current().getDailyMaxProposals()) flags.add("DAILY_LIMIT");
         if (proposals.existsByStockCodeAndActionInAndCreatedAtGreaterThanEqual(
                 p.getStockCode(),
                 List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
@@ -391,7 +391,7 @@ public class KiwoomStrategyService {
                 + String.format("%,d", buyBudget)
                 + "원)\n"
                 + "하루 매수·매도 제안 한도: "
-                + st.getDailyMaxProposals()
+                + s.getDailyMaxProposals()
                 + "건\n"
                 + "동일 종목 재제안 쿨다운: "
                 + st.getCooldownMinutes()

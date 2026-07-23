@@ -54,7 +54,6 @@ class KiwoomStrategyServiceTest {
     void setUp() {
         props = new KiwoomProperties();
         props.getStrategy().setMaxOrderAmount(10_000_000);
-        props.getStrategy().setDailyMaxProposals(50);
         props.getStrategy().setCooldownMinutes(0);
 
         settings = new KiwoomStrategySettings();
@@ -62,6 +61,7 @@ class KiwoomStrategyServiceTest {
         settings.setSwingStopLossPercent(3);
         settings.setSwingTakeProfitPercent(6);
         settings.setSwingMaxHoldingDays(5);
+        settings.setDailyMaxProposals(50);
 
         service =
                 new KiwoomStrategyService(

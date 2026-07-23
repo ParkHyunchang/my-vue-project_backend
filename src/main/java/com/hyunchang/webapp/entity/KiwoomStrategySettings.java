@@ -15,6 +15,7 @@ public class KiwoomStrategySettings {
     private int swingMaxHoldingDays;
     private boolean riskLoopEnabled;
     private long dailyLossLimitAmount;
+    private int dailyMaxProposals;
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -89,6 +90,14 @@ public class KiwoomStrategySettings {
 
     public void setDailyLossLimitAmount(long v) {
         dailyLossLimitAmount = v;
+    }
+
+    public int getDailyMaxProposals() {
+        return dailyMaxProposals;
+    }
+
+    public void setDailyMaxProposals(int v) {
+        dailyMaxProposals = v;
     }
 
     public LocalDateTime getUpdatedAt() {

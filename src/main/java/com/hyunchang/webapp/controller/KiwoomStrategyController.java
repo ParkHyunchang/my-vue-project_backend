@@ -163,6 +163,7 @@ public class KiwoomStrategyController {
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
         result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put("dailyMaxProposals", s.getDailyMaxProposals());
         result.put("prompt", promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
         return result;
     }
@@ -180,6 +181,7 @@ public class KiwoomStrategyController {
                                 request.swingMaxHoldingDays(),
                                 request.riskLoopEnabled(),
                                 request.dailyLossLimitAmount(),
+                                request.dailyMaxProposals(),
                                 request.prompt()),
                         "admin");
         audit.log("STRATEGY_SETTINGS_UPDATED", null, "Runtime strategy settings were updated.");
@@ -194,7 +196,7 @@ public class KiwoomStrategyController {
         Map<String, Object> result = new HashMap<>();
         result.put("enabled", props.getStrategy().isEnabled());
         result.put("maxOrderAmount", props.getStrategy().getMaxOrderAmount());
-        result.put("dailyMaxProposals", props.getStrategy().getDailyMaxProposals());
+        result.put("dailyMaxProposals", s.getDailyMaxProposals());
         result.put("cooldownMinutes", props.getStrategy().getCooldownMinutes());
         result.put("allowMarketOrders", props.getStrategy().isAllowMarketOrders());
         result.put("autoExecute", s.isAutoExecute());
@@ -311,5 +313,6 @@ public class KiwoomStrategyController {
             int swingMaxHoldingDays,
             boolean riskLoopEnabled,
             long dailyLossLimitAmount,
+            int dailyMaxProposals,
             String prompt) {}
 }

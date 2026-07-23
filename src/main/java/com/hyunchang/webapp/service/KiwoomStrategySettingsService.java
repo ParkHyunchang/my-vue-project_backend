@@ -40,6 +40,8 @@ public class KiwoomStrategySettingsService {
         // 리스크 루프와 일일 손실 한도도 관리자 opt-in 전용 — env 시드 없이 항상 꺼진 상태로 시작한다.
         s.setRiskLoopEnabled(false);
         s.setDailyLossLimitAmount(0);
+        // 하루 제안 한도는 화면에서 조정 가능한 값으로 승격 — 최초 시드값만 env(.env 미설정 시 기본값)에서 가져온다.
+        s.setDailyMaxProposals(p.getDailyMaxProposals());
         repo.save(s);
     }
 
@@ -58,6 +60,7 @@ public class KiwoomStrategySettingsService {
         s.setSwingMaxHoldingDays(clamp(u.swingMaxHoldingDays, 1, 30));
         s.setRiskLoopEnabled(u.riskLoopEnabled);
         s.setDailyLossLimitAmount(Math.max(0, u.dailyLossLimitAmount));
+        s.setDailyMaxProposals(clamp(u.dailyMaxProposals, 1, 200));
         prompts.saveOverride(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, u.prompt, user);
         return repo.save(s);
     }
@@ -79,5 +82,6 @@ public class KiwoomStrategySettingsService {
             int swingMaxHoldingDays,
             boolean riskLoopEnabled,
             long dailyLossLimitAmount,
+            int dailyMaxProposals,
             String prompt) {}
 }

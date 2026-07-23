@@ -236,7 +236,7 @@ public class KiwoomProposalOrderService {
                         List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
                         List.of(KiwoomTradeProposal.Status.ORDERED),
                         LocalDateTime.now(KST).toLocalDate().atStartOfDay());
-        if (orderedToday >= props.getStrategy().getDailyMaxProposals())
+        if (orderedToday >= settings.current().getDailyMaxProposals())
             return "오늘의 주문 전송 한도에 도달했습니다.";
         return null;
     }
