@@ -310,7 +310,7 @@ public class KiwoomStrategyService {
         }
     }
 
-    /** 공시 1건 + 뉴스 1건까지만 요약한다 — 프롬프트 비대화 방지. 근거가 없으면 빈 문자열. */
+    /** 공시 1건 + 뉴스 1건까지만 요약한다 — 프롬프트 비대화 방지. 근거가 없으면 미확인임을 명시한다. */
     private String describeCatalyst(ShortSwingCandidateService.KrCandidateCatalyst cc) {
         List<String> parts = new ArrayList<>();
         if (!cc.disclosures().isEmpty()) {
@@ -321,7 +321,7 @@ public class KiwoomStrategyService {
             var n = cc.news().get(0);
             parts.add("뉴스: " + n.title() + " (" + n.source() + ")");
         }
-        return String.join(" / ", parts);
+        return parts.isEmpty() ? "촉매 미확인(가격·거래량 신호만)" : String.join(" / ", parts);
     }
 
     private KiwoomTradeProposal validated(

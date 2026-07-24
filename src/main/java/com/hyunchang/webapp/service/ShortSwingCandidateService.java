@@ -78,18 +78,17 @@ public class ShortSwingCandidateService {
                     CompletableFuture.supplyAsync(() -> buildCatalyst(candidate), CATALYST_POOL));
         }
 
-        // 스크리닝 순서(거래량 배율 내림차순)를 유지한 채 촉매 확인된 후보만 채택
-        List<KrCandidateCatalyst> result = new ArrayList<>();
+        // 스크리닝 순서(거래량 배율 내림차순)를 유지한 채 전부 수집한다. 촉매(DART 공시·뉴스)가 확인된
+        // 후보를 우선 채택하고, 남는 자리만 촉매 미확인 후보로 채운다 — AI 프롬프트가 이미 "근거 없는 종목은
+        // 숫자만으로 더 신중히 판단하라"고 안내하므로, 완전히 제외하지 않고 하위권으로라도 넘긴다.
+        List<KrCandidateCatalyst> confirmed = new ArrayList<>();
+        List<KrCandidateCatalyst> unconfirmed = new ArrayList<>();
         long deadline = System.currentTimeMillis() + CATALYST_BUDGET_MS;
         for (CompletableFuture<KrCandidateCatalyst> future : futures) {
-            if (result.size() >= MAX_CATALYST_CANDIDATES) {
-                future.cancel(true);
-                continue;
-            }
             try {
                 long remaining = Math.max(1, deadline - System.currentTimeMillis());
                 KrCandidateCatalyst catalyst = future.get(remaining, TimeUnit.MILLISECONDS);
-                if (catalyst != null) result.add(catalyst);
+                (catalyst.hasCatalyst() ? confirmed : unconfirmed).add(catalyst);
             } catch (TimeoutException e) {
                 future.cancel(true);
                 log.warn("[SwingCandidate] KR 촉매 수집 시간 예산 초과 — 해당 후보 생략");
@@ -98,6 +97,11 @@ public class ShortSwingCandidateService {
                 log.warn("[SwingCandidate] KR 촉매 수집 실패: {}", e.getMessage());
             }
         }
+        List<KrCandidateCatalyst> result = new ArrayList<>(confirmed);
+        for (KrCandidateCatalyst c : unconfirmed) {
+            if (result.size() >= MAX_CATALYST_CANDIDATES) break;
+            result.add(c);
+        }
         return result;
     }
 
@@ -105,7 +109,6 @@ public class ShortSwingCandidateService {
         List<DartFinancialService.PositiveDisclosure> disclosures =
                 dartFinancialService.recentPositiveDisclosures(candidate.symbol(), 3);
         List<CatalystNews> news = extractCatalystNews(candidate);
-        if (disclosures.isEmpty() && news.isEmpty()) return null;
         return new KrCandidateCatalyst(candidate, disclosures, news);
     }
 
@@ -243,7 +246,11 @@ public class ShortSwingCandidateService {
     public record KrCandidateCatalyst(
             KrxOpenApiService.KrSwingCandidate candidate,
             List<DartFinancialService.PositiveDisclosure> disclosures,
-            List<CatalystNews> news) {}
+            List<CatalystNews> news) {
+        public boolean hasCatalyst() {
+            return !disclosures.isEmpty() || !news.isEmpty();
+        }
+    }
 
     public record UsCandidateSignal(
             YahooFinanceService.RawQuote candidate,
