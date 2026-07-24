@@ -2,6 +2,7 @@ package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import com.hyunchang.webapp.util.TtlCache;
 import jakarta.annotation.PreDestroy;
 import java.io.IOException;
@@ -9,7 +10,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.time.DayOfWeek;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -543,8 +543,7 @@ public class KrxOpenApiService {
         List<LocalDate> days = new ArrayList<>(count);
         LocalDate date = LocalDate.now().minusDays(1);
         while (days.size() < count) {
-            DayOfWeek dow = date.getDayOfWeek();
-            if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) days.add(date);
+            if (KiwoomMarketHours.isTradingDay(date)) days.add(date);
             date = date.minusDays(1);
         }
         return days;

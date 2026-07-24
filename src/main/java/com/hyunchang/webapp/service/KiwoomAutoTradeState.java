@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.stereotype.Component;
 
-/** Shared in-memory switch and single-flight guard for dry-run decisions. */
+/** Persisted automation switch, safety stop, and single-flight guard for live decisions. */
 @Component
 public class KiwoomAutoTradeState {
     private final KiwoomStrategyControlStateRepository controlStateRepository;
@@ -18,6 +18,9 @@ public class KiwoomAutoTradeState {
     private final AtomicBoolean emergencyStopped = new AtomicBoolean(false);
     private volatile LocalDateTime lastRunAt;
     private volatile DailyLossStatus dailyLoss;
+    private volatile int consecutiveApiFailures;
+    private volatile LocalDateTime lastApiFailureAt;
+    private volatile String lastApiFailureMessage;
 
     public KiwoomAutoTradeState(KiwoomStrategyControlStateRepository controlStateRepository) {
         this.controlStateRepository = controlStateRepository;
@@ -27,7 +30,11 @@ public class KiwoomAutoTradeState {
     void restoreControlState() {
         KiwoomStrategyControlState saved = controlStateRepository.findById(1L).orElse(null);
         if (saved == null) return;
+        autoTrading.set(saved.isAutoTradingEnabled());
         emergencyStopped.set(saved.isEmergencyStopped());
+        consecutiveApiFailures = saved.getConsecutiveApiFailures();
+        lastApiFailureAt = saved.getLastApiFailureAt();
+        lastApiFailureMessage = saved.getLastApiFailureMessage();
         if (saved.getDailyLossSnapshotDate() != null) {
             dailyLoss =
                     new DailyLossStatus(
@@ -45,6 +52,9 @@ public class KiwoomAutoTradeState {
 
     public void setAutoTrading(boolean enabled) {
         autoTrading.set(enabled);
+        KiwoomStrategyControlState entity = control();
+        entity.setAutoTradingEnabled(enabled);
+        controlStateRepository.save(entity);
     }
 
     public boolean tryStartDecision() {
@@ -66,18 +76,63 @@ public class KiwoomAutoTradeState {
     public void emergencyStop() {
         autoTrading.set(false);
         emergencyStopped.set(true);
-        persistEmergencyStop(true);
+        KiwoomStrategyControlState entity = control();
+        entity.setAutoTradingEnabled(false);
+        entity.setEmergencyStopped(true);
+        controlStateRepository.save(entity);
     }
 
     public void clearEmergencyStop() {
         emergencyStopped.set(false);
-        persistEmergencyStop(false);
+        KiwoomStrategyControlState entity = control();
+        entity.setEmergencyStopped(false);
+        controlStateRepository.save(entity);
     }
 
-    private void persistEmergencyStop(boolean stopped) {
-        KiwoomStrategyControlState entity =
-                controlStateRepository.findById(1L).orElseGet(KiwoomStrategyControlState::new);
-        entity.setEmergencyStopped(stopped);
+    public synchronized boolean recordApiFailure(String message, int limit) {
+        consecutiveApiFailures++;
+        lastApiFailureAt = LocalDateTime.now();
+        lastApiFailureMessage = trim(message);
+        boolean stop = consecutiveApiFailures >= Math.max(1, limit);
+        if (stop) {
+            autoTrading.set(false);
+            emergencyStopped.set(true);
+        }
+        persistApiHealth();
+        return stop;
+    }
+
+    public synchronized void recordApiSuccess() {
+        if (consecutiveApiFailures == 0 && lastApiFailureAt == null) return;
+        consecutiveApiFailures = 0;
+        lastApiFailureAt = null;
+        lastApiFailureMessage = null;
+        persistApiHealth();
+    }
+
+    public int getConsecutiveApiFailures() {
+        return consecutiveApiFailures;
+    }
+
+    public LocalDateTime getLastApiFailureAt() {
+        return lastApiFailureAt;
+    }
+
+    public String getLastApiFailureMessage() {
+        return lastApiFailureMessage;
+    }
+
+    private KiwoomStrategyControlState control() {
+        return controlStateRepository.findById(1L).orElseGet(KiwoomStrategyControlState::new);
+    }
+
+    private void persistApiHealth() {
+        KiwoomStrategyControlState entity = control();
+        entity.setAutoTradingEnabled(autoTrading.get());
+        entity.setEmergencyStopped(emergencyStopped.get());
+        entity.setConsecutiveApiFailures(consecutiveApiFailures);
+        entity.setLastApiFailureAt(lastApiFailureAt);
+        entity.setLastApiFailureMessage(lastApiFailureMessage);
         controlStateRepository.save(entity);
     }
 
@@ -122,14 +177,17 @@ public class KiwoomAutoTradeState {
     }
 
     private void persistDailyLoss(DailyLossStatus s) {
-        KiwoomStrategyControlState entity =
-                controlStateRepository.findById(1L).orElseGet(KiwoomStrategyControlState::new);
+        KiwoomStrategyControlState entity = control();
         entity.setDailyLossSnapshotDate(s.snapshotDate());
         entity.setDailyLossBaseAsset(s.baseAsset());
         entity.setDailyLossLastAsset(s.lastAsset());
         entity.setDailyLossTriggered(s.triggered());
         entity.setDailyLossLastCheckedAt(s.lastCheckedAt());
         controlStateRepository.save(entity);
+    }
+
+    private String trim(String value) {
+        return value == null ? "unknown" : value.substring(0, Math.min(500, value.length()));
     }
 
     public record DailyLossStatus(

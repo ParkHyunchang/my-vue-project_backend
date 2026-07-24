@@ -161,8 +161,13 @@ public class KiwoomStrategyController {
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
+        result.put(
+                "maxOrderPriceDeviationPercent",
+                props.getStrategy().getMaxOrderPriceDeviationPercent());
+        result.put("defaultDailyLossPercent", props.getStrategy().getDefaultDailyLossPercent());
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
         result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put("defaultDailyLossPercent", props.getStrategy().getDefaultDailyLossPercent());
         result.put("dailyMaxProposals", s.getDailyMaxProposals());
         result.put("prompt", promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
         return result;
@@ -208,31 +213,30 @@ public class KiwoomStrategyController {
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
         result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
         result.put("orderEnabled", props.isTradeEnabled());
-        result.put("dryRun", !props.isTradeEnabled());
         return result;
     }
 
     @GetMapping("/health")
     public Map<String, Object> health() {
-        return Map.of(
-                "configured",
-                props.isConfigured(),
-                "autoTrading",
-                state.isAutoTrading(),
-                "emergencyStopped",
-                state.isEmergencyStopped(),
-                "decisionRunning",
-                state.isDeciding(),
-                "lastRunAt",
-                state.getLastRunAt() == null ? "" : state.getLastRunAt().toString(),
-                "runCount",
-                runs.count(),
-                "proposalCount",
-                proposals.count(),
-                "risk",
-                riskStatus(),
-                "recentAudit",
-                audit.recent());
+        Map<String, Object> result = new HashMap<>();
+        result.put("configured", props.isConfigured());
+        result.put("autoTrading", state.isAutoTrading());
+        result.put("emergencyStopped", state.isEmergencyStopped());
+        result.put("decisionRunning", state.isDeciding());
+        result.put("consecutiveApiFailures", state.getConsecutiveApiFailures());
+        result.put(
+                "lastApiFailureAt",
+                state.getLastApiFailureAt() == null ? "" : state.getLastApiFailureAt().toString());
+        result.put(
+                "lastApiFailureMessage",
+                state.getLastApiFailureMessage() == null ? "" : state.getLastApiFailureMessage());
+        result.put(
+                "lastRunAt", state.getLastRunAt() == null ? "" : state.getLastRunAt().toString());
+        result.put("runCount", runs.count());
+        result.put("proposalCount", proposals.count());
+        result.put("risk", riskStatus());
+        result.put("recentAudit", audit.recent());
+        return result;
     }
 
     private Map<String, Object> riskStatus() {

@@ -90,9 +90,9 @@ public class KiwoomRiskManagerService {
             long deposit = number(depositNode, "ord_alow_amt", "entr");
             var current = settings.current();
 
-            if (state.recordDailyLossCheck(
-                    deposit + trade.totalEvaluationAmount(balance),
-                    current.getDailyLossLimitAmount())) {
+            long totalAsset = deposit + trade.totalEvaluationAmount(balance);
+            long dailyLossLimit = dailyLossLimit(totalAsset, current.getDailyLossLimitAmount());
+            if (state.recordDailyLossCheck(totalAsset, dailyLossLimit)) {
                 audit.log("DAILY_LOSS_TRIGGERED", null, "일일 손실 한도에 도달해 신규 매수를 차단합니다.");
                 events.publishEvent("strategy", "일일 손실 한도 발동 — 오늘 남은 시간 동안 신규 매수를 차단합니다.");
             }
@@ -137,6 +137,11 @@ public class KiwoomRiskManagerService {
 
     public LocalDateTime getLastScanAt() {
         return lastScanAt;
+    }
+
+    public long dailyLossLimit(long totalAsset, long configuredAmount) {
+        if (configuredAmount > 0) return configuredAmount;
+        return Math.round(totalAsset * props.getStrategy().getDefaultDailyLossPercent() / 100.0);
     }
 
     private KiwoomStrategyRun newRiskRun(String by) {

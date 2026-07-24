@@ -109,6 +109,17 @@ public class KiwoomProposalOrderService {
                             .block(Duration.ofSeconds(20));
             String raw = response == null ? "" : response.toString();
             String orderNo = response == null ? null : response.path("ord_no").asText(null);
+            if (orderNo == null || orderNo.isBlank()) {
+                p.orderUnknown(raw);
+                proposals.save(p);
+                state.emergencyStop();
+                audit.log(
+                        "ORDER_UNKNOWN",
+                        p.getId(),
+                        "Broker response had no order number; automation was stopped to prevent duplicates.");
+                events.publishEvent("error", "주문번호를 받지 못해 자동매매를 긴급 중지했습니다: " + p.getStockCode());
+                return fail("주문번호가 없어 주문 상태를 확정할 수 없습니다. 자동매매를 중지했습니다.");
+            }
             p.ordered(raw, orderNo);
             proposals.save(p);
             audit.log(
@@ -212,7 +223,7 @@ public class KiwoomProposalOrderService {
 
     private String preflightError(KiwoomTradeProposal p) {
         if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
-        if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다. 현재는 안전한 dry-run 상태입니다.";
+        if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다.";
         if (hasGuards(p)) return "안전 경고가 있는 주문 초안은 전송할 수 없습니다.";
         if (!KiwoomMarketHours.isOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";
         if (p.getOrderType() == KiwoomTradeProposal.OrderType.MARKET

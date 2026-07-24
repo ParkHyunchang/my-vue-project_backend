@@ -12,7 +12,11 @@ import java.time.LocalDateTime;
 @Table(name = "kiwoom_strategy_control_state")
 public class KiwoomStrategyControlState {
     @Id private Long id = 1L;
+    private boolean autoTradingEnabled;
     private boolean emergencyStopped;
+    private int consecutiveApiFailures;
+    private LocalDateTime lastApiFailureAt;
+    private String lastApiFailureMessage;
 
     // 일일 손실 한도 — 거래일 최초 체크 시 총자산(예수금+평가금액)을 스냅샷으로 잡고, 이후 하락폭을 비교한다.
     private LocalDate dailyLossSnapshotDate;
@@ -33,8 +37,40 @@ public class KiwoomStrategyControlState {
         return emergencyStopped;
     }
 
+    public boolean isAutoTradingEnabled() {
+        return autoTradingEnabled;
+    }
+
+    public void setAutoTradingEnabled(boolean value) {
+        autoTradingEnabled = value;
+    }
+
     public void setEmergencyStopped(boolean value) {
         emergencyStopped = value;
+    }
+
+    public int getConsecutiveApiFailures() {
+        return consecutiveApiFailures;
+    }
+
+    public void setConsecutiveApiFailures(int value) {
+        consecutiveApiFailures = value;
+    }
+
+    public LocalDateTime getLastApiFailureAt() {
+        return lastApiFailureAt;
+    }
+
+    public void setLastApiFailureAt(LocalDateTime value) {
+        lastApiFailureAt = value;
+    }
+
+    public String getLastApiFailureMessage() {
+        return lastApiFailureMessage;
+    }
+
+    public void setLastApiFailureMessage(String value) {
+        lastApiFailureMessage = value;
     }
 
     public LocalDate getDailyLossSnapshotDate() {

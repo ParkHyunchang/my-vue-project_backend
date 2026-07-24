@@ -7,13 +7,13 @@ import org.springframework.stereotype.Component;
 @Component
 @ConfigurationProperties(prefix = "kiwoom")
 public class KiwoomProperties {
-    private String mode = "mock";
     private String appKey;
     private String secretKey;
     private String accountNo;
     private boolean tradeEnabled;
     private long refreshBeforeSeconds = 300;
     private long minRequestIntervalMs = 250;
+    private int maxConsecutiveApiFailures = 3;
     private Strategy strategy = new Strategy();
 
     public static class Strategy {
@@ -32,6 +32,8 @@ public class KiwoomProperties {
         private double swingStopLossPercent = 3.0;
         private double swingTakeProfitPercent = 6.0;
         private int swingMaxHoldingDays = 5;
+        private double maxOrderPriceDeviationPercent = 2.0;
+        private double defaultDailyLossPercent = 3.0;
 
         public boolean isEnabled() {
             return enabled;
@@ -112,31 +114,39 @@ public class KiwoomProperties {
         public void setSwingMaxHoldingDays(int value) {
             swingMaxHoldingDays = Math.max(1, Math.min(30, value));
         }
-    }
 
-    public boolean isMock() {
-        return !"live".equalsIgnoreCase(mode);
+        public double getMaxOrderPriceDeviationPercent() {
+            return maxOrderPriceDeviationPercent;
+        }
+
+        public void setMaxOrderPriceDeviationPercent(double value) {
+            maxOrderPriceDeviationPercent = Math.max(0, Math.min(30, value));
+        }
+
+        public double getDefaultDailyLossPercent() {
+            return defaultDailyLossPercent;
+        }
+
+        public void setDefaultDailyLossPercent(double value) {
+            defaultDailyLossPercent = Math.max(0, Math.min(30, value));
+        }
     }
 
     public String getRestBaseUrl() {
-        return isMock() ? "https://mockapi.kiwoom.com" : "https://api.kiwoom.com";
+        return "https://api.kiwoom.com";
     }
 
     public String getWebsocketUrl() {
-        return (isMock() ? "wss://mockapi.kiwoom.com:10000" : "wss://api.kiwoom.com:10000")
-                + "/api/dostk/websocket";
+        return "wss://api.kiwoom.com:10000/api/dostk/websocket";
     }
 
     public boolean isConfigured() {
-        return appKey != null && !appKey.isBlank() && secretKey != null && !secretKey.isBlank();
-    }
-
-    public String getMode() {
-        return mode;
-    }
-
-    public void setMode(String mode) {
-        this.mode = mode;
+        return appKey != null
+                && !appKey.isBlank()
+                && secretKey != null
+                && !secretKey.isBlank()
+                && accountNo != null
+                && !accountNo.isBlank();
     }
 
     public String getAppKey() {
@@ -185,6 +195,14 @@ public class KiwoomProperties {
 
     public void setMinRequestIntervalMs(long minRequestIntervalMs) {
         this.minRequestIntervalMs = minRequestIntervalMs;
+    }
+
+    public int getMaxConsecutiveApiFailures() {
+        return maxConsecutiveApiFailures;
+    }
+
+    public void setMaxConsecutiveApiFailures(int value) {
+        maxConsecutiveApiFailures = Math.max(1, Math.min(20, value));
     }
 
     public Strategy getStrategy() {

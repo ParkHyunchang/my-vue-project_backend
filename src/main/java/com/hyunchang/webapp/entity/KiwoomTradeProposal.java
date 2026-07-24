@@ -27,7 +27,8 @@ public class KiwoomTradeProposal {
         CANCEL_REQUESTED,
         FILLED,
         CANCELED,
-        ORDER_FAILED
+        ORDER_FAILED,
+        ORDER_UNKNOWN
     }
 
     @Id
@@ -326,6 +327,12 @@ public class KiwoomTradeProposal {
     public void orderFailed(String error) {
         status = Status.ORDER_FAILED;
         errorMessage = error;
+    }
+
+    public void orderUnknown(String response) {
+        status = Status.ORDER_UNKNOWN;
+        brokerResponse = response;
+        errorMessage = "Broker response did not include an order number.";
     }
 
     public LocalDateTime getCreatedAt() {

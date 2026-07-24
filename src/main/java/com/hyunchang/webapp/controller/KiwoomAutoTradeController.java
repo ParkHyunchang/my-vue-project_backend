@@ -6,9 +6,12 @@ import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
+import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.KiwoomWebsocketClient;
 import java.util.Map;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.codec.ServerSentEvent;
@@ -31,6 +34,7 @@ public class KiwoomAutoTradeController {
     private final KiwoomWebsocketClient websocketClient;
     private final KiwoomAutoTradeState state;
     private final KiwoomStrategyService strategyService;
+    private final KiwoomStrategySettingsService settings;
     private final KiwoomStrategyAuditService audit;
 
     public KiwoomAutoTradeController(
@@ -40,6 +44,7 @@ public class KiwoomAutoTradeController {
             KiwoomWebsocketClient websocketClient,
             KiwoomAutoTradeState state,
             KiwoomStrategyService strategyService,
+            KiwoomStrategySettingsService settings,
             KiwoomStrategyAuditService audit) {
         this.properties = properties;
         this.authService = authService;
@@ -47,6 +52,7 @@ public class KiwoomAutoTradeController {
         this.websocketClient = websocketClient;
         this.state = state;
         this.strategyService = strategyService;
+        this.settings = settings;
         this.audit = audit;
     }
 
@@ -63,10 +69,22 @@ public class KiwoomAutoTradeController {
                 state.isAutoTrading(),
                 "emergencyStopped",
                 state.isEmergencyStopped(),
-                "mode",
-                properties.getMode(),
                 "orderEnabled",
-                properties.isTradeEnabled());
+                properties.isTradeEnabled(),
+                "consecutiveApiFailures",
+                state.getConsecutiveApiFailures(),
+                "lastApiFailureAt",
+                state.getLastApiFailureAt() == null ? "" : state.getLastApiFailureAt().toString(),
+                "lastApiFailureMessage",
+                state.getLastApiFailureMessage() == null ? "" : state.getLastApiFailureMessage());
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void resumeRealtimeSubscription() {
+        if (properties.isConfigured() && state.isAutoTrading() && !state.isEmergencyStopped()) {
+            websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
+            audit.log("AUTOMATION_RESTORED", null, "재시작 후 저장된 자동매매 상태와 실시간 시세 구독을 복구했습니다.");
+        }
     }
 
     @PostMapping("/token/refresh")
@@ -93,6 +111,19 @@ public class KiwoomAutoTradeController {
                                     false,
                                     "message",
                                     "KIWOOM_APP_KEY / KIWOOM_SECRET_KEY 설정이 필요합니다."));
+        }
+        if (request.enabled() && !properties.isTradeEnabled()) {
+            return ResponseEntity.status(409)
+                    .body(
+                            Map.of(
+                                    "success",
+                                    false,
+                                    "message",
+                                    "KIWOOM_TRADE_ENABLED=true 설정이 필요합니다."));
+        }
+        if (request.enabled()) {
+            settings.activateFullAutomation();
+            audit.log("FULL_AUTOMATION_ACTIVATED", null, "관리자 시작 요청으로 자동 주문 및 리스크 청산 루프를 활성화했습니다.");
         }
         state.setAutoTrading(request.enabled());
         if (request.enabled())

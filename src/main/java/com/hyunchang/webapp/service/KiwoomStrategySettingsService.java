@@ -49,6 +49,15 @@ public class KiwoomStrategySettingsService {
         return repo.findById(1L).orElseThrow();
     }
 
+    /** A human start action is the sole opt-in required for the unattended trading loops. */
+    @Transactional
+    public KiwoomStrategySettings activateFullAutomation() {
+        KiwoomStrategySettings s = current();
+        s.setAutoExecute(true);
+        s.setRiskLoopEnabled(true);
+        return repo.save(s);
+    }
+
     @Transactional
     public KiwoomStrategySettings save(Update u, String user) {
         KiwoomStrategySettings s = current();

@@ -17,15 +17,18 @@ import reactor.core.publisher.Mono;
 public class KiwoomTradeService {
     private final KiwoomProperties properties;
     private final KiwoomAuthService authService;
+    private final KiwoomAutoTradeState state;
     private final WebClient webClient;
     private long nextRequestAt;
 
     public KiwoomTradeService(
             KiwoomProperties properties,
             KiwoomAuthService authService,
+            KiwoomAutoTradeState state,
             WebClient.Builder webClientBuilder) {
         this.properties = properties;
         this.authService = authService;
+        this.state = state;
         this.webClient = webClientBuilder.build();
     }
 
@@ -35,13 +38,13 @@ public class KiwoomTradeService {
         return request("kt00001", "/api/dostk/acnt", Map.of("qry_tp", "3"));
     }
 
-    /** 계좌평가잔고(kt00018)를 조회합니다. */
+    /** 국내주식 계좌평가잔고(kt00017)를 조회합니다. */
     public Mono<JsonNode> getBalance() {
         // qry_tp: 1=합산, 2=개별
-        return request("kt00018", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
+        return request("kt00017", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
     }
 
-    /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. 필드값은 모의 모드에서 실측 확인 필요. */
+    /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. */
     public Mono<JsonNode> getUnfilledOrders() {
         // all_stk_tp 0:전체 1:종목, trde_tp 0:전체 1:매도 2:매수, stex_tp 0:통합 1:KRX 2:NXT
         return request(
@@ -87,7 +90,7 @@ public class KiwoomTradeService {
                 body);
     }
 
-    /** kt10002(정정): 미체결 주문의 수량·지정가를 변경합니다. 필드명은 모의 모드에서 실측 확인 필요. */
+    /** kt10002(정정): 미체결 주문의 수량·지정가를 변경합니다. */
     public Mono<JsonNode> amendOrder(AmendOrderRequest order) {
         if (!properties.isTradeEnabled())
             return Mono.error(
@@ -188,7 +191,13 @@ public class KiwoomTradeService {
                                                         .bodyValue(body)
                                                         .retrieve()
                                                         .bodyToMono(JsonNode.class)))
-                .flatMap(response -> failOnKiwoomError(apiId, response));
+                .flatMap(response -> failOnKiwoomError(apiId, response))
+                .doOnSuccess(ignored -> state.recordApiSuccess())
+                .doOnError(
+                        error ->
+                                state.recordApiFailure(
+                                        apiId + ": " + error.getMessage(),
+                                        properties.getMaxConsecutiveApiFailures()));
     }
 
     /** 키움 오류 응답(return_code != 0)을 조용히 0원으로 파싱하지 않도록 명시적 에러로 변환합니다. */

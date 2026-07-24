@@ -45,8 +45,10 @@ public class KiwoomStrategyRun {
     private String errorMessage;
 
     private int promptChars;
+
     /** Token counts are estimates when the provider does not return usage metadata. */
     private int inputTokens;
+
     private int outputTokens;
     private boolean aiCalled;
     private LocalDateTime createdAt;
@@ -116,12 +118,29 @@ public class KiwoomStrategyRun {
         promptChars = v;
     }
 
-    public int getInputTokens() { return inputTokens; }
-    public void setInputTokens(int v) { inputTokens = v; }
-    public int getOutputTokens() { return outputTokens; }
-    public void setOutputTokens(int v) { outputTokens = v; }
-    public boolean isAiCalled() { return aiCalled; }
-    public void setAiCalled(boolean v) { aiCalled = v; }
+    public int getInputTokens() {
+        return inputTokens;
+    }
+
+    public void setInputTokens(int v) {
+        inputTokens = v;
+    }
+
+    public int getOutputTokens() {
+        return outputTokens;
+    }
+
+    public void setOutputTokens(int v) {
+        outputTokens = v;
+    }
+
+    public boolean isAiCalled() {
+        return aiCalled;
+    }
+
+    public void setAiCalled(boolean v) {
+        aiCalled = v;
+    }
 
     public LocalDateTime getCreatedAt() {
         return createdAt;

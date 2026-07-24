@@ -11,6 +11,7 @@ import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
 import com.hyunchang.webapp.util.KiwoomMarketHours;
+import com.hyunchang.webapp.util.KiwoomPriceRules;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -39,6 +40,7 @@ public class KiwoomStrategyService {
 
     /** 유니버스에 편입되는 스윙 후보 상한 — ShortSwingCandidateService.MAX_SCREENED_CANDIDATES와 동일한 관례. */
     private static final int SWING_CANDIDATE_LIMIT = 20;
+
     private volatile String lastCandidateSignature;
 
     private final KiwoomProperties props;
@@ -117,9 +119,16 @@ public class KiwoomStrategyService {
             long deposit = number(depositNode, "ord_alow_amt", "entr");
 
             // 일일 손실 한도 체크 — 이미 조회한 예수금·잔고를 재사용하므로 추가 API 호출이 없다.
-            if (state.recordDailyLossCheck(
-                    deposit + trade.totalEvaluationAmount(balance),
-                    settings.current().getDailyLossLimitAmount())) {
+            long totalAsset = deposit + trade.totalEvaluationAmount(balance);
+            long configuredDailyLossLimit = settings.current().getDailyLossLimitAmount();
+            long dailyLossLimit =
+                    configuredDailyLossLimit > 0
+                            ? configuredDailyLossLimit
+                            : Math.round(
+                                    totalAsset
+                                            * props.getStrategy().getDefaultDailyLossPercent()
+                                            / 100.0);
+            if (state.recordDailyLossCheck(totalAsset, dailyLossLimit)) {
                 audit.log("DAILY_LOSS_TRIGGERED", null, "일일 손실 한도에 도달해 신규 매수를 차단합니다.");
                 events.publishEvent("strategy", "일일 손실 한도 발동 — 오늘 남은 시간 동안 신규 매수를 차단합니다.");
             }
@@ -129,10 +138,12 @@ public class KiwoomStrategyService {
             List<KiwoomTradeService.Holding> holdings = trade.parseHoldings(balance);
             Map<String, String> universe = new LinkedHashMap<>();
             Map<String, Integer> sellableQty = new HashMap<>();
+            Map<String, Long> currentPrices = new HashMap<>();
             List<String> holdingLines = new ArrayList<>();
             for (KiwoomTradeService.Holding h : holdings) {
                 universe.put(h.code(), h.name());
                 sellableQty.put(h.code(), h.sellable());
+                currentPrices.put(h.code(), h.curPrice());
                 holdingLines.add(promptLine(h));
             }
             // 스윙 후보는 이번 판단 안에서 한 번만 조회해 유니버스 구성·신호 텍스트·BUY 검증에 함께 재사용한다.
@@ -159,7 +170,9 @@ public class KiwoomStrategyService {
             if ("SCHEDULE".equals(by)
                     && candidateSignature.equals(lastCandidateSignature)
                     && !holdingExitTriggered(holdings)) {
-                return skipped(run, "No candidate change or holding stop-loss/take-profit signal; AI call skipped.");
+                return skipped(
+                        run,
+                        "No candidate change or holding stop-loss/take-profit signal; AI call skipped.");
             }
 
             String prompt =
@@ -208,7 +221,14 @@ public class KiwoomStrategyService {
             Set<String> unique = new HashSet<>();
             for (JsonNode d : root.path("decisions")) {
                 KiwoomTradeProposal p =
-                        validated(d, universe, sellableQty, swingCandidates, deposit, unique);
+                        validated(
+                                d,
+                                universe,
+                                sellableQty,
+                                currentPrices,
+                                swingCandidates,
+                                deposit,
+                                unique);
                 if (p == null) continue;
                 applyGuardFlags(p, deposit);
                 p.setRun(run);
@@ -232,25 +252,36 @@ public class KiwoomStrategyService {
     }
 
     private boolean dailyProposalLimitReached() {
-        long today = proposals.countByActionInAndCreatedAtGreaterThanEqual(
-                List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
-                LocalDateTime.now(KST).toLocalDate().atStartOfDay());
+        long today =
+                proposals.countByActionInAndCreatedAtGreaterThanEqual(
+                        List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
+                        LocalDateTime.now(KST).toLocalDate().atStartOfDay());
         return today >= settings.current().getDailyMaxProposals();
     }
 
     private boolean holdingExitTriggered(List<KiwoomTradeService.Holding> holdings) {
         var s = settings.current();
-        return holdings.stream().anyMatch(h -> h.plPct() <= -s.getSwingStopLossPercent()
-                || h.plPct() >= s.getSwingTakeProfitPercent());
+        return holdings.stream()
+                .anyMatch(
+                        h ->
+                                h.plPct() <= -s.getSwingStopLossPercent()
+                                        || h.plPct() >= s.getSwingTakeProfitPercent());
     }
 
-    private String candidateSignature(List<ShortSwingCandidateService.KrCandidateCatalyst> candidates) {
+    private String candidateSignature(
+            List<ShortSwingCandidateService.KrCandidateCatalyst> candidates) {
         return candidates.stream()
-                .map(cc -> {
-                    KrxOpenApiService.KrSwingCandidate c = cc.candidate();
-                    return c.bareCode() + ':' + Math.round(c.changePercent() * 10)
-                            + ':' + Math.round(c.volumeRatio() * 10) + ':' + describeCatalyst(cc);
-                })
+                .map(
+                        cc -> {
+                            KrxOpenApiService.KrSwingCandidate c = cc.candidate();
+                            return c.bareCode()
+                                    + ':'
+                                    + Math.round(c.changePercent() * 10)
+                                    + ':'
+                                    + Math.round(c.volumeRatio() * 10)
+                                    + ':'
+                                    + describeCatalyst(cc);
+                        })
                 .collect(java.util.stream.Collectors.joining("|"));
     }
 
@@ -328,6 +359,7 @@ public class KiwoomStrategyService {
             JsonNode d,
             Map<String, String> universe,
             Map<String, Integer> sellableQty,
+            Map<String, Long> currentPrices,
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
             long deposit,
             Set<String> unique) {
@@ -346,6 +378,16 @@ public class KiwoomStrategyService {
             if (action != KiwoomTradeProposal.Action.HOLD) {
                 long p0 = d.path("limitPrice").asLong();
                 if (p0 <= 0) return null;
+                String market =
+                        swingCandidates.containsKey(code)
+                                ? swingCandidates.get(code).market()
+                                : "KOSPI";
+                if (!KiwoomPriceRules.isValidLimitPrice(p0, market)) return null;
+                long reference =
+                        swingCandidates.containsKey(code)
+                                ? Math.round(swingCandidates.get(code).closePrice())
+                                : currentPrices.getOrDefault(code, 0L);
+                if (reference <= 0 || exceedsPriceDeviation(p0, reference)) return null;
                 price = p0;
             }
             var s = settings.current();
@@ -393,6 +435,11 @@ public class KiwoomStrategyService {
         double raw = node.asDouble(0);
         double scaled = raw > 0 && raw <= 1 ? raw * 100 : raw;
         return Math.max(0, Math.min(100, (int) Math.round(scaled)));
+    }
+
+    private boolean exceedsPriceDeviation(long price, long reference) {
+        double maximum = props.getStrategy().getMaxOrderPriceDeviationPercent();
+        return maximum > 0 && Math.abs(price - reference) * 100.0 / reference > maximum;
     }
 
     private void applyGuardFlags(KiwoomTradeProposal p, long deposit) {
