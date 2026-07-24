@@ -24,12 +24,15 @@ public class KiwoomStrategyRun {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    // columnDefinition을 varchar로 명시 — MySQLDialect가 기본으로 native ENUM 컬럼을 생성하는데,
+    // ddl-auto=update는 기존 컬럼의 enum 허용값을 넓혀주지 않아 새 상수 추가 시마다
+    // "Data truncated for column" 오류가 재발했다 (SKIPPED, RISK 추가 때 실제 발생).
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "varchar(20)")
     private TriggeredBy triggeredBy;
 
     @Enumerated(EnumType.STRING)
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "varchar(20)")
     private Status status;
 
     private String providerName;
