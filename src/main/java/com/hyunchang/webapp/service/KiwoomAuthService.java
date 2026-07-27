@@ -19,6 +19,8 @@ public class KiwoomAuthService {
     private final KiwoomProperties properties;
     private final WebClient webClient;
     private volatile TokenState tokenState;
+    private final Object refreshLock = new Object();
+    private Mono<TokenState> refreshInFlight;
 
     public KiwoomAuthService(KiwoomProperties properties, WebClient.Builder webClientBuilder) {
         this.properties = properties;
@@ -33,7 +35,25 @@ public class KiwoomAuthService {
     }
 
     /** 운영자가 UI에서 누르는 수동 갱신용 메서드입니다. 토큰 원문은 절대 API 응답으로 노출하지 않습니다. */
-    public synchronized Mono<TokenState> refreshToken() {
+    public Mono<TokenState> refreshToken() {
+        synchronized (refreshLock) {
+            if (refreshInFlight != null) return refreshInFlight;
+
+            // Mono is lazy. Cache one in-flight request so concurrent callers after a
+            // restart share one token issuance instead of invalidating one another.
+            refreshInFlight = requestNewToken().cache();
+            return refreshInFlight;
+        }
+    }
+
+    /** Discards a token rejected by Kiwoom, but only when it is still current. */
+    public void invalidateAccessToken(String rejectedToken) {
+        synchronized (refreshLock) {
+            if (tokenState != null && tokenState.token().equals(rejectedToken)) tokenState = null;
+        }
+    }
+
+    private Mono<TokenState> requestNewToken() {
         if (!properties.isConfigured())
             return Mono.error(new IllegalStateException("키움 App Key/Secret Key가 설정되지 않았습니다."));
         return webClient
@@ -51,7 +71,14 @@ public class KiwoomAuthService {
                 .retrieve()
                 .bodyToMono(JsonNode.class)
                 .map(this::toTokenState)
-                .doOnNext(state -> tokenState = state);
+                .doOnNext(state -> tokenState = state)
+                .doFinally(ignored -> clearRefreshInFlight());
+    }
+
+    private void clearRefreshInFlight() {
+        synchronized (refreshLock) {
+            refreshInFlight = null;
+        }
     }
 
     public boolean hasUsableToken() {

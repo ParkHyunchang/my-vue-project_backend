@@ -10,6 +10,8 @@ import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.KiwoomWebsocketClient;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.http.MediaType;
@@ -28,6 +30,7 @@ import reactor.core.publisher.Mono;
 @RestController
 @RequestMapping("/api/kiwoom/auto-trade")
 public class KiwoomAutoTradeController {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomAutoTradeController.class);
     private final KiwoomProperties properties;
     private final KiwoomAuthService authService;
     private final KiwoomTradeService tradeService;
@@ -85,6 +88,16 @@ public class KiwoomAutoTradeController {
             websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
             audit.log("AUTOMATION_RESTORED", null, "재시작 후 저장된 자동매매 상태와 실시간 시세 구독을 복구했습니다.");
         }
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    public void warmUpAccessToken() {
+        if (!properties.isConfigured()) return;
+        authService
+                .getAccessToken()
+                .subscribe(
+                        ignored -> log.info("Kiwoom access token is ready."),
+                        error -> log.warn("Failed to warm up the Kiwoom access token.", error));
     }
 
     @PostMapping("/token/refresh")

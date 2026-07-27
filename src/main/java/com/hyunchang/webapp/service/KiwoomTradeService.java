@@ -35,19 +35,20 @@ public class KiwoomTradeService {
     /** 예수금 상세(kt00001)를 조회합니다. 계좌는 App Key 발급 시 연동된 계좌가 사용됩니다. */
     public Mono<JsonNode> getDeposit() {
         // qry_tp: 3=추정조회, 2=일반조회 (필수 파라미터 — 없으면 return_code=2 에러)
-        return request("kt00001", "/api/dostk/acnt", Map.of("qry_tp", "3"));
+        return readRequest("kt00001", "/api/dostk/acnt", Map.of("qry_tp", "3"));
     }
 
     /** 국내주식 계좌평가잔고(kt00017)를 조회합니다. */
     public Mono<JsonNode> getBalance() {
         // qry_tp: 1=합산, 2=개별
-        return request("kt00017", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
+        return readRequest(
+                "kt00017", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
     }
 
     /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. */
     public Mono<JsonNode> getUnfilledOrders() {
         // all_stk_tp 0:전체 1:종목, trde_tp 0:전체 1:매도 2:매수, stex_tp 0:통합 1:KRX 2:NXT
-        return request(
+        return readRequest(
                 "ka10075",
                 "/api/dostk/acnt",
                 Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "0"));
@@ -56,7 +57,7 @@ public class KiwoomTradeService {
     /** 체결(ka10076) 조회 — 미체결과 파라미터 구성이 다르다(qry_tp/sell_tp). */
     public Mono<JsonNode> getFilledOrders() {
         // qry_tp 0:전체 1:종목, sell_tp 0:전체 1:매도 2:매수, stex_tp 0:통합 1:KRX 2:NXT
-        return request(
+        return readRequest(
                 "ka10076",
                 "/api/dostk/acnt",
                 Map.of("stk_cd", "", "qry_tp", "0", "sell_tp", "0", "ord_no", "", "stex_tp", "0"));
@@ -84,7 +85,7 @@ public class KiwoomTradeService {
         body.put("ord_uv", market ? "" : String.valueOf(order.price()));
         body.put("trde_tp", market ? "3" : "0");
         body.put("cond_uv", "");
-        return request(
+        return writeRequest(
                 "SELL".equalsIgnoreCase(order.side()) ? "kt10001" : "kt10000",
                 "/api/dostk/ordr",
                 body);
@@ -109,7 +110,7 @@ public class KiwoomTradeService {
         body.put("mdfy_qty", String.valueOf(order.quantity()));
         body.put("mdfy_uv", String.valueOf(order.price()));
         body.put("mdfy_cond_uv", "");
-        return request("kt10002", "/api/dostk/ordr", body);
+        return writeRequest("kt10002", "/api/dostk/ordr", body);
     }
 
     /** kt10003(취소): 미체결 주문의 잔량 일부/전부를 취소합니다. */
@@ -123,7 +124,7 @@ public class KiwoomTradeService {
         body.put("orig_ord_no", order.originalOrderNo());
         body.put("stk_cd", order.stockCode());
         body.put("cncl_qty", String.valueOf(order.quantity()));
-        return request("kt10003", "/api/dostk/ordr", body);
+        return writeRequest("kt10003", "/api/dostk/ordr", body);
     }
 
     /** kt00018 계좌평가잔고의 종목 배열을 파싱한다. 필드명은 실측으로 확정되지 않아 대체 이름을 함께 시도한다. */
@@ -174,8 +175,30 @@ public class KiwoomTradeService {
         return 0;
     }
 
-    private Mono<JsonNode> request(String apiId, String path, Map<String, ?> body) {
+    private Mono<JsonNode> readRequest(String apiId, String path, Map<String, ?> body) {
+        return request(apiId, path, body, true);
+    }
+
+    private Mono<JsonNode> writeRequest(String apiId, String path, Map<String, ?> body) {
+        // An order must never be retried automatically: if a response was lost after the
+        // exchange accepted it, a retry could create a duplicate order.
+        return request(apiId, path, body, false);
+    }
+
+    private Mono<JsonNode> request(
+            String apiId, String path, Map<String, ?> body, boolean retryInvalidTokenOnce) {
         // 키움 호출 제한은 계정/서비스별로 달라질 수 있습니다. 아래 직렬화 간격은 보수적인 기본 보호막입니다.
+        return requestOnce(apiId, path, body, retryInvalidTokenOnce)
+                .doOnSuccess(ignored -> state.recordApiSuccess())
+                .doOnError(
+                        error ->
+                                state.recordApiFailure(
+                                        apiId + ": " + error.getMessage(),
+                                        properties.getMaxConsecutiveApiFailures()));
+    }
+
+    private Mono<JsonNode> requestOnce(
+            String apiId, String path, Map<String, ?> body, boolean retryInvalidTokenOnce) {
         return authService
                 .getAccessToken()
                 .flatMap(
@@ -190,14 +213,22 @@ public class KiwoomTradeService {
                                                         .header("api-id", apiId)
                                                         .bodyValue(body)
                                                         .retrieve()
-                                                        .bodyToMono(JsonNode.class)))
-                .flatMap(response -> failOnKiwoomError(apiId, response))
-                .doOnSuccess(ignored -> state.recordApiSuccess())
-                .doOnError(
-                        error ->
-                                state.recordApiFailure(
-                                        apiId + ": " + error.getMessage(),
-                                        properties.getMaxConsecutiveApiFailures()));
+                                                        .bodyToMono(JsonNode.class))
+                                        .flatMap(
+                                                response -> {
+                                                    if (retryInvalidTokenOnce
+                                                            && isInvalidToken(response)) {
+                                                        authService.invalidateAccessToken(token);
+                                                        return requestOnce(
+                                                                apiId, path, body, false);
+                                                    }
+                                                    return failOnKiwoomError(apiId, response);
+                                                }));
+    }
+
+    private boolean isInvalidToken(JsonNode response) {
+        return response.path("return_code").asInt(0) == 8005
+                || response.path("return_msg").asText("").contains("8005");
     }
 
     /** 키움 오류 응답(return_code != 0)을 조용히 0원으로 파싱하지 않도록 명시적 에러로 변환합니다. */
