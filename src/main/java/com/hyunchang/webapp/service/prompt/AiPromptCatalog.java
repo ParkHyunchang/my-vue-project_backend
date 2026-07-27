@@ -28,6 +28,7 @@ public final class AiPromptCatalog {
     public static final String REALESTATE_LAND = "REALESTATE_LAND";
     public static final String DIARY_ANALYSIS = "DIARY_ANALYSIS";
     public static final String KIWOOM_TRADE_STRATEGY = "KIWOOM_TRADE_STRATEGY";
+    public static final String SAJU_ANALYSIS = "SAJU_ANALYSIS";
 
     private static final Map<String, PromptDefinition> CATALOG = new LinkedHashMap<>();
 
@@ -61,6 +62,8 @@ public final class AiPromptCatalog {
         // 일기
         register(diaryAnalysis());
         register(kiwoomTradeStrategy());
+        // 사주
+        register(sajuAnalysis());
     }
 
     private static PromptDefinition kiwoomTradeStrategy() {
@@ -726,6 +729,72 @@ public final class AiPromptCatalog {
               "keywords": ["키워드1", "키워드2", "키워드3"],
               "comment": "공감하고 격려하는 따뜻한 한마디 (2~3문장)"
             }
+            """);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 사주 해석
+
+    private static PromptDefinition sajuAnalysis() {
+        return new PromptDefinition(
+                SAJU_ANALYSIS,
+                "사주 해석",
+                "사주",
+                "생년월일시로 서버가 계산한 사주팔자(년주/월주/일주/시주)와 오행 분포를 근거로 성격·총운·연애운·재물운·건강운을 해석하는 프롬프트입니다.",
+                List.of(
+                        new PromptVariable("이름", "사주 대상 라벨 (예: 나, 아내) — 없으면 '이 사람'"),
+                        new PromptVariable(
+                                "생년월일시", "생년월일 및 태어난 시각 (음력 입력이면 환산된 양력 날짜도 함께 표시, 모르면 '모름' 표시)"),
+                        new PromptVariable("년주", "년주 간지 (한글+한자, 예: 경오(庚午))"),
+                        new PromptVariable("월주", "월주 간지"),
+                        new PromptVariable("일주", "일주 간지"),
+                        new PromptVariable("시주", "시주 간지 (태어난 시간을 모르면 '모름')"),
+                        new PromptVariable("오행분포", "목/화/토/금/수 각각의 개수 (8개 중)")),
+                """
+            당신은 명리학(사주) 해석가입니다. 아래 제공된 사주팔자(년주/월주/일주/시주)와 오행 분포만 근거로 해석하세요.
+            제공되지 않은 정보(예: 시주가 '모름'인 경우)는 추측하지 말고, 그 부분은 언급을 최소화하거나 "출생 시간 미상으로 시주 해석 제외"라고
+            짧게 안내하세요. 단정적 예언이나 미신적 과장(예: "반드시 ~한다", "큰 화를 입는다") 대신 경향성·참고용 표현을 쓰세요.
+            오행의 과다·부족, 천간·지지의 상호작용(합/충/생/극 등 아는 범위 내)을 근거로 구체적으로 설명하되,
+            근거 없는 살(殺)이나 흉조 단정은 하지 마세요.
+            """,
+                """
+            ── 사주 정보 ──
+            이름: {{이름}}
+            생년월일시: {{생년월일시}}
+            년주: {{년주}}
+            월주: {{월주}}
+            일주: {{일주}}
+            시주: {{시주}}
+            오행 분포 (8개 중): {{오행분포}}
+            """,
+                """
+            ── 출력 형식 ──
+            한국어 마크다운으로 작성하세요. 답변 전체를 ``` 코드블록으로 감싸지 마세요.
+            다음 섹션을 반드시 포함하세요:
+
+            ## 총평
+            사주 전체 구조와 오행 균형을 2~3문장으로 요약.
+
+            ## 오행 균형
+            목/화/토/금/수 중 과다하거나 부족한 오행을 짚고, 그것이 의미하는 성향을 설명.
+
+            ## 성격
+            일주(일간) 중심으로 타고난 성격·기질을 설명.
+
+            ## 연애운
+            제공된 사주 정보를 근거로 한 연애·인간관계 성향.
+
+            ## 재물운
+            제공된 사주 정보를 근거로 한 재물·직업 성향.
+
+            ## 건강운
+            오행 불균형과 연결지어 주의할 만한 건강 경향 (의학적 진단이 아님을 함께 명시).
+
+            ## 마무리 조언
+            실질적으로 도움이 될 만한 한두 가지 조언.
+
+            ## 참고 고지
+            이 해석은 정보 제공/오락 목적이며 운명을 확정하거나 의학적·법적 조언을 대신하지 않습니다.
             """);
     }
 }

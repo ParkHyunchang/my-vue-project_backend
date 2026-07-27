@@ -116,6 +116,7 @@ public class MenuPermissionService {
                         "/stock",
                         "/realestate",
                         "/travel",
+                        "/saju",
                         "/chat",
                         "/diary",
                         "/admin",

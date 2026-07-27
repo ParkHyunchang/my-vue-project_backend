@@ -114,6 +114,10 @@ app:
     land-key: ${REALLAND_API_KEY:}
     # VWorld 키 발급 시 등록한 서비스 URL/도메인 (요청 도메인 검증용)
     land-domain: ${VWORLD_DOMAIN:hyunchang.synology.me:3101}
+  # 사주팔자 계산 — 한국천문연구원(KASI) 음양력 정보 API (data.go.kr)
+  # 서비스키는 환경변수 KASI_API_KEY 로 주입 (미설정 시 사주 계산 비활성)
+  saju:
+    kasi-key: ${KASI_API_KEY:}
 
 # 키움 REST / WebSocket 설정
 # 실제 키는 절대 저장소에 넣지 말고 환경 변수(KIWOOM_APP_KEY, KIWOOM_SECRET_KEY)로만 주입합니다.
