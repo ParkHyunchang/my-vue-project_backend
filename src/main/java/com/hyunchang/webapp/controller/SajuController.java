@@ -30,8 +30,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class SajuController {
 
     private static final String MENU_PATH = "/saju";
-    private static final String INVALID_BIRTH_MSG =
-            "생년월일이 필요합니다. 음력이면 연/월/일을 모두 입력하세요.";
+    private static final String INVALID_BIRTH_MSG = "생년월일이 필요합니다. 음력이면 연/월/일을 모두 입력하세요.";
 
     private final SajuAnalysisService sajuAnalysisService;
     private final SajuProfileService sajuProfileService;
@@ -56,7 +55,10 @@ public class SajuController {
 
     // ── 요청 레코드 ────────────────────────────────────────────────
 
-    /** calendarType: "SOLAR"(기본) | "LUNAR". LUNAR 면 lunarYear/lunarMonth/lunarDay 필수, leapMonth 는 윤달 여부. */
+    /**
+     * calendarType: "SOLAR"(기본) | "LUNAR". LUNAR 면 lunarYear/lunarMonth/lunarDay 필수, leapMonth 는 윤달
+     * 여부.
+     */
     public record BirthRequest(
             String label,
             String calendarType,
@@ -116,7 +118,8 @@ public class SajuController {
     @PostMapping("/profiles/{id}/reanalyze")
     public ResponseEntity<?> reanalyze(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();
-        SajuAnalysisResponse result = sajuProfileService.reanalyze(SecurityUtils.getCurrentUserId(), id);
+        SajuAnalysisResponse result =
+                sajuProfileService.reanalyze(SecurityUtils.getCurrentUserId(), id);
         return ResponseEntity.ok(result);
     }
 
@@ -154,7 +157,8 @@ public class SajuController {
 
         LocalDate birthDate = toLocalDate(req.birthDate());
         if (birthDate == null) return null;
-        return new SajuBirthInputDto("SOLAR", birthDate, null, null, null, false, birthTime, timeUnknown);
+        return new SajuBirthInputDto(
+                "SOLAR", birthDate, null, null, null, false, birthTime, timeUnknown);
     }
 
     private LocalDate toLocalDate(String s) {

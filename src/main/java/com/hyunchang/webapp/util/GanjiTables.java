@@ -12,9 +12,7 @@ public final class GanjiTables {
 
     private static final String[] STEM_KR = {"갑", "을", "병", "정", "무", "기", "경", "신", "임", "계"};
     private static final String[] STEM_HANJA = {"甲", "乙", "丙", "丁", "戊", "己", "庚", "辛", "壬", "癸"};
-    private static final String[] STEM_ELEMENT = {
-        "목", "목", "화", "화", "토", "토", "금", "금", "수", "수"
-    };
+    private static final String[] STEM_ELEMENT = {"목", "목", "화", "화", "토", "토", "금", "금", "수", "수"};
 
     private static final String[] BRANCH_KR = {
         "자", "축", "인", "묘", "진", "사", "오", "미", "신", "유", "술", "해"

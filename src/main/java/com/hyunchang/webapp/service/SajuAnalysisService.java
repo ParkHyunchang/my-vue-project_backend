@@ -16,8 +16,8 @@ import java.util.Optional;
 import org.springframework.stereotype.Service;
 
 /**
- * 사주 AI 해석 — {@link SajuPaljaService}가 계산한 사주팔자를 근거로 AiProviderChain(Gemini → Groq →
- * Cloudflare)이 마크다운 해석 리포트를 생성한다. 주식/부동산/여행과 동일하게 "서버가 실제 데이터를 계산 → AI는 해석만" 패턴을 따른다.
+ * 사주 AI 해석 — {@link SajuPaljaService}가 계산한 사주팔자를 근거로 AiProviderChain(Gemini → Groq → Cloudflare)이
+ * 마크다운 해석 리포트를 생성한다. 주식/부동산/여행과 동일하게 "서버가 실제 데이터를 계산 → AI는 해석만" 패턴을 따른다.
  */
 @Service
 public class SajuAnalysisService {

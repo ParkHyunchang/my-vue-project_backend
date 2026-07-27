@@ -51,8 +51,8 @@ public class SajuProfileService {
     }
 
     /**
-     * 계산 + AI 해석을 먼저 실행한 뒤 성공한 경우에만 프로필을 저장한다. 음력 입력은 환산된 양력 날짜(필수 컬럼)를 계산 전에는 알 수
-     * 없으므로, 음력 환산 자체가 실패하면 프로필을 만들지 않고 실패 응답만 반환한다.
+     * 계산 + AI 해석을 먼저 실행한 뒤 성공한 경우에만 프로필을 저장한다. 음력 입력은 환산된 양력 날짜(필수 컬럼)를 계산 전에는 알 수 없으므로, 음력 환산 자체가
+     * 실패하면 프로필을 만들지 않고 실패 응답만 반환한다.
      */
     public SajuAnalysisResponse create(String userId, String label, SajuBirthInputDto input) {
         User user = requireUser(userId);
@@ -80,7 +80,8 @@ public class SajuProfileService {
         return response;
     }
 
-    public SajuAnalysisResponse update(String userId, Long id, String label, SajuBirthInputDto input) {
+    public SajuAnalysisResponse update(
+            String userId, Long id, String label, SajuBirthInputDto input) {
         SajuProfile profile =
                 profileRepository
                         .findByIdAndUserUserId(id, userId)
@@ -108,7 +109,8 @@ public class SajuProfileService {
                 profileRepository
                         .findByIdAndUserUserId(id, userId)
                         .orElseThrow(() -> new IllegalArgumentException("사주 프로필을 찾을 수 없습니다."));
-        SajuAnalysisResponse response = sajuAnalysisService.analyze(profile.getLabel(), toInput(profile));
+        SajuAnalysisResponse response =
+                sajuAnalysisService.analyze(profile.getLabel(), toInput(profile));
         if (response.isFound()) {
             profile.setBirthDate(response.getPalja().getSolarBirthDate());
             applyAnalysisResult(profile, response);

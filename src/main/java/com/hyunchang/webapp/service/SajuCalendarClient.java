@@ -21,12 +21,12 @@ import org.springframework.stereotype.Service;
  * 한국천문연구원(KASI) 음양력 정보 API(data.go.kr, LrsrCldInfoService) 클라이언트.
  *
  * <p>양력 날짜를 넣으면(getLunCalInfo) 그날의 세차(년주)·월건(월주)·일진(일주) 간지를 공식 만세력 기준으로 돌려주고, 음력 날짜를 넣으면
- * (getSolCalInfo) 대응하는 양력 날짜와 간지를 돌려준다. 이 값은 절기(태양 황경) 기준으로 이미 확정된 것이라 서버가 절기 계산을 직접 구현할
- * 필요가 없다. 날짜별 간지는 불변이므로 장기 캐시한다.
+ * (getSolCalInfo) 대응하는 양력 날짜와 간지를 돌려준다. 이 값은 절기(태양 황경) 기준으로 이미 확정된 것이라 서버가 절기 계산을 직접 구현할 필요가 없다.
+ * 날짜별 간지는 불변이므로 장기 캐시한다.
  *
- * <p><b>윤달 한계</b>: 윤달 기간에는 API가 월건(lunWolgeon)을 빈 문자열로 돌려준다(윤달은 그 해의 절기 상 어느 월에 속하는지 이 API가
- * 알려주지 않기 때문). 이 클라이언트는 monthGanji=null로 그대로 전달하고, 실제 대체값 계산은 {@link SajuPaljaService}가 근접한
- * 날짜의 월건을 빌려오는 방식으로 근사 처리한다.
+ * <p><b>윤달 한계</b>: 윤달 기간에는 API가 월건(lunWolgeon)을 빈 문자열로 돌려준다(윤달은 그 해의 절기 상 어느 월에 속하는지 이 API가 알려주지 않기
+ * 때문). 이 클라이언트는 monthGanji=null로 그대로 전달하고, 실제 대체값 계산은 {@link SajuPaljaService}가 근접한 날짜의 월건을 빌려오는
+ * 방식으로 근사 처리한다.
  */
 @Service
 public class SajuCalendarClient {
@@ -76,7 +76,8 @@ public class SajuCalendarClient {
     }
 
     /** 음력 날짜(연/월/일, 윤달 여부) 기준 대응 양력 날짜 + 간지 조회. */
-    public LunarResolution resolveLunar(int lunYear, int lunMonth, int lunDay, boolean isLeapMonth) {
+    public LunarResolution resolveLunar(
+            int lunYear, int lunMonth, int lunDay, boolean isLeapMonth) {
         String key = lunYear + "-" + lunMonth + "-" + lunDay + "-" + isLeapMonth;
         TtlCache.Hit<LunarResolution> hit = lunarCache.lookup(key);
         if (hit != null) return hit.negative() ? null : hit.value();
