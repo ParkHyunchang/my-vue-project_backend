@@ -7,6 +7,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -15,11 +17,14 @@ import reactor.core.publisher.Mono;
 /** 키움 국내주식 REST 요청을 한 곳에서 수행합니다. 주문 API는 명시적 설정 없이는 호출되지 않습니다. */
 @Service
 public class KiwoomTradeService {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomTradeService.class);
+    private static final long EMPTY_BALANCE_LOG_INTERVAL_MS = 300_000L;
     private final KiwoomProperties properties;
     private final KiwoomAuthService authService;
     private final KiwoomAutoTradeState state;
     private final WebClient webClient;
     private long nextRequestAt;
+    private volatile long nextEmptyBalanceLogAt;
 
     public KiwoomTradeService(
             KiwoomProperties properties,
@@ -44,7 +49,8 @@ public class KiwoomTradeService {
         // The previous aggregate-only query could return no holding rows, leaving the risk
         // loop unable to see positions that were present in the linked Kiwoom account.
         return readRequest(
-                "kt00017", "/api/dostk/acnt", Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"));
+                        "kt00017", "/api/dostk/acnt", Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"))
+                .doOnNext(this::logEmptyBalanceResponse);
     }
 
     /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. */
@@ -203,6 +209,31 @@ public class KiwoomTradeService {
 
     private long absoluteNumber(JsonNode n, String... names) {
         return Math.abs(number(n, names));
+    }
+
+    private void logEmptyBalanceResponse(JsonNode balance) {
+        if (balance == null
+                || !parseHoldings(balance).isEmpty()
+                || totalEvaluationAmount(balance) > 0) return;
+        long now = System.currentTimeMillis();
+        if (now < nextEmptyBalanceLogAt) return;
+        nextEmptyBalanceLogAt = now + EMPTY_BALANCE_LOG_INTERVAL_MS;
+
+        List<String> fields = new ArrayList<>();
+        balance.fields()
+                .forEachRemaining(
+                        entry -> {
+                            JsonNode value = entry.getValue();
+                            fields.add(
+                                    value.isArray()
+                                            ? entry.getKey() + "[" + value.size() + "]"
+                                            : entry.getKey());
+                        });
+        log.warn(
+                "Kiwoom balance has no usable holdings: returnCode={}, returnMessage={}, fields={}",
+                balance.path("return_code").asText(),
+                balance.path("return_msg").asText(),
+                fields);
     }
 
     private Mono<JsonNode> readRequest(String apiId, String path, Map<String, ?> body) {
