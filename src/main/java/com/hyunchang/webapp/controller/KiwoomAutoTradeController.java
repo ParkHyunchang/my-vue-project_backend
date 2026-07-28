@@ -170,9 +170,9 @@ public class KiwoomAutoTradeController {
                                         "deposit",
                                         number(data.getT1(), "entr", "ord_alow_amt"),
                                         "profitLoss",
-                                        number(data.getT2(), "tot_evlt_pl", "evlt_pl_amt"),
+                                        tradeService.totalEvaluationProfitLoss(data.getT2()),
                                         "totalEvaluation",
-                                        number(data.getT2(), "tot_evlt_amt", "evlt_amt")));
+                                        tradeService.totalEvaluationAmount(data.getT2())));
     }
 
     @PostMapping("/orders")

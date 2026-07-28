@@ -40,9 +40,11 @@ public class KiwoomTradeService {
 
     /** 국내주식 계좌평가잔고(kt00017)를 조회합니다. */
     public Mono<JsonNode> getBalance() {
-        // qry_tp: 1=합산, 2=개별
+        // qry_tp 2 returns the per-stock rows required for stop-loss/take-profit checks.
+        // The previous aggregate-only query could return no holding rows, leaving the risk
+        // loop unable to see positions that were present in the linked Kiwoom account.
         return readRequest(
-                "kt00017", "/api/dostk/acnt", Map.of("qry_tp", "1", "dmst_stex_tp", "KRX"));
+                "kt00017", "/api/dostk/acnt", Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"));
     }
 
     /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. */
@@ -147,8 +149,8 @@ public class KiwoomTradeService {
                             item.path("stk_nm").asText(code),
                             qty,
                             sellable > 0 ? sellable : qty,
-                            number(item, "pur_pric", "avg_prc"),
-                            number(item, "cur_prc", "prpr"),
+                            absoluteNumber(item, "pur_pric", "avg_prc", "buy_uv"),
+                            absoluteNumber(item, "cur_prc", "prpr"),
                             item.path("prft_rt").asDouble(0)));
         }
         return out;
@@ -163,6 +165,20 @@ public class KiwoomTradeService {
         return sum;
     }
 
+    /** Returns the account evaluation profit/loss, falling back to the per-stock rows. */
+    public long totalEvaluationProfitLoss(JsonNode balance) {
+        if (balance == null) return 0;
+        if (balance.hasNonNull("tot_evlt_pl")) return number(balance, "tot_evlt_pl");
+        if (balance.hasNonNull("evlt_pl_amt")) return number(balance, "evlt_pl_amt");
+        long sum = 0;
+        JsonNode arr = balance.path("acnt_evlt_remn_indv_tot");
+        if (!arr.isArray()) arr = firstHoldingsArray(balance);
+        if (arr != null && arr.isArray()) {
+            for (JsonNode item : arr) sum += number(item, "evltv_prft", "evlt_pl_amt", "pl_amt");
+        }
+        return sum;
+    }
+
     private JsonNode firstHoldingsArray(JsonNode node) {
         for (JsonNode child : node) {
             if (child.isArray() && child.size() > 0 && child.get(0).has("stk_cd")) return child;
@@ -171,8 +187,22 @@ public class KiwoomTradeService {
     }
 
     private long number(JsonNode n, String... names) {
-        if (n != null) for (String x : names) if (n.has(x)) return n.path(x).asLong();
+        if (n != null)
+            for (String x : names) {
+                if (!n.hasNonNull(x)) continue;
+                String value = n.path(x).asText("").replace(",", "").trim();
+                if (value.isEmpty()) continue;
+                try {
+                    return Long.parseLong(value);
+                } catch (NumberFormatException ignored) {
+                    // Try the next documented field alias.
+                }
+            }
         return 0;
+    }
+
+    private long absoluteNumber(JsonNode n, String... names) {
+        return Math.abs(number(n, names));
     }
 
     private Mono<JsonNode> readRequest(String apiId, String path, Map<String, ?> body) {
