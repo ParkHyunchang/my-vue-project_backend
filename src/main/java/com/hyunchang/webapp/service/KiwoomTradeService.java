@@ -43,13 +43,12 @@ public class KiwoomTradeService {
         return readRequest("kt00001", "/api/dostk/acnt", Map.of("qry_tp", "3"));
     }
 
-    /** 국내주식 계좌평가잔고(kt00017)를 조회합니다. */
+    /** 국내주식 계좌평가잔고(kt00018)를 조회합니다. */
     public Mono<JsonNode> getBalance() {
         // qry_tp 2 returns the per-stock rows required for stop-loss/take-profit checks.
-        // The previous aggregate-only query could return no holding rows, leaving the risk
-        // loop unable to see positions that were present in the linked Kiwoom account.
+        // kt00017 is an account status query and does not include stock holding rows.
         return readRequest(
-                        "kt00017", "/api/dostk/acnt", Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"))
+                        "kt00018", "/api/dostk/acnt", Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"))
                 .doOnNext(this::logEmptyBalanceResponse);
     }
 

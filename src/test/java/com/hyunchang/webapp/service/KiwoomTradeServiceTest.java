@@ -1,11 +1,17 @@
 package com.hyunchang.webapp.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 
 class KiwoomTradeServiceTest {
     private final ObjectMapper json = new ObjectMapper();
@@ -33,6 +39,35 @@ class KiwoomTradeServiceTest {
         assertEquals(-9.41, holdings.get(0).plPct());
         assertEquals(7_495, service.totalEvaluationAmount(balance));
         assertEquals(-224, service.totalEvaluationProfitLoss(balance));
+    }
+
+    @Test
+    void requestsTheAccountBalanceTrForHoldings() {
+        AtomicReference<String> apiId = new AtomicReference<>();
+        WebClient.Builder clientBuilder =
+                WebClient.builder()
+                        .exchangeFunction(
+                                request -> {
+                                    apiId.set(request.headers().getFirst("api-id"));
+                                    return Mono.just(
+                                            ClientResponse.create(HttpStatus.OK)
+                                                    .header("Content-Type", "application/json")
+                                                    .body(
+                                                            "{\"return_code\":0,\"return_msg\":\"ok\",\"tot_evlt_amt\":\"1\"}")
+                                                    .build());
+                                });
+        KiwoomAuthService authService = mock(KiwoomAuthService.class);
+        when(authService.getAccessToken()).thenReturn(Mono.just("test-token"));
+        KiwoomTradeService service =
+                new KiwoomTradeService(
+                        new KiwoomProperties(),
+                        authService,
+                        mock(KiwoomAutoTradeState.class),
+                        clientBuilder);
+
+        service.getBalance().block();
+
+        assertEquals("kt00018", apiId.get());
     }
 
     private KiwoomTradeService tradeService() {
