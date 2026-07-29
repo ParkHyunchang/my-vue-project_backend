@@ -233,6 +233,10 @@ public class KiwoomStrategyService {
                 applyGuardFlags(p, deposit);
                 p.setRun(run);
                 proposals.save(p);
+                audit.log(
+                        "CANDIDATE_SELECTED",
+                        p.getId(),
+                        p.getAction() + " " + p.getStockCode() + " — " + p.getReason());
                 saved++;
                 if ("SCHEDULE".equals(by)) autoSubmit(p);
             }

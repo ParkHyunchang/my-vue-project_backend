@@ -20,16 +20,19 @@ public class KiwoomOrderSyncService {
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomProperties props;
+    private final KiwoomPositionExitService exits;
 
     public KiwoomOrderSyncService(
             KiwoomTradeService trade,
             KiwoomTradeProposalRepository proposals,
             KiwoomStrategyAuditService audit,
-            KiwoomProperties props) {
+            KiwoomProperties props,
+            KiwoomPositionExitService exits) {
         this.trade = trade;
         this.proposals = proposals;
         this.audit = audit;
         this.props = props;
+        this.exits = exits;
     }
 
     @Scheduled(fixedDelay = 60000)
@@ -52,8 +55,11 @@ public class KiwoomOrderSyncService {
     public SyncResult sync() {
         if (!hasPendingOrders()) return new SyncResult(0, 0, "동기화 대상 주문이 없습니다.");
         try {
+            List<JsonNode> unfilledRecords = new ArrayList<>();
             List<JsonNode> records = new ArrayList<>();
-            collectRecords(trade.getUnfilledOrders().block(Duration.ofSeconds(15)), records);
+            collectRecords(
+                    trade.getUnfilledOrders().block(Duration.ofSeconds(15)), unfilledRecords);
+            records.addAll(unfilledRecords);
             collectRecords(trade.getFilledOrders().block(Duration.ofSeconds(15)), records);
             int updated = 0;
             for (JsonNode record : records) if (apply(record)) updated++;
@@ -61,7 +67,7 @@ public class KiwoomOrderSyncService {
                     proposals.findByStatusIn(
                             List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED))) {
                 boolean stillUnfilled =
-                        records.stream()
+                        unfilledRecords.stream()
                                 .anyMatch(
                                         record ->
                                                 proposal.getBrokerOrderNo() != null
@@ -78,6 +84,7 @@ public class KiwoomOrderSyncService {
                     updated++;
                 }
             }
+            if (updated > 0) exits.onOrderStateChanged();
             return new SyncResult(records.size(), updated, "주문 상태 동기화 완료");
         } catch (Exception e) {
             return new SyncResult(0, 0, "주문 상태 동기화 실패: " + trim(e.getMessage()));
@@ -101,14 +108,23 @@ public class KiwoomOrderSyncService {
                             Long price =
                                     longValue(record, "cntr_prc", "avg_cntr_prc", "filled_price");
                             KiwoomTradeProposal.Status before = proposal.getStatus();
+                            int beforeFilled = proposal.getFilledQuantity();
+                            int beforeRemaining = proposal.getRemainingQuantity();
+                            Long beforePrice = proposal.getAverageFillPrice();
                             proposal.syncFill(filled, remaining, price);
                             proposals.save(proposal);
+                            boolean changed =
+                                    before != proposal.getStatus()
+                                            || beforeFilled != proposal.getFilledQuantity()
+                                            || beforeRemaining != proposal.getRemainingQuantity()
+                                            || !java.util.Objects.equals(
+                                                    beforePrice, proposal.getAverageFillPrice());
                             if (before != proposal.getStatus())
                                 audit.log(
                                         "ORDER_STATUS_SYNC",
                                         proposal.getId(),
                                         "키움 주문 상태가 " + proposal.getStatus() + "로 변경되었습니다.");
-                            return true;
+                            return changed;
                         })
                 .orElse(false);
     }

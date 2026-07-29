@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
+import com.hyunchang.webapp.service.KiwoomPositionExitService;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
@@ -39,6 +40,7 @@ public class KiwoomAutoTradeController {
     private final KiwoomStrategyService strategyService;
     private final KiwoomStrategySettingsService settings;
     private final KiwoomStrategyAuditService audit;
+    private final KiwoomPositionExitService exits;
 
     public KiwoomAutoTradeController(
             KiwoomProperties properties,
@@ -48,7 +50,8 @@ public class KiwoomAutoTradeController {
             KiwoomAutoTradeState state,
             KiwoomStrategyService strategyService,
             KiwoomStrategySettingsService settings,
-            KiwoomStrategyAuditService audit) {
+            KiwoomStrategyAuditService audit,
+            KiwoomPositionExitService exits) {
         this.properties = properties;
         this.authService = authService;
         this.tradeService = tradeService;
@@ -57,6 +60,7 @@ public class KiwoomAutoTradeController {
         this.strategyService = strategyService;
         this.settings = settings;
         this.audit = audit;
+        this.exits = exits;
     }
 
     @GetMapping("/status")
@@ -86,6 +90,7 @@ public class KiwoomAutoTradeController {
     public void resumeRealtimeSubscription() {
         if (properties.isConfigured() && state.isAutoTrading() && !state.isEmergencyStopped()) {
             websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
+            exits.refreshPositions("APPLICATION_RESTART");
             audit.log("AUTOMATION_RESTORED", null, "재시작 후 저장된 자동매매 상태와 실시간 시세 구독을 복구했습니다.");
         }
     }
@@ -139,8 +144,10 @@ public class KiwoomAutoTradeController {
             audit.log("FULL_AUTOMATION_ACTIVATED", null, "관리자 시작 요청으로 자동 주문 및 리스크 청산 루프를 활성화했습니다.");
         }
         state.setAutoTrading(request.enabled());
-        if (request.enabled())
+        if (request.enabled()) {
             websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
+            exits.refreshPositions("AUTOMATION_ACTIVATED");
+        }
         return ResponseEntity.ok(Map.of("success", true, "autoTrading", state.isAutoTrading()));
     }
 
