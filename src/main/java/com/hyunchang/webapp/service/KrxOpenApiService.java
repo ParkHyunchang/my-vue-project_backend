@@ -48,8 +48,8 @@ public class KrxOpenApiService {
     private static final long SWING_SCREEN_CACHE_TTL_MS = 30 * 60 * 1000L;
     private static final int SWING_LOOKBACK_DAYS = 20;
     private static final int SWING_HISTORY_FETCH_DAYS = 35;
-    private static final double SWING_MIN_CHANGE_PCT = 3.0;
-    private static final double SWING_MIN_VOLUME_RATIO = 3.0;
+    private static final double DEFAULT_SWING_MIN_CHANGE_PCT = 2.0;
+    private static final double DEFAULT_SWING_MIN_VOLUME_RATIO = 2.0;
     // 콜드 캐시 시 일자별 히스토리 수집 동시 실행 수 — 다른 외부 API 병렬 풀(NEWS_POOL 등)과
     // 동일하게 8로 맞춰 KRX 쪽 부하를 과하게 늘리지 않는다.
     private static final int HISTORY_FETCH_PARALLELISM = 8;
@@ -126,9 +126,16 @@ public class KrxOpenApiService {
      * 서버에서 끝내고 LLM에는 압축된 후보만 전달해 근거 없는 추천을 줄입니다.
      */
     public List<KrSwingCandidate> getShortSwingCandidates(int limit) {
+        return getShortSwingCandidates(
+                limit, DEFAULT_SWING_MIN_CHANGE_PCT, DEFAULT_SWING_MIN_VOLUME_RATIO);
+    }
+
+    /** Applies the administrator-selected momentum thresholds to the cached broad KRX screen. */
+    public List<KrSwingCandidate> getShortSwingCandidates(
+            int limit, double minChangePercent, double minVolumeRatio) {
         if (limit <= 0 || !hasApiKey()) return List.of();
         if (!isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
-            return swingCandidatesCache.stream().limit(limit).toList();
+            return filterSwingCandidates(limit, minChangePercent, minVolumeRatio);
         }
 
         synchronized (swingScreenLock) {
@@ -137,7 +144,16 @@ public class KrxOpenApiService {
                 swingCandidatesCacheTime = System.currentTimeMillis();
             }
         }
-        return swingCandidatesCache.stream().limit(limit).toList();
+        return filterSwingCandidates(limit, minChangePercent, minVolumeRatio);
+    }
+
+    private List<KrSwingCandidate> filterSwingCandidates(
+            int limit, double minChangePercent, double minVolumeRatio) {
+        return swingCandidatesCache.stream()
+                .filter(candidate -> candidate.changePercent() >= minChangePercent)
+                .filter(candidate -> candidate.volumeRatio() >= minVolumeRatio)
+                .limit(limit)
+                .toList();
     }
 
     private List<KrSwingCandidate> collectShortSwingCandidates() {
@@ -236,9 +252,7 @@ public class KrxOpenApiService {
             NaverFinanceService.NaverStockData stock,
             LocalDate asOf,
             List<Map<String, NaverFinanceService.NaverStockData>> history) {
-        if (stock.price() <= 0
-                || stock.volume() <= 0
-                || stock.changePercent() < SWING_MIN_CHANGE_PCT) {
+        if (stock.price() <= 0 || stock.volume() <= 0 || stock.changePercent() <= 0) {
             return null;
         }
         List<Long> volumes =
@@ -252,7 +266,7 @@ public class KrxOpenApiService {
         double averageVolume = volumes.stream().mapToLong(Long::longValue).average().orElse(0);
         if (averageVolume <= 0) return null;
         double volumeRatio = stock.volume() / averageVolume;
-        if (volumeRatio < SWING_MIN_VOLUME_RATIO) return null;
+        if (volumeRatio <= 0) return null;
 
         return new KrSwingCandidate(
                 stock.symbol(),

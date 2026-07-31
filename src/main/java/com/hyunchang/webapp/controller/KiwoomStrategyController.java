@@ -158,6 +158,9 @@ public class KiwoomStrategyController {
         result.put("autoExecute", s.isAutoExecute());
         result.put("autoExecuteMinConfidence", s.getAutoExecuteMinConfidence());
         result.put("maxBuyDepositPercent", s.getMaxBuyDepositPercent());
+        result.put("candidateReevaluationMinutes", s.getCandidateReevaluationMinutes());
+        result.put("swingMinChangePercent", s.getSwingMinChangePercent());
+        result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
@@ -181,6 +184,9 @@ public class KiwoomStrategyController {
                                 request.autoExecute(),
                                 request.autoExecuteMinConfidence(),
                                 request.maxBuyDepositPercent(),
+                                request.candidateReevaluationMinutes(),
+                                request.swingMinChangePercent(),
+                                request.swingMinVolumeRatio(),
                                 request.swingStopLossPercent(),
                                 request.swingTakeProfitPercent(),
                                 request.swingMaxHoldingDays(),
@@ -207,6 +213,9 @@ public class KiwoomStrategyController {
         result.put("autoExecute", s.isAutoExecute());
         result.put("autoExecuteMinConfidence", s.getAutoExecuteMinConfidence());
         result.put("maxBuyDepositPercent", s.getMaxBuyDepositPercent());
+        result.put("candidateReevaluationMinutes", s.getCandidateReevaluationMinutes());
+        result.put("swingMinChangePercent", s.getSwingMinChangePercent());
+        result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
@@ -318,6 +327,9 @@ public class KiwoomStrategyController {
             boolean autoExecute,
             int autoExecuteMinConfidence,
             double maxBuyDepositPercent,
+            int candidateReevaluationMinutes,
+            double swingMinChangePercent,
+            double swingMinVolumeRatio,
             double swingStopLossPercent,
             double swingTakeProfitPercent,
             int swingMaxHoldingDays,

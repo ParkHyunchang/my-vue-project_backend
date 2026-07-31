@@ -39,9 +39,10 @@ public class KiwoomStrategyService {
     private static final int COMPACT_MAX_LINES = 10;
 
     /** 유니버스에 편입되는 스윙 후보 상한 — ShortSwingCandidateService.MAX_SCREENED_CANDIDATES와 동일한 관례. */
-    private static final int SWING_CANDIDATE_LIMIT = 20;
+    private static final int SWING_CANDIDATE_LIMIT = 30;
 
     private volatile String lastCandidateSignature;
+    private volatile LocalDateTime lastCandidateDecisionAt;
 
     private final KiwoomProperties props;
     private final KiwoomTradeService trade;
@@ -169,7 +170,8 @@ public class KiwoomStrategyService {
             String candidateSignature = candidateSignature(catalystCandidates);
             if ("SCHEDULE".equals(by)
                     && candidateSignature.equals(lastCandidateSignature)
-                    && !holdingExitTriggered(holdings)) {
+                    && !holdingExitTriggered(holdings)
+                    && !candidateReevaluationDue()) {
                 return skipped(
                         run,
                         "No candidate change or holding stop-loss/take-profit signal; AI call skipped.");
@@ -242,6 +244,7 @@ public class KiwoomStrategyService {
             }
             state.markRun();
             lastCandidateSignature = candidateSignature;
+            lastCandidateDecisionAt = LocalDateTime.now(KST);
             events.publishEvent("strategy", "AI 전략 제안 " + saved + "건을 생성했습니다.");
             return new DecisionResult(run.getId(), run.getStatus().name(), saved);
         } catch (Exception e) {
@@ -270,6 +273,13 @@ public class KiwoomStrategyService {
                         h ->
                                 h.plPct() <= -s.getSwingStopLossPercent()
                                         || h.plPct() >= s.getSwingTakeProfitPercent());
+    }
+
+    private boolean candidateReevaluationDue() {
+        if (lastCandidateDecisionAt == null) return true;
+        return !lastCandidateDecisionAt
+                .plusMinutes(settings.current().getCandidateReevaluationMinutes())
+                .isAfter(LocalDateTime.now(KST));
     }
 
     private String candidateSignature(
@@ -339,7 +349,13 @@ public class KiwoomStrategyService {
     /** DART 공시·뉴스 촉매까지 확인된 후보 목록. 조회 실패는 빈 목록으로 처리한다(이후 BUY 검증은 자연히 전부 막힌다). */
     private List<ShortSwingCandidateService.KrCandidateCatalyst> fetchCatalystCandidates() {
         try {
-            return catalystService.getKrCandidatesWithCatalysts(SWING_CANDIDATE_LIMIT);
+            var s = settings.current();
+            if (s.getSwingMinChangePercent() == 2.0 && s.getSwingMinVolumeRatio() == 2.0)
+                return catalystService.getKrCandidatesWithCatalysts(SWING_CANDIDATE_LIMIT);
+            return catalystService.getKrCandidatesWithCatalysts(
+                    SWING_CANDIDATE_LIMIT,
+                    s.getSwingMinChangePercent(),
+                    s.getSwingMinVolumeRatio());
         } catch (Exception e) {
             return List.of();
         }
@@ -503,7 +519,14 @@ public class KiwoomStrategyService {
         vars.put("매매후보", joinCapped(candidateLines, maxLines, "매매 후보 없음"));
         vars.put("스윙지표", capLines(swing, maxLines));
         vars.put("하드가드규칙", guardRules);
-        return prompts.render(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, vars);
+        var s = settings.current();
+        return prompts.render(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, vars)
+                + "\n\n[현재 적용 중 후보 기준 — 프롬프트 안의 고정 수치보다 우선]\n"
+                + "신규 BUY는 당일 상승률 +"
+                + s.getSwingMinChangePercent()
+                + "% 이상이고 20일 평균 대비 거래량 "
+                + s.getSwingMinVolumeRatio()
+                + "배 이상인 후보 안에서만 판단하세요. 이보다 낮으면 HOLD를 선택하세요.";
     }
 
     /** AI가 서버 강제 한도 안에서 수량을 제안하도록 규칙을 프롬프트에 명시한다. */

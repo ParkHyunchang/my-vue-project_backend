@@ -10,6 +10,9 @@ public class KiwoomStrategySettings {
     private boolean autoExecute;
     private int autoExecuteMinConfidence;
     private double maxBuyDepositPercent;
+    private int candidateReevaluationMinutes = 60;
+    private double swingMinChangePercent = 2.0;
+    private double swingMinVolumeRatio = 2.0;
     private double swingStopLossPercent;
     private double swingTakeProfitPercent;
     private int swingMaxHoldingDays;
@@ -50,6 +53,30 @@ public class KiwoomStrategySettings {
 
     public void setMaxBuyDepositPercent(double v) {
         maxBuyDepositPercent = v;
+    }
+
+    public int getCandidateReevaluationMinutes() {
+        return candidateReevaluationMinutes;
+    }
+
+    public void setCandidateReevaluationMinutes(int v) {
+        candidateReevaluationMinutes = v;
+    }
+
+    public double getSwingMinChangePercent() {
+        return swingMinChangePercent;
+    }
+
+    public void setSwingMinChangePercent(double v) {
+        swingMinChangePercent = v;
+    }
+
+    public double getSwingMinVolumeRatio() {
+        return swingMinVolumeRatio;
+    }
+
+    public void setSwingMinVolumeRatio(double v) {
+        swingMinVolumeRatio = v;
     }
 
     public double getSwingStopLossPercent() {

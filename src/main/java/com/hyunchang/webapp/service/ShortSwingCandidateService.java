@@ -21,8 +21,8 @@ import org.springframework.stereotype.Service;
 public class ShortSwingCandidateService {
     private static final Logger log = LoggerFactory.getLogger(ShortSwingCandidateService.class);
 
-    private static final int MAX_SCREENED_CANDIDATES = 20;
-    private static final int MAX_CATALYST_CANDIDATES = 12;
+    private static final int MAX_SCREENED_CANDIDATES = 30;
+    private static final int MAX_CATALYST_CANDIDATES = 16;
     private static final long CACHE_TTL_MS = 30 * 60 * 1000L;
     // 후보별 DART 공시·뉴스 병렬 수집 풀 — 순차 수집 시 후보 20개 × 수초가 그대로 응답 지연이 된다
     private static final ExecutorService CATALYST_POOL = Executors.newFixedThreadPool(8);
@@ -37,6 +37,7 @@ public class ShortSwingCandidateService {
 
     private volatile List<KrCandidateCatalyst> cache = List.of();
     private volatile long cacheTime = 0;
+    private volatile CandidateFilter cacheFilter;
     private volatile List<UsCandidateSignal> usCache = List.of();
     private volatile long usCacheTime = 0;
     // KR/US 수집 락 분리 — 하나의 락을 공유하면 KR 수집이 오래 걸릴 때 US 조회까지 줄을 선다
@@ -57,21 +58,31 @@ public class ShortSwingCandidateService {
     }
 
     public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(int limit) {
+        return getKrCandidatesWithCatalysts(limit, 2.0, 2.0);
+    }
+
+    public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(
+            int limit, double minChangePercent, double minVolumeRatio) {
         if (limit <= 0) return List.of();
-        if (isFresh()) return cache.stream().limit(limit).toList();
+        CandidateFilter filter = new CandidateFilter(minChangePercent, minVolumeRatio);
+        if (isFresh() && filter.equals(cacheFilter)) return cache.stream().limit(limit).toList();
 
         synchronized (krLock) {
-            if (!isFresh()) {
-                cache = collectCandidates();
+            if (!isFresh() || !filter.equals(cacheFilter)) {
+                cache = collectCandidates(filter);
                 cacheTime = System.currentTimeMillis();
+                cacheFilter = filter;
             }
         }
         return cache.stream().limit(limit).toList();
     }
 
-    private List<KrCandidateCatalyst> collectCandidates() {
+    private List<KrCandidateCatalyst> collectCandidates(CandidateFilter filter) {
         List<KrxOpenApiService.KrSwingCandidate> screened =
-                krxOpenApiService.getShortSwingCandidates(MAX_SCREENED_CANDIDATES);
+                krxOpenApiService.getShortSwingCandidates(
+                        MAX_SCREENED_CANDIDATES,
+                        filter.minChangePercent(),
+                        filter.minVolumeRatio());
         List<CompletableFuture<KrCandidateCatalyst>> futures = new ArrayList<>();
         for (KrxOpenApiService.KrSwingCandidate candidate : screened) {
             futures.add(
@@ -188,7 +199,7 @@ public class ShortSwingCandidateService {
     @Scheduled(initialDelay = 15_000L, fixedDelay = 25 * 60 * 1000L)
     public void prewarmCaches() {
         try {
-            int kr = getKrCandidatesWithCatalysts(MAX_CATALYST_CANDIDATES).size();
+            int kr = getKrCandidatesWithCatalysts(MAX_CATALYST_CANDIDATES, 2.0, 2.0).size();
             int us = getUsCandidatesWithSignals(MAX_CATALYST_CANDIDATES).size();
             log.info("[SwingCandidate] 캐시 프리워밍 완료: KR {}개, US {}개", kr, us);
         } catch (Exception e) {
@@ -251,6 +262,8 @@ public class ShortSwingCandidateService {
             return !disclosures.isEmpty() || !news.isEmpty();
         }
     }
+
+    private record CandidateFilter(double minChangePercent, double minVolumeRatio) {}
 
     public record UsCandidateSignal(
             YahooFinanceService.RawQuote candidate,

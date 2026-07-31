@@ -11,6 +11,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class KiwoomStrategySettingsService {
+    private static final int DEFAULT_CANDIDATE_REEVALUATION_MINUTES = 60;
+    private static final double DEFAULT_SWING_MIN_CHANGE_PERCENT = 2.0;
+    private static final double DEFAULT_SWING_MIN_VOLUME_RATIO = 2.0;
     private final KiwoomStrategySettingsRepository repo;
     private final KiwoomProperties props;
     private final AiPromptService prompts;
@@ -28,12 +31,32 @@ public class KiwoomStrategySettingsService {
     @PostConstruct
     @Transactional
     public void seed() {
-        if (repo.existsById(1L)) return;
+        if (repo.existsById(1L)) {
+            KiwoomStrategySettings existing = current();
+            boolean changed = false;
+            if (existing.getCandidateReevaluationMinutes() <= 0) {
+                existing.setCandidateReevaluationMinutes(DEFAULT_CANDIDATE_REEVALUATION_MINUTES);
+                changed = true;
+            }
+            if (existing.getSwingMinChangePercent() <= 0) {
+                existing.setSwingMinChangePercent(DEFAULT_SWING_MIN_CHANGE_PERCENT);
+                changed = true;
+            }
+            if (existing.getSwingMinVolumeRatio() <= 0) {
+                existing.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
+                changed = true;
+            }
+            if (changed) repo.save(existing);
+            return;
+        }
         KiwoomProperties.Strategy p = props.getStrategy();
         KiwoomStrategySettings s = new KiwoomStrategySettings();
         s.setAutoExecute(false);
         s.setAutoExecuteMinConfidence(p.getAutoExecuteMinConfidence());
         s.setMaxBuyDepositPercent(p.getMaxBuyDepositPercent());
+        s.setCandidateReevaluationMinutes(DEFAULT_CANDIDATE_REEVALUATION_MINUTES);
+        s.setSwingMinChangePercent(DEFAULT_SWING_MIN_CHANGE_PERCENT);
+        s.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
         s.setSwingStopLossPercent(p.getSwingStopLossPercent());
         s.setSwingTakeProfitPercent(p.getSwingTakeProfitPercent());
         s.setSwingMaxHoldingDays(p.getSwingMaxHoldingDays());
@@ -64,6 +87,9 @@ public class KiwoomStrategySettingsService {
         s.setAutoExecute(u.autoExecute);
         s.setAutoExecuteMinConfidence(clamp(u.autoExecuteMinConfidence, 0, 100));
         s.setMaxBuyDepositPercent(clamp(u.maxBuyDepositPercent, 0, 100));
+        s.setCandidateReevaluationMinutes(clamp(u.candidateReevaluationMinutes, 15, 240));
+        s.setSwingMinChangePercent(clamp(u.swingMinChangePercent, 0.5, 15));
+        s.setSwingMinVolumeRatio(clamp(u.swingMinVolumeRatio, 1, 20));
         s.setSwingStopLossPercent(clamp(u.swingStopLossPercent, 0, 100));
         s.setSwingTakeProfitPercent(clamp(u.swingTakeProfitPercent, 0, 100));
         s.setSwingMaxHoldingDays(clamp(u.swingMaxHoldingDays, 1, 30));
@@ -86,6 +112,9 @@ public class KiwoomStrategySettingsService {
             boolean autoExecute,
             int autoExecuteMinConfidence,
             double maxBuyDepositPercent,
+            int candidateReevaluationMinutes,
+            double swingMinChangePercent,
+            double swingMinVolumeRatio,
             double swingStopLossPercent,
             double swingTakeProfitPercent,
             int swingMaxHoldingDays,

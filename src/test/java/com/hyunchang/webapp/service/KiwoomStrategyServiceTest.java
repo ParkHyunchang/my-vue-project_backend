@@ -144,7 +144,7 @@ class KiwoomStrategyServiceTest {
 
     @Test
     void buyOnSwingCandidateIsSaved() {
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
 
@@ -168,7 +168,7 @@ class KiwoomStrategyServiceTest {
         var withCatalyst =
                 new ShortSwingCandidateService.KrCandidateCatalyst(
                         candidate("005930"), List.of(disclosure), List.of(news));
-        when(catalystService.getKrCandidatesWithCatalysts(20)).thenReturn(List.of(withCatalyst));
+        when(catalystService.getKrCandidatesWithCatalysts(30)).thenReturn(List.of(withCatalyst));
         when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
         @SuppressWarnings("unchecked")
         ArgumentCaptor<Map<String, String>> varsCaptor = ArgumentCaptor.forClass(Map.class);
@@ -187,7 +187,7 @@ class KiwoomStrategyServiceTest {
         KiwoomTradeService.Holding held =
                 new KiwoomTradeService.Holding("003550", "LG", 10, 10, 80_000, 78_000, -2.5);
         when(trade.parseHoldings(any())).thenReturn(List.of(held));
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("003550"));
 
@@ -199,7 +199,7 @@ class KiwoomStrategyServiceTest {
     @Test
     void confidenceAcceptsFractionalZeroToOneScale() {
         // 일부 모델이 0~100 정수 대신 0.0~1.0 비율로 confidence를 응답하는 경우를 보정해야 한다.
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true)))
                 .thenReturn(decisionJson("BUY", "005930", 1, 70000, "0.82"));
@@ -214,7 +214,7 @@ class KiwoomStrategyServiceTest {
 
     @Test
     void confidenceAcceptsPlainIntegerPercent() {
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true)))
                 .thenReturn(decisionJson("BUY", "005930", 1, 70000, "80"));
@@ -232,7 +232,7 @@ class KiwoomStrategyServiceTest {
         // 예수금 100,000원 · 매수 비율 100% → 예산 100,000원. 가격 70,000원이면 최대 1주인데
         // AI는 5주를 요청 — 통째로 버리지 않고 1주로 깎아서 살려야 한다.
         when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000)));
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true)))
                 .thenReturn(decisionJson("BUY", "005930", 5, 70000, "80"));
@@ -248,7 +248,7 @@ class KiwoomStrategyServiceTest {
     @Test
     void buyIsDroppedWhenBudgetCannotAffordEvenOneShare() {
         when(trade.getDeposit()).thenReturn(Mono.just(depositNode(1_000)));
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
         when(ai.analyze(anyString(), anyString(), eq(true)))
                 .thenReturn(decisionJson("BUY", "005930", 5, 70000, "80"));
@@ -263,7 +263,7 @@ class KiwoomStrategyServiceTest {
         KiwoomTradeService.Holding held =
                 new KiwoomTradeService.Holding("003550", "LG", 5, 5, 50_000, 51_000, 2.0);
         when(trade.parseHoldings(any())).thenReturn(List.of(held));
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
 
         assertEquals(List.of("003550", "005930"), service.subscriptionCodes());
@@ -272,7 +272,7 @@ class KiwoomStrategyServiceTest {
     @Test
     void subscriptionCodesFallBackToCandidatesWhenBalanceFails() {
         when(trade.getBalance()).thenThrow(new RuntimeException("network"));
-        when(catalystService.getKrCandidatesWithCatalysts(20))
+        when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
 
         assertEquals(List.of("005930"), service.subscriptionCodes());
