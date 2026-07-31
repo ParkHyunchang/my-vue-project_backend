@@ -240,7 +240,10 @@ public class KiwoomStrategyService {
                         p.getId(),
                         p.getAction() + " " + p.getStockCode() + " — " + p.getReason());
                 saved++;
-                if ("SCHEDULE".equals(by)) autoSubmit(p);
+                // 자동 주문 전송이 켜져 있으면 실행 주체와 무관하게 동일한 안전 검사를 거쳐 전송한다.
+                // 화면의 수동 판단 기능을 없앤 뒤에도, 기존에 직접 실행된 판단이
+                // PROPOSED 상태로 멈추지 않도록 자동 경로를 일관되게 적용한다.
+                autoSubmit(p);
             }
             state.markRun();
             lastCandidateSignature = candidateSignature;
