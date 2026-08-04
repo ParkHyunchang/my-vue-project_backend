@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -78,7 +79,10 @@ public class KiwoomTradeService {
                 Map.of("stk_cd", "", "qry_tp", "0", "sell_tp", "0", "ord_no", "", "stex_tp", "0"));
     }
 
-    /** 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다. */
+    /**
+     * 현금(일반) 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다.
+     * 신용 매수/매도 TR(kt10006/kt10007)은 이 자동매매 서비스에서 절대 사용하지 않습니다.
+     */
     public Mono<JsonNode> placeOrder(OrderRequest order) {
         if (!properties.isTradeEnabled()) {
             return Mono.error(
@@ -93,6 +97,11 @@ public class KiwoomTradeService {
         boolean market = "MARKET".equalsIgnoreCase(order.orderType());
         if (!market && (order.price() == null || order.price() <= 0))
             return Mono.error(new IllegalArgumentException("지정가 주문에는 price가 필요합니다."));
+        String apiId;
+        String side = order.side() == null ? "" : order.side().toUpperCase(Locale.ROOT);
+        if ("BUY".equals(side)) apiId = "kt10000"; // 현금(일반) 매수
+        else if ("SELL".equals(side)) apiId = "kt10001"; // 현금(일반) 매도
+        else return Mono.error(new IllegalArgumentException("주문 구분은 BUY 또는 SELL만 허용됩니다."));
         Map<String, String> body = new LinkedHashMap<>();
         body.put("dmst_stex_tp", order.exchange() == null ? "KRX" : order.exchange());
         body.put("stk_cd", order.stockCode());
@@ -100,10 +109,7 @@ public class KiwoomTradeService {
         body.put("ord_uv", market ? "" : String.valueOf(order.price()));
         body.put("trde_tp", market ? "3" : "0");
         body.put("cond_uv", "");
-        return writeRequest(
-                "SELL".equalsIgnoreCase(order.side()) ? "kt10001" : "kt10000",
-                "/api/dostk/ordr",
-                body);
+        return writeRequest(apiId, "/api/dostk/ordr", body);
     }
 
     /** kt10002(정정): 미체결 주문의 수량·지정가를 변경합니다. */
@@ -215,6 +221,8 @@ public class KiwoomTradeService {
                     sellableFieldPresent ? item.path("trde_able_qty").asText("") : "";
             int sellable = (int) number(item, "trde_able_qty");
             if (quantity <= 0 || sellable >= quantity) continue;
+            String creditTypeNameRaw = rawText(item, "crd_tp_nm");
+            String creditTypeCodeRaw = rawText(item, "crd_tp");
             result.add(
                     new SellAvailability(
                             code,
@@ -225,8 +233,11 @@ public class KiwoomTradeService {
                             sellableRaw,
                             (int) number(item, "tdy_buyq"),
                             (int) number(item, "tdy_sellq"),
-                            item.path("crd_tp_nm").asText(item.path("crd_tp").asText("")),
+                            creditTypeNameRaw.isBlank() ? creditTypeCodeRaw : creditTypeNameRaw,
                             item.hasNonNull("crd_tp_nm") || item.hasNonNull("crd_tp"),
+                            creditTypeNameRaw,
+                            creditTypeCodeRaw,
+                            rawText(item, "crd_loan_dt"),
                             fieldNames(item)));
         }
         return result;
@@ -236,6 +247,10 @@ public class KiwoomTradeService {
         List<String> fields = new ArrayList<>();
         item.fieldNames().forEachRemaining(fields::add);
         return fields;
+    }
+
+    private String rawText(JsonNode item, String field) {
+        return item.hasNonNull(field) ? item.path(field).asText("").trim() : "";
     }
 
     /** kt00018의 총평가금액 — 합산 필드가 없으면 보유 종목의 현재가×수량 합으로 폴백한다. */
@@ -405,6 +420,9 @@ public class KiwoomTradeService {
             int todaySellQuantity,
             String creditType,
             boolean creditTypeFieldPresent,
+            String creditTypeNameRaw,
+            String creditTypeCodeRaw,
+            String creditLoanDateRaw,
             List<String> responseFields) {}
 
     public record OrderRequest(

@@ -47,7 +47,7 @@ public class KiwoomSellAvailabilityDiagnosticService {
             int unfilledQuantity = unfilledSellQuantity(unfilledSellOrders, holding.stockCode());
             String diagnosis = diagnosis(holding, unfilledQuantity, orderInquiryError);
             log.warn(
-                    "[SELL_AVAILABILITY] source={} stock={}({}) rmnd_qty={} trde_able_qty={} trde_able_qty_present={} trde_able_qty_raw={} tdy_buyq={} tdy_sellq={} crd_tp_nm={} crd_tp_present={} unfilled_sell_qty={} diagnosis={} holding_response_fields={}",
+                    "[SELL_AVAILABILITY] source={} stock={}({}) rmnd_qty={} trde_able_qty={} trde_able_qty_present={} trde_able_qty_raw={} tdy_buyq={} tdy_sellq={} crd_tp_nm_raw={} crd_tp_raw={} crd_loan_dt_raw={} crd_tp_present={} unfilled_sell_qty={} diagnosis={} holding_response_fields={}",
                     source,
                     holding.stockName(),
                     holding.stockCode(),
@@ -57,7 +57,9 @@ public class KiwoomSellAvailabilityDiagnosticService {
                     blankAsUnknown(holding.sellableRaw()),
                     holding.todayBuyQuantity(),
                     holding.todaySellQuantity(),
-                    blankAsUnknown(holding.creditType()),
+                    blankAsUnknown(holding.creditTypeNameRaw()),
+                    blankAsUnknown(holding.creditTypeCodeRaw()),
+                    blankAsUnknown(holding.creditLoanDateRaw()),
                     holding.creditTypeFieldPresent(),
                     orderInquiryError == null ? unfilledQuantity : "unknown",
                     diagnosis,
