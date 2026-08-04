@@ -45,6 +45,7 @@ class KiwoomStrategyServiceTest {
     @Mock private ShortSwingCandidateService catalystService;
     @Mock private KiwoomStrategySettingsService settingsService;
     @Mock private KiwoomStrategyAuditService audit;
+    @Mock private KiwoomAccountHoldingSyncService accountHoldings;
 
     private KiwoomProperties props;
     private KiwoomStrategySettings settings;
@@ -79,7 +80,8 @@ class KiwoomStrategyServiceTest {
                         orders,
                         catalystService,
                         settingsService,
-                        audit);
+                        audit,
+                        accountHoldings);
 
         lenient().when(state.isEmergencyStopped()).thenReturn(false);
         lenient().when(state.tryStartDecision()).thenReturn(true);

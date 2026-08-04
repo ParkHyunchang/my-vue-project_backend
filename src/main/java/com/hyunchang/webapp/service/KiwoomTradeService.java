@@ -147,13 +147,16 @@ public class KiwoomTradeService {
             if (!code.matches("\\d{6}")) continue;
             int qty = (int) number(item, "rmnd_qty", "qty");
             if (qty <= 0) continue;
-            int sellable = (int) number(item, "trde_able_qty", "rmnd_qty");
+            // 매도가능수량 0은 유효한 값이다. 보유수량으로 대체하면 이미 다른 주문에
+            // 묶였거나 당일 매도 불가인 수량을 다시 매도하려는 주문이 만들어진다.
+            // 값이 누락된 응답도 안전하게 0으로 취급해 자동 청산을 보류한다.
+            int sellable = (int) number(item, "trde_able_qty");
             out.add(
                     new Holding(
                             code,
                             item.path("stk_nm").asText(code),
                             qty,
-                            sellable > 0 ? sellable : qty,
+                            Math.max(0, sellable),
                             absoluteNumber(item, "pur_pric", "avg_prc", "buy_uv"),
                             absoluteNumber(item, "cur_prc", "prpr"),
                             item.path("prft_rt").asDouble(0)));

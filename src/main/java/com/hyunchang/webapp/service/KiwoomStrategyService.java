@@ -57,6 +57,7 @@ public class KiwoomStrategyService {
     private final ShortSwingCandidateService catalystService;
     private final KiwoomStrategySettingsService settings;
     private final KiwoomStrategyAuditService audit;
+    private final KiwoomAccountHoldingSyncService accountHoldings;
 
     public KiwoomStrategyService(
             KiwoomProperties props,
@@ -71,7 +72,8 @@ public class KiwoomStrategyService {
             KiwoomProposalOrderService orders,
             ShortSwingCandidateService catalystService,
             KiwoomStrategySettingsService settings,
-            KiwoomStrategyAuditService audit) {
+            KiwoomStrategyAuditService audit,
+            KiwoomAccountHoldingSyncService accountHoldings) {
         this.props = props;
         this.trade = trade;
         this.state = state;
@@ -85,6 +87,7 @@ public class KiwoomStrategyService {
         this.catalystService = catalystService;
         this.settings = settings;
         this.audit = audit;
+        this.accountHoldings = accountHoldings;
     }
 
     @Scheduled(cron = "0 0/15 9-15 * * MON-FRI", zone = "Asia/Seoul")
@@ -117,6 +120,9 @@ public class KiwoomStrategyService {
             }
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
+            // 이번 판단이 실제로 사용할 실계좌 잔고를 화면·이력용 DB 스냅샷에도 남긴다.
+            // 별도 호출 없이 같은 응답을 재사용하므로 API 비용은 늘지 않는다.
+            accountHoldings.syncBalance(balance, "STRATEGY_" + by);
             long deposit = number(depositNode, "ord_alow_amt", "entr");
 
             // 일일 손실 한도 체크 — 이미 조회한 예수금·잔고를 재사용하므로 추가 API 호출이 없다.

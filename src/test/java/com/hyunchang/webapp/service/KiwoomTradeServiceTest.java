@@ -42,6 +42,25 @@ class KiwoomTradeServiceTest {
     }
 
     @Test
+    void preservesZeroSellableQuantity() throws Exception {
+        var balance =
+                json.readTree(
+                        """
+                        {
+                          "acnt_evlt_remn_indv_tot": [
+                            {"stk_cd":"032940","stk_nm":"원익","rmnd_qty":"1","trde_able_qty":"0","pur_pric":"5,520","cur_prc":"6,080"}
+                          ]
+                        }
+                        """);
+
+        var holdings = tradeService().parseHoldings(balance);
+
+        assertEquals(1, holdings.size());
+        assertEquals(1, holdings.get(0).quantity());
+        assertEquals(0, holdings.get(0).sellable());
+    }
+
+    @Test
     void requestsTheAccountBalanceTrForHoldings() {
         AtomicReference<String> apiId = new AtomicReference<>();
         WebClient.Builder clientBuilder =

@@ -45,6 +45,7 @@ public class KiwoomPositionExitService {
     private final KiwoomProposalOrderService orders;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomWebsocketClient websocket;
+    private final KiwoomAccountHoldingSyncService accountHoldings;
     private final Map<String, Position> positions = new ConcurrentHashMap<>();
     private final Set<String> stopPending = ConcurrentHashMap.newKeySet();
     private final Set<String> stopSubmitted = ConcurrentHashMap.newKeySet();
@@ -58,7 +59,8 @@ public class KiwoomPositionExitService {
             KiwoomStrategyRunRepository runs,
             KiwoomProposalOrderService orders,
             KiwoomStrategyAuditService audit,
-            KiwoomWebsocketClient websocket) {
+            KiwoomWebsocketClient websocket,
+            KiwoomAccountHoldingSyncService accountHoldings) {
         this.props = props;
         this.trade = trade;
         this.state = state;
@@ -68,6 +70,7 @@ public class KiwoomPositionExitService {
         this.orders = orders;
         this.audit = audit;
         this.websocket = websocket;
+        this.accountHoldings = accountHoldings;
     }
 
     @PostConstruct
@@ -83,6 +86,7 @@ public class KiwoomPositionExitService {
         if (!canManageExits()) return;
         try {
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
+            accountHoldings.syncBalance(balance, source);
             List<KiwoomTradeService.Holding> holdings = trade.parseHoldings(balance);
             Map<String, Position> refreshed = new HashMap<>();
             for (KiwoomTradeService.Holding holding : holdings) {

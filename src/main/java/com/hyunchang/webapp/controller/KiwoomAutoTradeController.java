@@ -2,6 +2,7 @@ package com.hyunchang.webapp.controller;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
+import com.hyunchang.webapp.service.KiwoomAccountHoldingSyncService;
 import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.KiwoomPositionExitService;
@@ -10,6 +11,7 @@ import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.KiwoomWebsocketClient;
+import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +43,7 @@ public class KiwoomAutoTradeController {
     private final KiwoomStrategySettingsService settings;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomPositionExitService exits;
+    private final KiwoomAccountHoldingSyncService accountHoldings;
 
     public KiwoomAutoTradeController(
             KiwoomProperties properties,
@@ -51,7 +54,8 @@ public class KiwoomAutoTradeController {
             KiwoomStrategyService strategyService,
             KiwoomStrategySettingsService settings,
             KiwoomStrategyAuditService audit,
-            KiwoomPositionExitService exits) {
+            KiwoomPositionExitService exits,
+            KiwoomAccountHoldingSyncService accountHoldings) {
         this.properties = properties;
         this.authService = authService;
         this.tradeService = tradeService;
@@ -61,6 +65,7 @@ public class KiwoomAutoTradeController {
         this.settings = settings;
         this.audit = audit;
         this.exits = exits;
+        this.accountHoldings = accountHoldings;
     }
 
     @GetMapping("/status")
@@ -180,6 +185,33 @@ public class KiwoomAutoTradeController {
                                         tradeService.totalEvaluationProfitLoss(data.getT2()),
                                         "totalEvaluation",
                                         tradeService.totalEvaluationAmount(data.getT2())));
+    }
+
+    /** 자동매매가 실제로 사용하는 키움 계좌 보유현황 스냅샷이다. */
+    @GetMapping("/holdings")
+    public List<Map<String, Object>> holdings() {
+        return accountHoldings.currentHoldings().stream()
+                .map(
+                        holding ->
+                                Map.<String, Object>of(
+                                        "stockCode", holding.getStockCode(),
+                                        "stockName", holding.getStockName(),
+                                        "quantity", holding.getQuantity(),
+                                        "sellableQuantity", holding.getSellableQuantity(),
+                                        "averagePrice", holding.getAveragePrice(),
+                                        "currentPrice", holding.getCurrentPrice(),
+                                        "profitLossPercent", holding.getProfitLossPercent(),
+                                        "syncedAt", holding.getSyncedAt().toString()))
+                .toList();
+    }
+
+    @PostMapping("/holdings/sync")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> syncHoldings() {
+        var result = accountHoldings.sync("MANUAL_CHECK");
+        return result.success()
+                ? ResponseEntity.ok(result)
+                : ResponseEntity.status(502).body(Map.of("message", result.message()));
     }
 
     @PostMapping("/orders")
