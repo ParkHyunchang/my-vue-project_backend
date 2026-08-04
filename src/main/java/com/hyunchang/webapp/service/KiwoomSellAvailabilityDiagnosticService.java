@@ -47,17 +47,21 @@ public class KiwoomSellAvailabilityDiagnosticService {
             int unfilledQuantity = unfilledSellQuantity(unfilledSellOrders, holding.stockCode());
             String diagnosis = diagnosis(holding, unfilledQuantity, orderInquiryError);
             log.warn(
-                    "[SELL_AVAILABILITY] source={} stock={}({}) rmnd_qty={} trde_able_qty={} tdy_buyq={} tdy_sellq={} crd_tp_nm={} unfilled_sell_qty={} diagnosis={}",
+                    "[SELL_AVAILABILITY] source={} stock={}({}) rmnd_qty={} trde_able_qty={} trde_able_qty_present={} trde_able_qty_raw={} tdy_buyq={} tdy_sellq={} crd_tp_nm={} crd_tp_present={} unfilled_sell_qty={} diagnosis={} holding_response_fields={}",
                     source,
                     holding.stockName(),
                     holding.stockCode(),
                     holding.remainingQuantity(),
                     holding.sellableQuantity(),
+                    holding.sellableFieldPresent(),
+                    blankAsUnknown(holding.sellableRaw()),
                     holding.todayBuyQuantity(),
                     holding.todaySellQuantity(),
                     blankAsUnknown(holding.creditType()),
+                    holding.creditTypeFieldPresent(),
                     orderInquiryError == null ? unfilledQuantity : "unknown",
-                    diagnosis);
+                    diagnosis,
+                    holding.responseFields());
         }
     }
 
@@ -66,6 +70,10 @@ public class KiwoomSellAvailabilityDiagnosticService {
                 holding.remainingQuantity()
                         + ":"
                         + holding.sellableQuantity()
+                        + ":"
+                        + holding.sellableFieldPresent()
+                        + ":"
+                        + holding.sellableRaw()
                         + ":"
                         + holding.todayBuyQuantity()
                         + ":"
@@ -80,6 +88,8 @@ public class KiwoomSellAvailabilityDiagnosticService {
             int unfilledQuantity,
             String orderInquiryError) {
         if (orderInquiryError != null) return "UNFILLED_SELL_INQUIRY_FAILED";
+        if (!holding.sellableFieldPresent()) return "SELLABLE_QUANTITY_FIELD_MISSING";
+        if (!isNumber(holding.sellableRaw())) return "SELLABLE_QUANTITY_FIELD_NOT_NUMERIC";
         if (unfilledQuantity > 0) return "UNFILLED_SELL_ORDER_RESERVES_QUANTITY";
         if (isNonCashCredit(holding.creditType())) return "NO_UNFILLED_SELL_ORDER_CHECK_CREDIT_TYPE";
         return "NO_UNFILLED_SELL_ORDER_BROKER_SELLABLE_QUANTITY_IS_ZERO";
@@ -136,6 +146,16 @@ public class KiwoomSellAvailabilityDiagnosticService {
                 && !value.equals("00")
                 && !value.contains("현금")
                 && !value.equals("cash");
+    }
+
+    private boolean isNumber(String value) {
+        if (value == null || value.isBlank()) return false;
+        try {
+            Integer.parseInt(value.replace(",", "").trim());
+            return true;
+        } catch (NumberFormatException ignored) {
+            return false;
+        }
     }
 
     private String trim(String value) {

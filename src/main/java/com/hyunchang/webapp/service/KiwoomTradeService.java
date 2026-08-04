@@ -210,6 +210,9 @@ public class KiwoomTradeService {
             String code = item.path("stk_cd").asText("").replaceAll("^[A-Za-z]+", "");
             if (!code.matches("\\d{6}")) continue;
             int quantity = (int) number(item, "rmnd_qty", "qty");
+            boolean sellableFieldPresent = item.hasNonNull("trde_able_qty");
+            String sellableRaw =
+                    sellableFieldPresent ? item.path("trde_able_qty").asText("") : "";
             int sellable = (int) number(item, "trde_able_qty");
             if (quantity <= 0 || sellable >= quantity) continue;
             result.add(
@@ -218,11 +221,21 @@ public class KiwoomTradeService {
                             item.path("stk_nm").asText(code),
                             quantity,
                             Math.max(0, sellable),
+                            sellableFieldPresent,
+                            sellableRaw,
                             (int) number(item, "tdy_buyq"),
                             (int) number(item, "tdy_sellq"),
-                            item.path("crd_tp_nm").asText(item.path("crd_tp").asText(""))));
+                            item.path("crd_tp_nm").asText(item.path("crd_tp").asText("")),
+                            item.hasNonNull("crd_tp_nm") || item.hasNonNull("crd_tp"),
+                            fieldNames(item)));
         }
         return result;
+    }
+
+    private List<String> fieldNames(JsonNode item) {
+        List<String> fields = new ArrayList<>();
+        item.fieldNames().forEachRemaining(fields::add);
+        return fields;
     }
 
     /** kt00018의 총평가금액 — 합산 필드가 없으면 보유 종목의 현재가×수량 합으로 폴백한다. */
@@ -386,9 +399,13 @@ public class KiwoomTradeService {
             String stockName,
             int remainingQuantity,
             int sellableQuantity,
+            boolean sellableFieldPresent,
+            String sellableRaw,
             int todayBuyQuantity,
             int todaySellQuantity,
-            String creditType) {}
+            String creditType,
+            boolean creditTypeFieldPresent,
+            List<String> responseFields) {}
 
     public record OrderRequest(
             String side,
