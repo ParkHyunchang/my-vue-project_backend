@@ -22,16 +22,19 @@ public class KiwoomAccountHoldingSyncService {
     private final KiwoomProperties props;
     private final KiwoomAccountHoldingRepository holdings;
     private final KiwoomStrategyAuditService audit;
+    private final KiwoomSellAvailabilityDiagnosticService sellAvailabilityDiagnostics;
 
     public KiwoomAccountHoldingSyncService(
             KiwoomTradeService trade,
             KiwoomProperties props,
             KiwoomAccountHoldingRepository holdings,
-            KiwoomStrategyAuditService audit) {
+            KiwoomStrategyAuditService audit,
+            KiwoomSellAvailabilityDiagnosticService sellAvailabilityDiagnostics) {
         this.trade = trade;
         this.props = props;
         this.holdings = holdings;
         this.audit = audit;
+        this.sellAvailabilityDiagnostics = sellAvailabilityDiagnostics;
     }
 
     /** 장 시작 전과 장 종료 뒤에는 수량이 변하지 않아도 스냅샷 시간을 갱신한다. */
@@ -68,6 +71,7 @@ public class KiwoomAccountHoldingSyncService {
         if (!hasHoldingArray(balance))
             return new SyncResult(0, 0, false, "키움 잔고 응답에 종목 배열이 없어 기존 스냅샷을 유지했습니다.");
         List<KiwoomTradeService.Holding> brokerHoldings = trade.parseHoldings(balance);
+        sellAvailabilityDiagnostics.logChangedRestrictions(balance, source);
         LocalDateTime now = LocalDateTime.now(KST);
         int changed = 0;
         Map<String, KiwoomAccountHolding> existing = new HashMap<>();

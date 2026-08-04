@@ -61,6 +61,14 @@ public class KiwoomTradeService {
                 Map.of("all_stk_tp", "0", "trde_tp", "0", "stk_cd", "", "stex_tp", "0"));
     }
 
+    /** 매도가능수량 진단 시에만 사용하는 미체결 매도 주문 조회다. */
+    public Mono<JsonNode> getUnfilledSellOrders() {
+        return readRequest(
+                "ka10075",
+                "/api/dostk/acnt",
+                Map.of("all_stk_tp", "0", "trde_tp", "1", "stk_cd", "", "stex_tp", "0"));
+    }
+
     /** 체결(ka10076) 조회 — 미체결과 파라미터 구성이 다르다(qry_tp/sell_tp). */
     public Mono<JsonNode> getFilledOrders() {
         // qry_tp 0:전체 1:종목, sell_tp 0:전체 1:매도 2:매수, stex_tp 0:통합 1:KRX 2:NXT
@@ -186,6 +194,35 @@ public class KiwoomTradeService {
                     + "]";
         }
         return "키움 잔고에 해당 종목 없음";
+    }
+
+    /**
+     * 보유수량과 매도가능수량이 다른 경우에만 로그에 남길 원본 잔고 필드다.
+     * 계좌번호나 전체 잔고 응답은 포함하지 않는다.
+     */
+    public List<SellAvailability> sellAvailabilityDiagnostics(JsonNode balance) {
+        List<SellAvailability> result = new ArrayList<>();
+        if (balance == null) return result;
+        JsonNode arr = balance.path("acnt_evlt_remn_indv_tot");
+        if (!arr.isArray()) arr = firstHoldingsArray(balance);
+        if (arr == null || !arr.isArray()) return result;
+        for (JsonNode item : arr) {
+            String code = item.path("stk_cd").asText("").replaceAll("^[A-Za-z]+", "");
+            if (!code.matches("\\d{6}")) continue;
+            int quantity = (int) number(item, "rmnd_qty", "qty");
+            int sellable = (int) number(item, "trde_able_qty");
+            if (quantity <= 0 || sellable >= quantity) continue;
+            result.add(
+                    new SellAvailability(
+                            code,
+                            item.path("stk_nm").asText(code),
+                            quantity,
+                            Math.max(0, sellable),
+                            (int) number(item, "tdy_buyq"),
+                            (int) number(item, "tdy_sellq"),
+                            item.path("crd_tp_nm").asText(item.path("crd_tp").asText(""))));
+        }
+        return result;
     }
 
     /** kt00018의 총평가금액 — 합산 필드가 없으면 보유 종목의 현재가×수량 합으로 폴백한다. */
@@ -343,6 +380,15 @@ public class KiwoomTradeService {
             long avgPrice,
             long curPrice,
             double plPct) {}
+
+    public record SellAvailability(
+            String stockCode,
+            String stockName,
+            int remainingQuantity,
+            int sellableQuantity,
+            int todayBuyQuantity,
+            int todaySellQuantity,
+            String creditType) {}
 
     public record OrderRequest(
             String side,
