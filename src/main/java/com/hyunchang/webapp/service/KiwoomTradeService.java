@@ -164,6 +164,30 @@ public class KiwoomTradeService {
         return out;
     }
 
+    /** 매도 거절 때만 사용하는 종목별 잔고 진단 정보다. 계좌번호·인증정보는 포함하지 않는다. */
+    public String describeHoldingAvailability(JsonNode balance, String stockCode) {
+        if (balance == null || stockCode == null) return "키움 잔고 응답 없음";
+        JsonNode arr = balance.path("acnt_evlt_remn_indv_tot");
+        if (!arr.isArray()) arr = firstHoldingsArray(balance);
+        if (arr == null || !arr.isArray()) return "키움 잔고 종목 배열 없음";
+        for (JsonNode item : arr) {
+            String code = item.path("stk_cd").asText("").replaceAll("^[A-Za-z]+", "");
+            if (!stockCode.equals(code)) continue;
+            return "키움잔고[보유="
+                    + number(item, "rmnd_qty", "qty")
+                    + "주, 매매가능="
+                    + number(item, "trde_able_qty")
+                    + "주, 금일매수="
+                    + number(item, "tdy_buyq")
+                    + "주, 금일매도="
+                    + number(item, "tdy_sellq")
+                    + "주, 신용구분="
+                    + item.path("crd_tp_nm").asText(item.path("crd_tp").asText(""))
+                    + "]";
+        }
+        return "키움 잔고에 해당 종목 없음";
+    }
+
     /** kt00018의 총평가금액 — 합산 필드가 없으면 보유 종목의 현재가×수량 합으로 폴백한다. */
     public long totalEvaluationAmount(JsonNode balance) {
         long total = number(balance, "tot_evlt_amt", "evlt_amt");

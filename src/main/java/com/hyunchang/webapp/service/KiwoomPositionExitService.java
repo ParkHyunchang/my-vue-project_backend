@@ -126,6 +126,12 @@ public class KiwoomPositionExitService {
             onPriceTick(position.stockCode(), position.currentPrice());
     }
 
+    /** 전일 매수분처럼 매도가능수량이 장 시작과 함께 바뀌는 종목의 익절 주문을 다시 건다. */
+    @Scheduled(cron = "0 1 9 * * MON-FRI", zone = "Asia/Seoul")
+    public void refreshAtMarketOpen() {
+        refreshPositions("MARKET_OPEN_RECHECK");
+    }
+
     /** Invoked by the order synchronizer only when a broker order actually changed state. */
     public void onOrderStateChanged() {
         refreshPositions("ORDER_STATE_CHANGED");

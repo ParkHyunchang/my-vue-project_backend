@@ -61,6 +61,23 @@ class KiwoomTradeServiceTest {
     }
 
     @Test
+    void describesAvailabilityFieldsForRejectedSellDiagnosis() throws Exception {
+        var balance =
+                json.readTree(
+                        """
+                        {
+                          "acnt_evlt_remn_indv_tot": [
+                            {"stk_cd":"032940","rmnd_qty":"1","trde_able_qty":"0","tdy_buyq":"1","tdy_sellq":"0","crd_tp_nm":"현금"}
+                          ]
+                        }
+                        """);
+
+        String diagnostic = tradeService().describeHoldingAvailability(balance, "032940");
+
+        assertEquals("키움잔고[보유=1주, 매매가능=0주, 금일매수=1주, 금일매도=0주, 신용구분=현금]", diagnostic);
+    }
+
+    @Test
     void requestsTheAccountBalanceTrForHoldings() {
         AtomicReference<String> apiId = new AtomicReference<>();
         WebClient.Builder clientBuilder =

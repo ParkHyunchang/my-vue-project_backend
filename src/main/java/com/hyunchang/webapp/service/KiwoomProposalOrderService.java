@@ -129,11 +129,23 @@ public class KiwoomProposalOrderService {
             events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode());
             return ok(p, "주문 전송 요청이 완료되었습니다.");
         } catch (Exception e) {
-            p.orderFailed(trim(e.getMessage()));
+            String failure = trim(e.getMessage());
+            if (p.getAction() == KiwoomTradeProposal.Action.SELL)
+                failure = trim(failure + " | " + sellAvailabilityDiagnostic(p.getStockCode()));
+            p.orderFailed(failure);
             proposals.save(p);
-            audit.log("ORDER_FAILED", p.getId(), trim(e.getMessage()));
-            events.publishEvent("error", "주문 전송 실패: " + trim(e.getMessage()));
-            return fail("주문 전송 실패: " + trim(e.getMessage()));
+            audit.log("ORDER_FAILED", p.getId(), failure);
+            events.publishEvent("error", "주문 전송 실패: " + failure);
+            return fail("주문 전송 실패: " + failure);
+        }
+    }
+
+    private String sellAvailabilityDiagnostic(String stockCode) {
+        try {
+            JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
+            return trade.describeHoldingAvailability(balance, stockCode);
+        } catch (Exception e) {
+            return "매도가능수량 재조회 실패: " + trim(e.getMessage());
         }
     }
 
