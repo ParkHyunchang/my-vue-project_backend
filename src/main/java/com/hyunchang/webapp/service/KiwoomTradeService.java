@@ -8,6 +8,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.OptionalLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -262,6 +263,23 @@ public class KiwoomTradeService {
         return sum;
     }
 
+    /**
+     * 일일 손실 한도용 계좌 총자산을 계산한다.
+     *
+     * <p>kt00018의 {@code prsm_dpst_aset_amt}(추정예탁자산)는 예수금, 보유 평가금액과
+     * 정산 중인 금액을 포함한 계좌 기준 값이므로 최우선으로 사용한다. {@code ord_alow_amt}는
+     * 주문 가능 금액일 뿐이라 주문·체결 직후 총자산으로 사용하면 실제 손실이 아닌 변동을
+     * 손실로 오인할 수 있다.
+     */
+    public AccountAsset accountAsset(JsonNode deposit, JsonNode balance) {
+        OptionalLong estimatedAsset = parsedNumber(balance, "prsm_dpst_aset_amt");
+        if (estimatedAsset.isPresent() && estimatedAsset.getAsLong() > 0)
+            return new AccountAsset(estimatedAsset.getAsLong(), "추정예탁자산");
+
+        long cash = number(deposit, "entr", "ord_alow_amt");
+        return new AccountAsset(cash + totalEvaluationAmount(balance), "예수금+보유평가금액");
+    }
+
     /** Returns the account evaluation profit/loss, falling back to the per-stock rows. */
     public long totalEvaluationProfitLoss(JsonNode balance) {
         if (balance == null) return 0;
@@ -286,16 +304,21 @@ public class KiwoomTradeService {
     private long number(JsonNode n, String... names) {
         if (n != null)
             for (String x : names) {
-                if (!n.hasNonNull(x)) continue;
-                String value = n.path(x).asText("").replace(",", "").trim();
-                if (value.isEmpty()) continue;
-                try {
-                    return Long.parseLong(value);
-                } catch (NumberFormatException ignored) {
-                    // Try the next documented field alias.
-                }
+                OptionalLong value = parsedNumber(n, x);
+                if (value.isPresent()) return value.getAsLong();
             }
         return 0;
+    }
+
+    private OptionalLong parsedNumber(JsonNode n, String name) {
+        if (n == null || !n.hasNonNull(name)) return OptionalLong.empty();
+        String value = n.path(name).asText("").replace(",", "").trim();
+        if (value.isEmpty()) return OptionalLong.empty();
+        try {
+            return OptionalLong.of(Long.parseLong(value));
+        } catch (NumberFormatException ignored) {
+            return OptionalLong.empty();
+        }
     }
 
     private long absoluteNumber(JsonNode n, String... names) {
@@ -398,6 +421,8 @@ public class KiwoomTradeService {
         nextRequestAt = Math.max(now, nextRequestAt) + properties.getMinRequestIntervalMs();
         return delay == 0 ? Mono.empty() : Mono.delay(Duration.ofMillis(delay)).then();
     }
+
+    public record AccountAsset(long amount, String source) {}
 
     public record Holding(
             String code,

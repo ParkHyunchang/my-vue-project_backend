@@ -80,7 +80,9 @@ class KiwoomRiskManagerServiceTest {
         lenient().when(settingsService.current()).thenReturn(settings);
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(emptyNode));
         lenient().when(trade.getBalance()).thenReturn(Mono.just(emptyNode));
-        lenient().when(trade.totalEvaluationAmount(any())).thenReturn(0L);
+        lenient()
+                .when(trade.accountAsset(any(), any()))
+                .thenReturn(new KiwoomTradeService.AccountAsset(0L, "테스트"));
         lenient().when(runs.save(any())).thenAnswer(inv -> inv.getArgument(0));
         lenient()
                 .when(proposals.save(any()))
@@ -111,6 +113,29 @@ class KiwoomRiskManagerServiceTest {
                 ArgumentCaptor.forClass(KiwoomTradeProposal.class);
         verify(proposals).save(captor.capture());
         return captor.getValue();
+    }
+
+    @Test
+    void zeroDailyLossLimitDisablesTheGuardInsteadOfFallingBackToPercent() {
+        assertEquals(0L, service.dailyLossLimit(0));
+        assertEquals(5_000L, service.dailyLossLimit(5_000));
+    }
+
+    @Test
+    void adminCanResetDailyLossGuardUsingCurrentAccountAsset() {
+        KiwoomAutoTradeState.DailyLossStatus reset =
+                new KiwoomAutoTradeState.DailyLossStatus(
+                        java.time.LocalDate.now(), 1_250_000, 1_250_000, false, LocalDateTime.now());
+        when(trade.accountAsset(any(), any()))
+                .thenReturn(new KiwoomTradeService.AccountAsset(1_250_000, "추정예탁자산"));
+        when(state.resetDailyLossCheck(1_250_000)).thenReturn(reset);
+
+        KiwoomRiskManagerService.DailyLossResetResult result = service.resetDailyLossGuard();
+
+        assertEquals(1_250_000, result.newBaseAsset());
+        assertEquals("추정예탁자산", result.assetSource());
+        verify(audit).log(eq("DAILY_LOSS_RESET"), eq(null), anyString());
+        verify(events).publishEvent(eq("strategy"), anyString());
     }
 
     @Test

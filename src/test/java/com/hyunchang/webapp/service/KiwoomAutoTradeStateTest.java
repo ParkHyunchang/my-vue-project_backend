@@ -72,6 +72,20 @@ class KiwoomAutoTradeStateTest {
     }
 
     @Test
+    void resetUsesCurrentAssetAsNewDailyBaseline() {
+        state.recordDailyLossCheck(1_000_000, 5_000);
+        state.recordDailyLossCheck(995_000, 5_000);
+        assertTrue(state.isDailyLossTriggered());
+
+        state.resetDailyLossCheck(997_000);
+
+        assertFalse(state.isDailyLossTriggered());
+        assertEquals(997_000, state.dailyLossStatus().baseAsset());
+        assertEquals(997_000, state.dailyLossStatus().lastAsset());
+        assertEquals(0, state.dailyLossStatus().drawdown());
+    }
+
+    @Test
     void staleSnapshotFromPreviousDayResetsAutomatically() {
         KiwoomStrategyControlState saved = new KiwoomStrategyControlState();
         saved.setDailyLossSnapshotDate(LocalDate.now(KiwoomMarketHours.KST).minusDays(1));

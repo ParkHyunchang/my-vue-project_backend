@@ -42,6 +42,28 @@ class KiwoomTradeServiceTest {
     }
 
     @Test
+    void usesEstimatedDepositAssetBeforeOrderableAmountForDailyLossCheck() throws Exception {
+        var deposit = json.readTree("{\"entr\":\"1,000,000\",\"ord_alow_amt\":\"100,000\"}");
+        var balance = json.readTree("{\"prsm_dpst_aset_amt\":\"1,250,000\",\"tot_evlt_amt\":\"250,000\"}");
+
+        KiwoomTradeService.AccountAsset asset = tradeService().accountAsset(deposit, balance);
+
+        assertEquals(1_250_000, asset.amount());
+        assertEquals("추정예탁자산", asset.source());
+    }
+
+    @Test
+    void fallsBackToDepositAndEvaluationWithoutEstimatedDepositAsset() throws Exception {
+        var deposit = json.readTree("{\"entr\":\"1,000,000\",\"ord_alow_amt\":\"100,000\"}");
+        var balance = json.readTree("{\"tot_evlt_amt\":\"250,000\"}");
+
+        KiwoomTradeService.AccountAsset asset = tradeService().accountAsset(deposit, balance);
+
+        assertEquals(1_250_000, asset.amount());
+        assertEquals("예수금+보유평가금액", asset.source());
+    }
+
+    @Test
     void preservesZeroSellableQuantity() throws Exception {
         var balance =
                 json.readTree(

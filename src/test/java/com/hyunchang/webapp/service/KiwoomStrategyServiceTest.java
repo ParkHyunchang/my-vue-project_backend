@@ -90,7 +90,9 @@ class KiwoomStrategyServiceTest {
         lenient().when(settingsService.current()).thenReturn(settings);
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000_000)));
         lenient().when(trade.getBalance()).thenReturn(Mono.just(emptyNode));
-        lenient().when(trade.totalEvaluationAmount(any())).thenReturn(0L);
+        lenient()
+                .when(trade.accountAsset(any(), any()))
+                .thenReturn(new KiwoomTradeService.AccountAsset(100_000_000, "테스트"));
         lenient().when(trade.parseHoldings(any())).thenReturn(List.of());
         lenient().when(prompts.render(anyString(), any())).thenReturn("prompt");
         lenient().when(runs.save(any())).thenAnswer(inv -> inv.getArgument(0));

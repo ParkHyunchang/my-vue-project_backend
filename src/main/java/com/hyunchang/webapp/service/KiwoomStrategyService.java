@@ -126,21 +126,19 @@ public class KiwoomStrategyService {
             // 이번 판단이 실제로 사용할 실계좌 잔고를 화면·이력용 DB 스냅샷에도 남긴다.
             // 별도 호출 없이 같은 응답을 재사용하므로 API 비용은 늘지 않는다.
             accountHoldings.syncBalance(balance, "STRATEGY_" + by);
-            long deposit = number(depositNode, "ord_alow_amt", "entr");
-
             // 일일 손실 한도 체크 — 이미 조회한 예수금·잔고를 재사용하므로 추가 API 호출이 없다.
-            long totalAsset = deposit + trade.totalEvaluationAmount(balance);
+            KiwoomTradeService.AccountAsset accountAsset = trade.accountAsset(depositNode, balance);
+            long totalAsset = accountAsset.amount();
+            // 주문 가능 금액은 주문 수량·예수금 안전검사에만 사용한다. 총자산 계산에는 사용하지 않는다.
+            long deposit = number(depositNode, "ord_alow_amt", "entr");
             long configuredDailyLossLimit = settings.current().getDailyLossLimitAmount();
-            long dailyLossLimit =
-                    configuredDailyLossLimit > 0
-                            ? configuredDailyLossLimit
-                            : Math.round(
-                                    totalAsset
-                                            * props.getStrategy().getDefaultDailyLossPercent()
-                                            / 100.0);
+            long dailyLossLimit = Math.max(0, configuredDailyLossLimit);
             if (state.recordDailyLossCheck(totalAsset, dailyLossLimit)) {
-                audit.log("DAILY_LOSS_TRIGGERED", null, "일일 손실 한도에 도달해 신규 매수를 차단합니다.");
-                events.publishEvent("strategy", "일일 손실 한도 발동 — 오늘 남은 시간 동안 신규 매수를 차단합니다.");
+                KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
+                String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
+                log.warn("[자동매매][일일 손실 한도 발동] {}", detail);
+                audit.log("DAILY_LOSS_TRIGGERED", null, detail);
+                events.publishEvent("strategy", "일일 손실 한도 발동 — " + detail);
             }
 
             // 유니버스 = 실계좌 보유 종목 ∪ KRX 자동 스캔 스윙 후보(최대 SWING_CANDIDATE_LIMIT개).
@@ -236,6 +234,9 @@ public class KiwoomStrategyService {
             run.setStatus(KiwoomStrategyRun.Status.SUCCESS);
             runs.save(run);
             int saved = 0;
+            int buyCount = 0;
+            int sellCount = 0;
+            List<KiwoomTradeProposal> holdProposals = new ArrayList<>();
             Set<String> unique = new HashSet<>();
             for (JsonNode d : root.path("decisions")) {
                 KiwoomTradeProposal p =
@@ -255,6 +256,13 @@ public class KiwoomStrategyService {
                         "CANDIDATE_SELECTED",
                         p.getId(),
                         p.getAction() + " " + p.getStockCode() + " — " + p.getReason());
+                saved++;
+                if (p.getAction() == KiwoomTradeProposal.Action.HOLD) {
+                    holdProposals.add(p);
+                    continue;
+                }
+                if (p.getAction() == KiwoomTradeProposal.Action.BUY) buyCount++;
+                else sellCount++;
                 log.info(
                         "[자동매매][AI 판단] {} {}({}), {}주, 신뢰도={}%, 사유={}",
                         actionLabel(p.getAction()),
@@ -263,17 +271,27 @@ public class KiwoomStrategyService {
                         p.getQuantity(),
                         p.getConfidence(),
                         trim(p.getReason()));
-                saved++;
                 // 자동 주문 전송이 켜져 있으면 실행 주체와 무관하게 동일한 안전 검사를 거쳐 전송한다.
                 // 화면의 수동 판단 기능을 없앤 뒤에도, 기존에 직접 실행된 판단이
                 // PROPOSED 상태로 멈추지 않도록 자동 경로를 일관되게 적용한다.
                 autoSubmit(p);
             }
+            if (!holdProposals.isEmpty())
+                log.info(
+                        "[자동매매][AI 관망 요약] {}종목, 목록={}",
+                        holdProposals.size(),
+                        holdSummary(holdProposals));
             state.markRun();
             lastCandidateSignature = candidateSignature;
             lastCandidateDecisionAt = LocalDateTime.now(KST);
             events.publishEvent("strategy", "AI 전략 제안 " + saved + "건을 생성했습니다.");
-            log.info("[자동매매][후보 검토 완료] AI 제안={}건, 매수 후보={}종목", saved, candidateLines.size());
+            log.info(
+                    "[자동매매][후보 검토 완료] AI 제안={}건 (매수={}건, 매도={}건, 관망={}건), 매수 후보={}종목",
+                    saved,
+                    buyCount,
+                    sellCount,
+                    holdProposals.size(),
+                    candidateLines.size());
             return new DecisionResult(run.getId(), run.getStatus().name(), saved);
         } catch (Exception e) {
             run.setStatus(KiwoomStrategyRun.Status.FAILED);
@@ -377,11 +395,35 @@ public class KiwoomStrategyService {
                 .collect(java.util.stream.Collectors.joining(", "));
     }
 
+    private String holdSummary(List<KiwoomTradeProposal> holds) {
+        return holds.stream()
+                .limit(12)
+                .map(
+                        p ->
+                                p.getStockName()
+                                        + "("
+                                        + p.getStockCode()
+                                        + ", "
+                                        + p.getConfidence()
+                                        + "%, "
+                                        + holdReason(p.getReason())
+                                        + ")")
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private String holdReason(String reason) {
+        if (reason == null || reason.isBlank()) return "근거 부족";
+        if (reason.contains("직접적인 연관성이 낮")) return "뉴스 관련성 낮음";
+        if (reason.contains("촉매 미확인")) return "촉매 미확인";
+        if (reason.contains("상승 모멘텀")) return "상승 모멘텀 약함";
+        return trim(reason).substring(0, Math.min(60, trim(reason).length()));
+    }
+
     private String actionLabel(KiwoomTradeProposal.Action action) {
         return switch (action) {
             case BUY -> "매수";
             case SELL -> "매도";
-            case HOLD -> "보유";
+            case HOLD -> "관망";
         };
     }
 
@@ -547,6 +589,19 @@ public class KiwoomStrategyService {
     private boolean exceedsPriceDeviation(long price, long reference) {
         double maximum = props.getStrategy().getMaxOrderPriceDeviationPercent();
         return maximum > 0 && Math.abs(price - reference) * 100.0 / reference > maximum;
+    }
+
+    private String dailyLossTriggerDetail(
+            KiwoomAutoTradeState.DailyLossStatus loss, long limitAmount, String assetSource) {
+        if (loss == null)
+            return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
+        return String.format(
+                "기준자산=%,d원, 현재자산=%,d원, 손실=%,d원, 한도=%,d원, 자산 계산=%s",
+                loss.baseAsset(),
+                loss.lastAsset(),
+                loss.drawdown(),
+                limitAmount,
+                assetSource);
     }
 
     private void applyGuardFlags(KiwoomTradeProposal p, long deposit) {

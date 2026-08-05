@@ -107,6 +107,15 @@ public class KiwoomStrategyController {
         }
     }
 
+    @PostMapping("/risk/daily-loss/reset")
+    public ResponseEntity<?> resetDailyLossGuard() {
+        try {
+            return ResponseEntity.ok(risk.resetDailyLossGuard());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(Map.of("message", e.getMessage()));
+        }
+    }
+
     @PostMapping("/proposals/{id}/approve")
     public ResponseEntity<?> approve(@PathVariable long id) {
         return response(orders.approve(id));

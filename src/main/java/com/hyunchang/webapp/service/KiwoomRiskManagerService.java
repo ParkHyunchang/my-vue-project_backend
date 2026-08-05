@@ -13,6 +13,8 @@ import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Optional;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -22,6 +24,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class KiwoomRiskManagerService {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomRiskManagerService.class);
     /** 동일 종목 중복 청산을 막기 위한 "열린 SELL" 상태 — 이 상태의 SELL이 있으면 재제안하지 않는다. */
     private static final List<KiwoomTradeProposal.Status> OPEN_SELL_STATUSES =
             List.of(
@@ -87,14 +90,17 @@ public class KiwoomRiskManagerService {
         try {
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
-            long deposit = number(depositNode, "ord_alow_amt", "entr");
             var current = settings.current();
 
-            long totalAsset = deposit + trade.totalEvaluationAmount(balance);
-            long dailyLossLimit = dailyLossLimit(totalAsset, current.getDailyLossLimitAmount());
+            KiwoomTradeService.AccountAsset accountAsset = trade.accountAsset(depositNode, balance);
+            long totalAsset = accountAsset.amount();
+            long dailyLossLimit = dailyLossLimit(current.getDailyLossLimitAmount());
             if (state.recordDailyLossCheck(totalAsset, dailyLossLimit)) {
-                audit.log("DAILY_LOSS_TRIGGERED", null, "일일 손실 한도에 도달해 신규 매수를 차단합니다.");
-                events.publishEvent("strategy", "일일 손실 한도 발동 — 오늘 남은 시간 동안 신규 매수를 차단합니다.");
+                KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
+                String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
+                log.warn("[자동매매][일일 손실 한도 발동] {}", detail);
+                audit.log("DAILY_LOSS_TRIGGERED", null, detail);
+                events.publishEvent("strategy", "일일 손실 한도 발동 — " + detail);
             }
             boolean dailyLossTriggered = state.isDailyLossTriggered();
             lastScanAt = LocalDateTime.now();
@@ -139,9 +145,44 @@ public class KiwoomRiskManagerService {
         return lastScanAt;
     }
 
-    public long dailyLossLimit(long totalAsset, long configuredAmount) {
-        if (configuredAmount > 0) return configuredAmount;
-        return Math.round(totalAsset * props.getStrategy().getDefaultDailyLossPercent() / 100.0);
+    /** 관리자가 잘못 발동한 당일 신규 매수 차단을 해제한다. */
+    public DailyLossResetResult resetDailyLossGuard() {
+        if (!state.tryStartDecision())
+            throw new IllegalStateException("다른 자동매매 판단이 실행 중이라 일일 손실 차단을 해제할 수 없습니다.");
+        try {
+            JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
+            JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
+            KiwoomTradeService.AccountAsset accountAsset = trade.accountAsset(depositNode, balance);
+            KiwoomAutoTradeState.DailyLossStatus reset =
+                    state.resetDailyLossCheck(accountAsset.amount());
+            String detail =
+                    String.format(
+                            "관리자 해제: 새 기준자산=%,d원, 자산 계산=%s",
+                            reset.baseAsset(), accountAsset.source());
+            log.warn("[자동매매][일일 손실 한도 해제] {}", detail);
+            audit.log("DAILY_LOSS_RESET", null, detail);
+            events.publishEvent("strategy", "일일 손실 한도 차단을 해제했습니다 — " + detail);
+            return new DailyLossResetResult(reset.baseAsset(), accountAsset.source(), reset.lastCheckedAt());
+        } finally {
+            state.finishDecision();
+        }
+    }
+
+    public long dailyLossLimit(long configuredAmount) {
+        return Math.max(0, configuredAmount);
+    }
+
+    private String dailyLossTriggerDetail(
+            KiwoomAutoTradeState.DailyLossStatus loss, long limitAmount, String assetSource) {
+        if (loss == null)
+            return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
+        return String.format(
+                "기준자산=%,d원, 현재자산=%,d원, 손실=%,d원, 한도=%,d원, 자산 계산=%s",
+                loss.baseAsset(),
+                loss.lastAsset(),
+                loss.drawdown(),
+                limitAmount,
+                assetSource);
     }
 
     private KiwoomStrategyRun newRiskRun(String by) {
@@ -268,11 +309,6 @@ public class KiwoomRiskManagerService {
         }
     }
 
-    private long number(JsonNode n, String... names) {
-        if (n != null) for (String x : names) if (n.has(x)) return n.path(x).asLong();
-        return 0;
-    }
-
     public enum TriggerType {
         STOP_LOSS,
         TAKE_PROFIT,
@@ -287,4 +323,6 @@ public class KiwoomRiskManagerService {
             int proposalCount,
             boolean dailyLossTriggered,
             String message) {}
+
+    public record DailyLossResetResult(long newBaseAsset, String assetSource, LocalDateTime resetAt) {}
 }

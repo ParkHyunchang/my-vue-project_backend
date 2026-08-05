@@ -163,6 +163,24 @@ public class KiwoomAutoTradeState {
         return triggered && !wasTriggered;
     }
 
+    /**
+     * 관리자가 당일 일일 손실 차단을 해제할 때 현재 총자산을 새 기준점으로 저장한다.
+     * 이전 기준점만 유지한 채 플래그를 끄면 다음 점검에서 즉시 다시 발동할 수 있으므로,
+     * 반드시 기준자산과 현재자산을 함께 초기화한다.
+     */
+    public synchronized DailyLossStatus resetDailyLossCheck(long totalAsset) {
+        DailyLossStatus next =
+                new DailyLossStatus(
+                        LocalDate.now(KiwoomMarketHours.KST),
+                        totalAsset,
+                        totalAsset,
+                        false,
+                        LocalDateTime.now());
+        dailyLoss = next;
+        persistDailyLoss(next);
+        return next;
+    }
+
     /** 오늘 발동 여부. 스냅샷 날짜가 지난 상태면 쓰기 없이 자동으로 해제된 것으로 본다. */
     public boolean isDailyLossTriggered() {
         DailyLossStatus s = dailyLoss;
