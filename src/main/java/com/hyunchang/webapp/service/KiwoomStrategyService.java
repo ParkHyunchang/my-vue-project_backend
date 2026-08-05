@@ -194,9 +194,7 @@ public class KiwoomStrategyService {
                     && candidateSignature.equals(lastCandidateSignature)
                     && !holdingExitTriggered(holdings)
                     && !candidateReevaluationDue()) {
-                return skipped(
-                        run,
-                        "후보 변동이 없고 보유 종목의 손절·익절 신호도 없어 AI 검토를 건너뜁니다.");
+                return skipped(run, "후보 변동이 없고 보유 종목의 손절·익절 신호도 없어 AI 검토를 건너뜁니다.");
             }
 
             String prompt =
@@ -587,15 +585,10 @@ public class KiwoomStrategyService {
 
     private String dailyLossTriggerDetail(
             KiwoomAutoTradeState.DailyLossStatus loss, long limitAmount, String assetSource) {
-        if (loss == null)
-            return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
+        if (loss == null) return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
         return String.format(
                 "기준자산=%,d원, 현재자산=%,d원, 손실=%,d원, 한도=%,d원, 자산 계산=%s",
-                loss.baseAsset(),
-                loss.lastAsset(),
-                loss.drawdown(),
-                limitAmount,
-                assetSource);
+                loss.baseAsset(), loss.lastAsset(), loss.drawdown(), limitAmount, assetSource);
     }
 
     private void applyGuardFlags(KiwoomTradeProposal p, long deposit) {
@@ -674,8 +667,9 @@ public class KiwoomStrategyService {
     }
 
     /**
-     * The settings modal is the source of truth for numerical strategy rules. This block is appended
-     * after an editable instruction so a stale custom prompt cannot silently override live settings.
+     * The settings modal is the source of truth for numerical strategy rules. This block is
+     * appended after an editable instruction so a stale custom prompt cannot silently override live
+     * settings.
      */
     private String runtimeTradingRules(
             com.hyunchang.webapp.entity.KiwoomStrategySettings s, long deposit) {

@@ -48,14 +48,17 @@ class KiwoomOrderSyncServiceTest {
         proposal.setQuantity(6);
         proposal.setReason("[EXIT:TAKE_PROFIT] 익절 지정가 주문");
         proposal.ordered("{}", "0357151");
-        when(proposals.findByStatusIn(any())).thenAnswer(
-                invocation -> {
-                    List<KiwoomTradeProposal.Status> statuses = invocation.getArgument(0);
-                    return statuses.contains(KiwoomTradeProposal.Status.ORDERED)
-                            ? List.of(proposal)
-                            : List.of();
-                });
-        lenient().when(proposals.findByBrokerOrderNo(anyString())).thenReturn(Optional.of(proposal));
+        when(proposals.findByStatusIn(any()))
+                .thenAnswer(
+                        invocation -> {
+                            List<KiwoomTradeProposal.Status> statuses = invocation.getArgument(0);
+                            return statuses.contains(KiwoomTradeProposal.Status.ORDERED)
+                                    ? List.of(proposal)
+                                    : List.of();
+                        });
+        lenient()
+                .when(proposals.findByBrokerOrderNo(anyString()))
+                .thenReturn(Optional.of(proposal));
         lenient().when(proposals.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -75,7 +78,8 @@ class KiwoomOrderSyncServiceTest {
     @Test
     void explicitExecutionQuantityCanConfirmFullFill() throws Exception {
         JsonNode filled =
-                objectMapper.readTree("{\"ord_no\":\"0357151\",\"cntr_qty\":\"6\",\"cntr_prc\":\"1235\"}");
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"cntr_qty\":\"6\",\"cntr_prc\":\"1235\"}");
         stubResponses(filled);
 
         service.sync();

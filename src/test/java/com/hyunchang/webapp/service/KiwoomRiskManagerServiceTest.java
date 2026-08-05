@@ -127,7 +127,11 @@ class KiwoomRiskManagerServiceTest {
     void adminCanResetDailyLossGuardUsingCurrentAccountAsset() {
         KiwoomAutoTradeState.DailyLossStatus reset =
                 new KiwoomAutoTradeState.DailyLossStatus(
-                        java.time.LocalDate.now(), 1_250_000, 1_250_000, false, LocalDateTime.now());
+                        java.time.LocalDate.now(),
+                        1_250_000,
+                        1_250_000,
+                        false,
+                        LocalDateTime.now());
         when(trade.accountAsset(any(), any()))
                 .thenReturn(new KiwoomTradeService.AccountAsset(1_250_000, "추정예탁자산"));
         when(state.resetDailyLossCheck(1_250_000)).thenReturn(reset);

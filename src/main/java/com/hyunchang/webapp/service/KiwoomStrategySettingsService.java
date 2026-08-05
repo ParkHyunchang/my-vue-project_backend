@@ -104,9 +104,7 @@ public class KiwoomStrategySettingsService {
         s.setCandidateReevaluationMinutes(clamp(u.candidateReevaluationMinutes, 15, 240));
         s.setSwingMinChangePercent(clamp(u.swingMinChangePercent, 0.5, 15));
         s.setSwingMaxChangePercent(
-                Math.max(
-                        s.getSwingMinChangePercent(),
-                        clamp(u.swingMaxChangePercent, 0.5, 30)));
+                Math.max(s.getSwingMinChangePercent(), clamp(u.swingMaxChangePercent, 0.5, 30)));
         s.setSwingMinVolumeRatio(clamp(u.swingMinVolumeRatio, 1, 20));
         s.setSwingStopLossPercent(clamp(u.swingStopLossPercent, 0, 100));
         s.setSwingTakeProfitPercent(clamp(u.swingTakeProfitPercent, 0, 100));

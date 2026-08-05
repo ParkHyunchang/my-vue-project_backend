@@ -141,12 +141,11 @@ public class KrxOpenApiService {
                 limit, minChangePercent, minVolumeRatio, DEFAULT_SWING_MAX_CHANGE_PCT);
     }
 
-    /** Applies the administrator-selected lower and upper momentum thresholds to the cached screen. */
+    /**
+     * Applies the administrator-selected lower and upper momentum thresholds to the cached screen.
+     */
     public List<KrSwingCandidate> getShortSwingCandidates(
-            int limit,
-            double minChangePercent,
-            double minVolumeRatio,
-            double maxChangePercent) {
+            int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
         if (limit <= 0 || !hasApiKey()) return List.of();
         if (!isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
             return filterSwingCandidates(limit, minChangePercent, minVolumeRatio, maxChangePercent);
@@ -162,10 +161,7 @@ public class KrxOpenApiService {
     }
 
     private List<KrSwingCandidate> filterSwingCandidates(
-            int limit,
-            double minChangePercent,
-            double minVolumeRatio,
-            double maxChangePercent) {
+            int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
         return swingCandidatesCache.stream()
                 .filter(candidate -> candidate.changePercent() >= minChangePercent)
                 .filter(candidate -> candidate.changePercent() <= maxChangePercent)

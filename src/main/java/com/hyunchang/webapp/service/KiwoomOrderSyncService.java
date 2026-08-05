@@ -108,7 +108,8 @@ public class KiwoomOrderSyncService {
                                     longValue(record, "rmn_qty", "unfilled_qty", "ord_remain_qty");
 
                             // A missing field is not the same as zero.  In particular, treating an
-                            // omitted remaining quantity as zero incorrectly changed live limit orders
+                            // omitted remaining quantity as zero incorrectly changed live limit
+                            // orders
                             // into FILLED orders.
                             if (filledValue == null && remainingValue == null) return false;
 
@@ -163,7 +164,8 @@ public class KiwoomOrderSyncService {
                                         proposal.getQuantity(),
                                         proposal.getAverageFillPrice() == null
                                                 ? "미확인"
-                                                : String.format("%,d", proposal.getAverageFillPrice()),
+                                                : String.format(
+                                                        "%,d", proposal.getAverageFillPrice()),
                                         orderNo,
                                         proposal.getReason());
                             return changed;

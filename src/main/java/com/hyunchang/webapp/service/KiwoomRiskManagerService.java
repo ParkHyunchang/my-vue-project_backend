@@ -27,6 +27,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class KiwoomRiskManagerService {
     private static final Logger log = LoggerFactory.getLogger(KiwoomRiskManagerService.class);
+
     /** 동일 종목 중복 청산을 막기 위한 "열린 SELL" 상태 — 이 상태의 SELL이 있으면 재제안하지 않는다. */
     private static final List<KiwoomTradeProposal.Status> OPEN_SELL_STATUSES =
             List.of(
@@ -164,7 +165,8 @@ public class KiwoomRiskManagerService {
             log.warn("[자동매매][일일 손실 한도 해제] {}", detail);
             audit.log("DAILY_LOSS_RESET", null, detail);
             events.publishEvent("strategy", "일일 손실 한도 차단을 해제했습니다 — " + detail);
-            return new DailyLossResetResult(reset.baseAsset(), accountAsset.source(), reset.lastCheckedAt());
+            return new DailyLossResetResult(
+                    reset.baseAsset(), accountAsset.source(), reset.lastCheckedAt());
         } finally {
             state.finishDecision();
         }
@@ -176,15 +178,10 @@ public class KiwoomRiskManagerService {
 
     private String dailyLossTriggerDetail(
             KiwoomAutoTradeState.DailyLossStatus loss, long limitAmount, String assetSource) {
-        if (loss == null)
-            return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
+        if (loss == null) return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
         return String.format(
                 "기준자산=%,d원, 현재자산=%,d원, 손실=%,d원, 한도=%,d원, 자산 계산=%s",
-                loss.baseAsset(),
-                loss.lastAsset(),
-                loss.drawdown(),
-                limitAmount,
-                assetSource);
+                loss.baseAsset(), loss.lastAsset(), loss.drawdown(), limitAmount, assetSource);
     }
 
     private KiwoomStrategyRun newRiskRun(String by) {
@@ -326,5 +323,6 @@ public class KiwoomRiskManagerService {
             boolean dailyLossTriggered,
             String message) {}
 
-    public record DailyLossResetResult(long newBaseAsset, String assetSource, LocalDateTime resetAt) {}
+    public record DailyLossResetResult(
+            long newBaseAsset, String assetSource, LocalDateTime resetAt) {}
 }

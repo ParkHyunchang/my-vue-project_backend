@@ -67,10 +67,7 @@ public class ShortSwingCandidateService {
     }
 
     public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(
-            int limit,
-            double minChangePercent,
-            double minVolumeRatio,
-            double maxChangePercent) {
+            int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
         if (limit <= 0) return List.of();
         CandidateFilter filter =
                 new CandidateFilter(minChangePercent, minVolumeRatio, maxChangePercent);

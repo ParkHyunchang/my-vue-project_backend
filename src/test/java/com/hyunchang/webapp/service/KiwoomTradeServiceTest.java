@@ -45,7 +45,9 @@ class KiwoomTradeServiceTest {
     @Test
     void usesEstimatedDepositAssetBeforeOrderableAmountForDailyLossCheck() throws Exception {
         var deposit = json.readTree("{\"entr\":\"1,000,000\",\"ord_alow_amt\":\"100,000\"}");
-        var balance = json.readTree("{\"prsm_dpst_aset_amt\":\"1,250,000\",\"tot_evlt_amt\":\"250,000\"}");
+        var balance =
+                json.readTree(
+                        "{\"prsm_dpst_aset_amt\":\"1,250,000\",\"tot_evlt_amt\":\"250,000\"}");
 
         KiwoomTradeService.AccountAsset asset = tradeService().accountAsset(deposit, balance);
 

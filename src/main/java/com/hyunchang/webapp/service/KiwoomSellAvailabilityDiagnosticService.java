@@ -13,7 +13,8 @@ import org.springframework.stereotype.Service;
 /** Logs a compact, non-sensitive diagnostic only when sellable quantity becomes inconsistent. */
 @Service
 public class KiwoomSellAvailabilityDiagnosticService {
-    private static final Logger log = LoggerFactory.getLogger(KiwoomSellAvailabilityDiagnosticService.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(KiwoomSellAvailabilityDiagnosticService.class);
     private final KiwoomTradeService trade;
     private final Map<String, String> lastLoggedState = new ConcurrentHashMap<>();
 
@@ -22,23 +23,22 @@ public class KiwoomSellAvailabilityDiagnosticService {
     }
 
     /**
-     * A repeated one-minute risk scan must not create repeated logs or order-inquiry calls.
-     * The same stock is inspected again only after one of the diagnostic balance fields changes.
+     * A repeated one-minute risk scan must not create repeated logs or order-inquiry calls. The
+     * same stock is inspected again only after one of the diagnostic balance fields changes.
      */
     public void logChangedRestrictions(JsonNode balance, String source) {
         List<KiwoomTradeService.SellAvailability> restricted =
                 trade.sellAvailabilityDiagnostics(balance);
         List<KiwoomTradeService.SellAvailability> changed =
-                restricted.stream()
-                        .filter(holding -> stateChanged(holding))
-                        .toList();
+                restricted.stream().filter(holding -> stateChanged(holding)).toList();
         if (changed.isEmpty()) return;
 
         List<JsonNode> unfilledSellOrders = new ArrayList<>();
         String orderInquiryError = null;
         try {
             collectOrderRows(
-                    trade.getUnfilledSellOrders().block(Duration.ofSeconds(10)), unfilledSellOrders);
+                    trade.getUnfilledSellOrders().block(Duration.ofSeconds(10)),
+                    unfilledSellOrders);
         } catch (Exception e) {
             orderInquiryError = trim(e.getMessage());
         }
@@ -109,8 +109,7 @@ public class KiwoomSellAvailabilityDiagnosticService {
     }
 
     private String text(JsonNode node, String... fields) {
-        for (String field : fields)
-            if (node.hasNonNull(field)) return node.path(field).asText("");
+        for (String field : fields) if (node.hasNonNull(field)) return node.path(field).asText("");
         return "";
     }
 

@@ -82,8 +82,8 @@ public class KiwoomTradeService {
     }
 
     /**
-     * 현금(일반) 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다.
-     * 신용 매수/매도 TR(kt10006/kt10007)은 이 자동매매 서비스에서 절대 사용하지 않습니다.
+     * 현금(일반) 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다. 신용 매수/매도 TR(kt10006/kt10007)은 이 자동매매 서비스에서 절대 사용하지
+     * 않습니다.
      */
     public Mono<JsonNode> placeOrder(OrderRequest order) {
         if (!properties.isTradeEnabled()) {
@@ -204,10 +204,7 @@ public class KiwoomTradeService {
         return "키움 잔고에 해당 종목 없음";
     }
 
-    /**
-     * 보유수량과 매도가능수량이 다른 경우에만 로그에 남길 원본 잔고 필드다.
-     * 계좌번호나 전체 잔고 응답은 포함하지 않는다.
-     */
+    /** 보유수량과 매도가능수량이 다른 경우에만 로그에 남길 원본 잔고 필드다. 계좌번호나 전체 잔고 응답은 포함하지 않는다. */
     public List<SellAvailability> sellAvailabilityDiagnostics(JsonNode balance) {
         List<SellAvailability> result = new ArrayList<>();
         if (balance == null) return result;
@@ -219,8 +216,7 @@ public class KiwoomTradeService {
             if (!code.matches("\\d{6}")) continue;
             int quantity = (int) number(item, "rmnd_qty", "qty");
             boolean sellableFieldPresent = item.hasNonNull("trde_able_qty");
-            String sellableRaw =
-                    sellableFieldPresent ? item.path("trde_able_qty").asText("") : "";
+            String sellableRaw = sellableFieldPresent ? item.path("trde_able_qty").asText("") : "";
             int sellable = (int) number(item, "trde_able_qty");
             if (quantity <= 0 || sellable >= quantity) continue;
             String creditTypeNameRaw = rawText(item, "crd_tp_nm");
@@ -267,10 +263,8 @@ public class KiwoomTradeService {
     /**
      * 일일 손실 한도용 계좌 총자산을 계산한다.
      *
-     * <p>kt00018의 {@code prsm_dpst_aset_amt}(추정예탁자산)는 예수금, 보유 평가금액과
-     * 정산 중인 금액을 포함한 계좌 기준 값이므로 최우선으로 사용한다. {@code ord_alow_amt}는
-     * 주문 가능 금액일 뿐이라 주문·체결 직후 총자산으로 사용하면 실제 손실이 아닌 변동을
-     * 손실로 오인할 수 있다.
+     * <p>kt00018의 {@code prsm_dpst_aset_amt}(추정예탁자산)는 예수금, 보유 평가금액과 정산 중인 금액을 포함한 계좌 기준 값이므로 최우선으로
+     * 사용한다. {@code ord_alow_amt}는 주문 가능 금액일 뿐이라 주문·체결 직후 총자산으로 사용하면 실제 손실이 아닌 변동을 손실로 오인할 수 있다.
      */
     public AccountAsset accountAsset(JsonNode deposit, JsonNode balance) {
         OptionalLong estimatedAsset = parsedNumber(balance, "prsm_dpst_aset_amt");
