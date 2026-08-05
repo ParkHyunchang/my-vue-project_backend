@@ -6,13 +6,17 @@ import com.hyunchang.webapp.repository.KiwoomStrategySettingsRepository;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
 import jakarta.annotation.PostConstruct;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class KiwoomStrategySettingsService {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomStrategySettingsService.class);
     private static final int DEFAULT_CANDIDATE_REEVALUATION_MINUTES = 60;
     private static final double DEFAULT_SWING_MIN_CHANGE_PERCENT = 2.0;
+    private static final double DEFAULT_SWING_MAX_CHANGE_PERCENT = 8.0;
     private static final double DEFAULT_SWING_MIN_VOLUME_RATIO = 2.0;
     private final KiwoomStrategySettingsRepository repo;
     private final KiwoomProperties props;
@@ -42,6 +46,14 @@ public class KiwoomStrategySettingsService {
                 existing.setSwingMinChangePercent(DEFAULT_SWING_MIN_CHANGE_PERCENT);
                 changed = true;
             }
+            if (existing.getSwingMaxChangePercent() <= 0) {
+                existing.setSwingMaxChangePercent(DEFAULT_SWING_MAX_CHANGE_PERCENT);
+                changed = true;
+            }
+            if (existing.getSwingMaxChangePercent() < existing.getSwingMinChangePercent()) {
+                existing.setSwingMaxChangePercent(existing.getSwingMinChangePercent());
+                changed = true;
+            }
             if (existing.getSwingMinVolumeRatio() <= 0) {
                 existing.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
                 changed = true;
@@ -56,6 +68,7 @@ public class KiwoomStrategySettingsService {
         s.setMaxBuyDepositPercent(p.getMaxBuyDepositPercent());
         s.setCandidateReevaluationMinutes(DEFAULT_CANDIDATE_REEVALUATION_MINUTES);
         s.setSwingMinChangePercent(DEFAULT_SWING_MIN_CHANGE_PERCENT);
+        s.setSwingMaxChangePercent(DEFAULT_SWING_MAX_CHANGE_PERCENT);
         s.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
         s.setSwingStopLossPercent(p.getSwingStopLossPercent());
         s.setSwingTakeProfitPercent(p.getSwingTakeProfitPercent());
@@ -84,11 +97,16 @@ public class KiwoomStrategySettingsService {
     @Transactional
     public KiwoomStrategySettings save(Update u, String user) {
         KiwoomStrategySettings s = current();
+        String before = tradingRulesSummary(s);
         s.setAutoExecute(u.autoExecute);
         s.setAutoExecuteMinConfidence(clamp(u.autoExecuteMinConfidence, 0, 100));
         s.setMaxBuyDepositPercent(clamp(u.maxBuyDepositPercent, 0, 100));
         s.setCandidateReevaluationMinutes(clamp(u.candidateReevaluationMinutes, 15, 240));
         s.setSwingMinChangePercent(clamp(u.swingMinChangePercent, 0.5, 15));
+        s.setSwingMaxChangePercent(
+                Math.max(
+                        s.getSwingMinChangePercent(),
+                        clamp(u.swingMaxChangePercent, 0.5, 30)));
         s.setSwingMinVolumeRatio(clamp(u.swingMinVolumeRatio, 1, 20));
         s.setSwingStopLossPercent(clamp(u.swingStopLossPercent, 0, 100));
         s.setSwingTakeProfitPercent(clamp(u.swingTakeProfitPercent, 0, 100));
@@ -97,7 +115,37 @@ public class KiwoomStrategySettingsService {
         s.setDailyLossLimitAmount(Math.max(0, u.dailyLossLimitAmount));
         s.setDailyMaxProposals(clamp(u.dailyMaxProposals, 1, 200));
         prompts.saveOverride(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, u.prompt, user);
-        return repo.save(s);
+        KiwoomStrategySettings saved = repo.save(s);
+        String after = tradingRulesSummary(saved);
+        if (!before.equals(after))
+            log.info("[자동매매][설정 변경] 사용자={}, 변경 전=[{}], 변경 후=[{}]", user, before, after);
+        return saved;
+    }
+
+    private String tradingRulesSummary(KiwoomStrategySettings s) {
+        return "자동 주문="
+                + (s.isAutoExecute() ? "사용" : "중지")
+                + ", AI 신뢰도="
+                + s.getAutoExecuteMinConfidence()
+                + "% 이상, 1회 매수="
+                + s.getMaxBuyDepositPercent()
+                + "% 이내, 재검토="
+                + s.getCandidateReevaluationMinutes()
+                + "분, 상승률=+"
+                + s.getSwingMinChangePercent()
+                + "%~+"
+                + s.getSwingMaxChangePercent()
+                + "%, 거래량="
+                + s.getSwingMinVolumeRatio()
+                + "배 이상, 손절/익절=-"
+                + s.getSwingStopLossPercent()
+                + "%/+"
+                + s.getSwingTakeProfitPercent()
+                + "%, 보유="
+                + s.getSwingMaxHoldingDays()
+                + "거래일, 일일 제안 한도="
+                + s.getDailyMaxProposals()
+                + "건";
     }
 
     private int clamp(int v, int min, int max) {
@@ -114,6 +162,7 @@ public class KiwoomStrategySettingsService {
             double maxBuyDepositPercent,
             int candidateReevaluationMinutes,
             double swingMinChangePercent,
+            double swingMaxChangePercent,
             double swingMinVolumeRatio,
             double swingStopLossPercent,
             double swingTakeProfitPercent,

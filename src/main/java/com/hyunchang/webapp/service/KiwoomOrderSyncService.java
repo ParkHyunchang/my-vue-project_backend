@@ -8,6 +8,8 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -16,6 +18,7 @@ import org.springframework.stereotype.Service;
 /** Reconciles submitted domestic-stock orders with Kiwoom's unfilled/filled order inquiries. */
 @Service
 public class KiwoomOrderSyncService {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomOrderSyncService.class);
     private final KiwoomTradeService trade;
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomStrategyAuditService audit;
@@ -124,9 +127,37 @@ public class KiwoomOrderSyncService {
                                         "ORDER_STATUS_SYNC",
                                         proposal.getId(),
                                         "키움 주문 상태가 " + proposal.getStatus() + "로 변경되었습니다.");
+                            if (changed)
+                                log.info(
+                                        "[자동매매][{}] {} {}({}), 체결 {}/{}주, 평균 체결가={}원, 주문번호={}, 주문 근거={}",
+                                        statusLabel(proposal.getStatus()),
+                                        actionLabel(proposal.getAction()),
+                                        proposal.getStockName(),
+                                        proposal.getStockCode(),
+                                        proposal.getFilledQuantity(),
+                                        proposal.getQuantity(),
+                                        proposal.getAverageFillPrice() == null
+                                                ? "미확인"
+                                                : String.format("%,d", proposal.getAverageFillPrice()),
+                                        orderNo,
+                                        proposal.getReason());
                             return changed;
                         })
                 .orElse(false);
+    }
+
+    private String actionLabel(KiwoomTradeProposal.Action action) {
+        return action == KiwoomTradeProposal.Action.BUY ? "매수" : "매도";
+    }
+
+    private String statusLabel(KiwoomTradeProposal.Status status) {
+        return switch (status) {
+            case FILLED -> "전량 체결";
+            case PARTIALLY_FILLED -> "일부 체결";
+            case CANCELED -> "주문 취소";
+            case ORDERED -> "주문 접수";
+            default -> "주문 상태 변경";
+        };
     }
 
     private boolean hasPendingOrders() {

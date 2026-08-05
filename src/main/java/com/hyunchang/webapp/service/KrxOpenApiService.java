@@ -49,6 +49,7 @@ public class KrxOpenApiService {
     private static final int SWING_LOOKBACK_DAYS = 20;
     private static final int SWING_HISTORY_FETCH_DAYS = 35;
     private static final double DEFAULT_SWING_MIN_CHANGE_PCT = 2.0;
+    private static final double DEFAULT_SWING_MAX_CHANGE_PCT = 8.0;
     private static final double DEFAULT_SWING_MIN_VOLUME_RATIO = 2.0;
     // 콜드 캐시 시 일자별 히스토리 수집 동시 실행 수 — 다른 외부 API 병렬 풀(NEWS_POOL 등)과
     // 동일하게 8로 맞춰 KRX 쪽 부하를 과하게 늘리지 않는다.
@@ -127,15 +128,28 @@ public class KrxOpenApiService {
      */
     public List<KrSwingCandidate> getShortSwingCandidates(int limit) {
         return getShortSwingCandidates(
-                limit, DEFAULT_SWING_MIN_CHANGE_PCT, DEFAULT_SWING_MIN_VOLUME_RATIO);
+                limit,
+                DEFAULT_SWING_MIN_CHANGE_PCT,
+                DEFAULT_SWING_MIN_VOLUME_RATIO,
+                DEFAULT_SWING_MAX_CHANGE_PCT);
     }
 
     /** Applies the administrator-selected momentum thresholds to the cached broad KRX screen. */
     public List<KrSwingCandidate> getShortSwingCandidates(
             int limit, double minChangePercent, double minVolumeRatio) {
+        return getShortSwingCandidates(
+                limit, minChangePercent, minVolumeRatio, DEFAULT_SWING_MAX_CHANGE_PCT);
+    }
+
+    /** Applies the administrator-selected lower and upper momentum thresholds to the cached screen. */
+    public List<KrSwingCandidate> getShortSwingCandidates(
+            int limit,
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxChangePercent) {
         if (limit <= 0 || !hasApiKey()) return List.of();
         if (!isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
-            return filterSwingCandidates(limit, minChangePercent, minVolumeRatio);
+            return filterSwingCandidates(limit, minChangePercent, minVolumeRatio, maxChangePercent);
         }
 
         synchronized (swingScreenLock) {
@@ -144,13 +158,17 @@ public class KrxOpenApiService {
                 swingCandidatesCacheTime = System.currentTimeMillis();
             }
         }
-        return filterSwingCandidates(limit, minChangePercent, minVolumeRatio);
+        return filterSwingCandidates(limit, minChangePercent, minVolumeRatio, maxChangePercent);
     }
 
     private List<KrSwingCandidate> filterSwingCandidates(
-            int limit, double minChangePercent, double minVolumeRatio) {
+            int limit,
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxChangePercent) {
         return swingCandidatesCache.stream()
                 .filter(candidate -> candidate.changePercent() >= minChangePercent)
+                .filter(candidate -> candidate.changePercent() <= maxChangePercent)
                 .filter(candidate -> candidate.volumeRatio() >= minVolumeRatio)
                 .limit(limit)
                 .toList();

@@ -320,9 +320,8 @@ public class KiwoomTradeService {
                                             ? entry.getKey() + "[" + value.size() + "]"
                                             : entry.getKey());
                         });
-        log.warn(
-                "Kiwoom balance has no usable holdings: returnCode={}, returnMessage={}, fields={}",
-                balance.path("return_code").asText(),
+        log.info(
+                "[자동매매][잔고 조회] 보유 종목 없음 — 키움 응답={}, 응답 필드={}",
                 balance.path("return_msg").asText(),
                 fields);
     }

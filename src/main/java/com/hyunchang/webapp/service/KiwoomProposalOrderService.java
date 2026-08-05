@@ -10,12 +10,15 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.Iterator;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /** Broker submission is protected by both the approval state machine and pre-flight checks. */
 @Service
 public class KiwoomProposalOrderService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    private static final Logger log = LoggerFactory.getLogger(KiwoomProposalOrderService.class);
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomTradeService trade;
     private final KiwoomProperties props;
@@ -127,6 +130,15 @@ public class KiwoomProposalOrderService {
                     p.getId(),
                     "키움 주문 전송 요청을 완료했습니다. 주문번호=" + (orderNo == null ? "미확인" : orderNo));
             events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode());
+            log.info(
+                    "[자동매매][주문 전송] {} {}({}), {}주, 지정가={}원, 주문번호={}, 주문 근거={}",
+                    actionLabel(p.getAction()),
+                    p.getStockName(),
+                    p.getStockCode(),
+                    p.getQuantity(),
+                    p.getLimitPrice(),
+                    orderNo,
+                    orderConditionSummary(p));
             return ok(p, "주문 전송 요청이 완료되었습니다.");
         } catch (Exception e) {
             String failure = trim(e.getMessage());
@@ -136,8 +148,36 @@ public class KiwoomProposalOrderService {
             proposals.save(p);
             audit.log("ORDER_FAILED", p.getId(), failure);
             events.publishEvent("error", "주문 전송 실패: " + failure);
+            log.warn(
+                    "[자동매매][주문 전송 실패] {} {}({}), 사유={}",
+                    actionLabel(p.getAction()),
+                    p.getStockName(),
+                    p.getStockCode(),
+                    failure);
             return fail("주문 전송 실패: " + failure);
         }
+    }
+
+    private String actionLabel(KiwoomTradeProposal.Action action) {
+        return action == KiwoomTradeProposal.Action.BUY ? "매수" : "매도";
+    }
+
+    private String orderConditionSummary(KiwoomTradeProposal proposal) {
+        if (proposal.getAction() == KiwoomTradeProposal.Action.SELL)
+            return "청산 사유=" + trim(proposal.getReason());
+        var s = settings.current();
+        return "AI 신뢰도 "
+                + proposal.getConfidence()
+                + "% (자동 기준 "
+                + s.getAutoExecuteMinConfidence()
+                + "% 이상), 후보 조건=상승률 +"
+                + s.getSwingMinChangePercent()
+                + "%~+"
+                + s.getSwingMaxChangePercent()
+                + "%, 거래량 "
+                + s.getSwingMinVolumeRatio()
+                + "배 이상, AI 판단="
+                + trim(proposal.getReason());
     }
 
     private String sellAvailabilityDiagnostic(String stockCode) {

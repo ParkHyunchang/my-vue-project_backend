@@ -23,6 +23,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -34,6 +36,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class KiwoomStrategyService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    private static final Logger log = LoggerFactory.getLogger(KiwoomStrategyService.class);
 
     /** 압축 프롬프트에서 보유·매매후보·스윙 목록에 남기는 최대 줄 수 (Groq 8000자 한도 대응) */
     private static final int COMPACT_MAX_LINES = 10;
@@ -116,7 +119,7 @@ public class KiwoomStrategyService {
         try {
             events.publishEvent("strategy", "AI 전략 판단을 시작합니다.");
             if ("SCHEDULE".equals(by) && dailyProposalLimitReached()) {
-                return skipped(run, "Daily proposal/order limit reached; AI call skipped.");
+                return skipped(run, "오늘의 매수·매도 제안 한도에 도달해 AI 검토를 건너뜁니다.");
             }
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
@@ -174,13 +177,20 @@ public class KiwoomStrategyService {
             String swing = swingSignals(swingCandidates, universe.keySet());
             String guardRules = guardRules(deposit);
             String candidateSignature = candidateSignature(catalystCandidates);
+            log.info(
+                    "[자동매매][후보 검토] 실행={}, 조건=[{}], 보유={}종목, 매수 후보={}종목, 후보 목록={}",
+                    "SCHEDULE".equals(by) ? "자동" : "수동",
+                    reviewConditions(),
+                    holdings.size(),
+                    candidateLines.size(),
+                    candidateSummary(catalystCandidates));
             if ("SCHEDULE".equals(by)
                     && candidateSignature.equals(lastCandidateSignature)
                     && !holdingExitTriggered(holdings)
                     && !candidateReevaluationDue()) {
                 return skipped(
                         run,
-                        "No candidate change or holding stop-loss/take-profit signal; AI call skipped.");
+                        "후보 변동이 없고 보유 종목의 손절·익절 신호도 없어 AI 검토를 건너뜁니다.");
             }
 
             String prompt =
@@ -245,6 +255,14 @@ public class KiwoomStrategyService {
                         "CANDIDATE_SELECTED",
                         p.getId(),
                         p.getAction() + " " + p.getStockCode() + " — " + p.getReason());
+                log.info(
+                        "[자동매매][AI 판단] {} {}({}), {}주, 신뢰도={}%, 사유={}",
+                        actionLabel(p.getAction()),
+                        p.getStockName(),
+                        p.getStockCode(),
+                        p.getQuantity(),
+                        p.getConfidence(),
+                        trim(p.getReason()));
                 saved++;
                 // 자동 주문 전송이 켜져 있으면 실행 주체와 무관하게 동일한 안전 검사를 거쳐 전송한다.
                 // 화면의 수동 판단 기능을 없앤 뒤에도, 기존에 직접 실행된 판단이
@@ -255,6 +273,7 @@ public class KiwoomStrategyService {
             lastCandidateSignature = candidateSignature;
             lastCandidateDecisionAt = LocalDateTime.now(KST);
             events.publishEvent("strategy", "AI 전략 제안 " + saved + "건을 생성했습니다.");
+            log.info("[자동매매][후보 검토 완료] AI 제안={}건, 매수 후보={}종목", saved, candidateLines.size());
             return new DecisionResult(run.getId(), run.getStatus().name(), saved);
         } catch (Exception e) {
             run.setStatus(KiwoomStrategyRun.Status.FAILED);
@@ -272,7 +291,13 @@ public class KiwoomStrategyService {
                 proposals.countByActionInAndCreatedAtGreaterThanEqual(
                         List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
                         LocalDateTime.now(KST).toLocalDate().atStartOfDay());
-        return today >= settings.current().getDailyMaxProposals();
+        long limit = settings.current().getDailyMaxProposals();
+        if (today < limit) return false;
+        log.info(
+                "[자동매매][일일 제안 한도 도달] 오늘 생성된 매수·매도 제안={}건, 설정 한도={}건 — 신규 AI 검토를 건너뜁니다.",
+                today,
+                limit);
+        return true;
     }
 
     private boolean holdingExitTriggered(List<KiwoomTradeService.Holding> holdings) {
@@ -313,7 +338,51 @@ public class KiwoomStrategyService {
         run.setErrorMessage(reason);
         runs.save(run);
         events.publishEvent("strategy", reason);
+        log.info("[자동매매][후보 검토 건너뜀] 조건=[{}], 사유={}", reviewConditions(), reason);
         return new DecisionResult(run.getId(), run.getStatus().name(), 0);
+    }
+
+    private String reviewConditions() {
+        var s = settings.current();
+        return "상승률 +"
+                + s.getSwingMinChangePercent()
+                + "%~+"
+                + s.getSwingMaxChangePercent()
+                + "%, 거래량 "
+                + s.getSwingMinVolumeRatio()
+                + "배 이상, 재검토 "
+                + s.getCandidateReevaluationMinutes()
+                + "분, 자동 주문 신뢰도 "
+                + s.getAutoExecuteMinConfidence()
+                + "% 이상";
+    }
+
+    private String candidateSummary(
+            List<ShortSwingCandidateService.KrCandidateCatalyst> candidates) {
+        if (candidates.isEmpty()) return "없음";
+        return candidates.stream()
+                .limit(10)
+                .map(
+                        cc -> {
+                            KrxOpenApiService.KrSwingCandidate c = cc.candidate();
+                            return c.name()
+                                    + "("
+                                    + c.bareCode()
+                                    + ", "
+                                    + String.format("%+.1f%%", c.changePercent())
+                                    + ", 거래량 "
+                                    + String.format("%.1f배", c.volumeRatio())
+                                    + ")";
+                        })
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    private String actionLabel(KiwoomTradeProposal.Action action) {
+        return switch (action) {
+            case BUY -> "매수";
+            case SELL -> "매도";
+            case HOLD -> "보유";
+        };
     }
 
     private int estimateTokens(String text) {
@@ -330,6 +399,12 @@ public class KiwoomStrategyService {
             events.publishEvent(
                     "strategy",
                     "자동 전송 건너뜀: " + proposal.getStockCode() + " (" + result.message() + ")");
+            log.info(
+                    "[자동매매][자동 주문 건너뜀] {} {}({}), 사유={}",
+                    actionLabel(proposal.getAction()),
+                    proposal.getStockName(),
+                    proposal.getStockCode(),
+                    result.message());
         }
     }
 
@@ -359,12 +434,15 @@ public class KiwoomStrategyService {
     private List<ShortSwingCandidateService.KrCandidateCatalyst> fetchCatalystCandidates() {
         try {
             var s = settings.current();
-            if (s.getSwingMinChangePercent() == 2.0 && s.getSwingMinVolumeRatio() == 2.0)
+            if (s.getSwingMinChangePercent() == 2.0
+                    && s.getSwingMaxChangePercent() == 8.0
+                    && s.getSwingMinVolumeRatio() == 2.0)
                 return catalystService.getKrCandidatesWithCatalysts(SWING_CANDIDATE_LIMIT);
             return catalystService.getKrCandidatesWithCatalysts(
                     SWING_CANDIDATE_LIMIT,
                     s.getSwingMinChangePercent(),
-                    s.getSwingMinVolumeRatio());
+                    s.getSwingMinVolumeRatio(),
+                    s.getSwingMaxChangePercent());
         } catch (Exception e) {
             return List.of();
         }
@@ -533,9 +611,48 @@ public class KiwoomStrategyService {
                 + "\n\n[현재 적용 중 후보 기준 — 프롬프트 안의 고정 수치보다 우선]\n"
                 + "신규 BUY는 당일 상승률 +"
                 + s.getSwingMinChangePercent()
-                + "% 이상이고 20일 평균 대비 거래량 "
+                + "% 이상 +"
+                + s.getSwingMaxChangePercent()
+                + "% 이하이고 20일 평균 대비 거래량 "
                 + s.getSwingMinVolumeRatio()
-                + "배 이상인 후보 안에서만 판단하세요. 이보다 낮으면 HOLD를 선택하세요.";
+                + "배 이상인 후보 안에서만 판단하세요. 이보다 낮으면 HOLD를 선택하세요."
+                + runtimeTradingRules(s, deposit);
+    }
+
+    /**
+     * The settings modal is the source of truth for numerical strategy rules. This block is appended
+     * after an editable instruction so a stale custom prompt cannot silently override live settings.
+     */
+    private String runtimeTradingRules(
+            com.hyunchang.webapp.entity.KiwoomStrategySettings s, long deposit) {
+        long buyBudget = Math.round(deposit * s.getMaxBuyDepositPercent() / 100.0);
+        return "\n\n[현재 적용 중인 매매 규칙 — 이 블록이 모든 지침의 고정 수치보다 우선]\n"
+                + "아래 수치는 ‘매매 규칙 설정’ 팝업에서 저장한 실제 적용값입니다. 위 지침에 다른 숫자(예: 거래량 2배, 상승률 +2%, 상승률 상한 +8%)가 있어도 그 숫자를 추가 조건으로 적용하지 마세요.\n"
+                + "- 신규 BUY 후보: 당일 상승률 +"
+                + s.getSwingMinChangePercent()
+                + "% 이상 +"
+                + s.getSwingMaxChangePercent()
+                + "% 이하, 20일 평균 대비 거래량 "
+                + s.getSwingMinVolumeRatio()
+                + "배 이상인 후보 목록 안에서만 판단\n"
+                + "- 위 상승률 범위를 벗어난 종목은 급등 추격 여부와 관계없이 신규 BUY 후보에서 제외\n"
+                + "- 공시·뉴스 촉매는 신뢰도를 높이는 근거이지 후보 제외의 필수 조건은 아님. 근거가 약하면 HOLD를 우선\n"
+                + "- 자동 주문 신뢰도 기준: "
+                + s.getAutoExecuteMinConfidence()
+                + "% 이상\n"
+                + "- 1회 매수 한도: 예수금의 "
+                + s.getMaxBuyDepositPercent()
+                + "% 이내 (현재 "
+                + String.format("%,d", buyBudget)
+                + "원)\n"
+                + "- 손절/익절/최대 보유기간: -"
+                + s.getSwingStopLossPercent()
+                + "% / +"
+                + s.getSwingTakeProfitPercent()
+                + "% / "
+                + s.getSwingMaxHoldingDays()
+                + "거래일\n"
+                + "이 규칙과 서버 검증을 통과한 제안만 실제 주문 전송 대상이 됩니다.";
     }
 
     /** AI가 서버 강제 한도 안에서 수량을 제안하도록 규칙을 프롬프트에 명시한다. */

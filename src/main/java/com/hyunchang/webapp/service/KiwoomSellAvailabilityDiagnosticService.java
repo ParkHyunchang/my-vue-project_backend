@@ -47,23 +47,16 @@ public class KiwoomSellAvailabilityDiagnosticService {
             int unfilledQuantity = unfilledSellQuantity(unfilledSellOrders, holding.stockCode());
             String diagnosis = diagnosis(holding, unfilledQuantity, orderInquiryError);
             log.warn(
-                    "[SELL_AVAILABILITY] source={} stock={}({}) rmnd_qty={} trde_able_qty={} trde_able_qty_present={} trde_able_qty_raw={} tdy_buyq={} tdy_sellq={} crd_tp_nm_raw={} crd_tp_raw={} crd_loan_dt_raw={} crd_tp_present={} unfilled_sell_qty={} diagnosis={} holding_response_fields={}",
+                    "[자동매매][매도 가능 수량 확인] 확인 시점={}, 종목={}({}), 보유={}주, 매도 가능={}주, 오늘 매수={}주, 오늘 매도={}주, 미체결 매도={}주, 판정={}",
                     source,
                     holding.stockName(),
                     holding.stockCode(),
                     holding.remainingQuantity(),
                     holding.sellableQuantity(),
-                    holding.sellableFieldPresent(),
-                    blankAsUnknown(holding.sellableRaw()),
                     holding.todayBuyQuantity(),
                     holding.todaySellQuantity(),
-                    blankAsUnknown(holding.creditTypeNameRaw()),
-                    blankAsUnknown(holding.creditTypeCodeRaw()),
-                    blankAsUnknown(holding.creditLoanDateRaw()),
-                    holding.creditTypeFieldPresent(),
-                    orderInquiryError == null ? unfilledQuantity : "unknown",
-                    diagnosis,
-                    holding.responseFields());
+                    orderInquiryError == null ? unfilledQuantity : "확인 불가",
+                    diagnosis);
         }
     }
 
@@ -89,12 +82,12 @@ public class KiwoomSellAvailabilityDiagnosticService {
             KiwoomTradeService.SellAvailability holding,
             int unfilledQuantity,
             String orderInquiryError) {
-        if (orderInquiryError != null) return "UNFILLED_SELL_INQUIRY_FAILED";
-        if (!holding.sellableFieldPresent()) return "SELLABLE_QUANTITY_FIELD_MISSING";
-        if (!isNumber(holding.sellableRaw())) return "SELLABLE_QUANTITY_FIELD_NOT_NUMERIC";
-        if (unfilledQuantity > 0) return "UNFILLED_SELL_ORDER_RESERVES_QUANTITY";
-        if (isNonCashCredit(holding.creditType())) return "NO_UNFILLED_SELL_ORDER_CHECK_CREDIT_TYPE";
-        return "NO_UNFILLED_SELL_ORDER_BROKER_SELLABLE_QUANTITY_IS_ZERO";
+        if (orderInquiryError != null) return "미체결 매도 주문 조회 실패";
+        if (!holding.sellableFieldPresent()) return "키움 응답에 매도 가능 수량 항목이 없음";
+        if (!isNumber(holding.sellableRaw())) return "키움 응답의 매도 가능 수량 형식이 올바르지 않음";
+        if (unfilledQuantity > 0) return "미체결 매도 주문이 수량을 점유 중";
+        if (isNonCashCredit(holding.creditType())) return "신용·대출 구분 종목이라 매도 가능 수량 재확인 필요";
+        return "키움의 매도 가능 수량이 0주";
     }
 
     private int unfilledSellQuantity(List<JsonNode> rows, String stockCode) {

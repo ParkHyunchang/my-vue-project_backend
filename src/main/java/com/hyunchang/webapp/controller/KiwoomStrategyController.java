@@ -160,6 +160,7 @@ public class KiwoomStrategyController {
         result.put("maxBuyDepositPercent", s.getMaxBuyDepositPercent());
         result.put("candidateReevaluationMinutes", s.getCandidateReevaluationMinutes());
         result.put("swingMinChangePercent", s.getSwingMinChangePercent());
+        result.put("swingMaxChangePercent", s.getSwingMaxChangePercent());
         result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
@@ -186,6 +187,7 @@ public class KiwoomStrategyController {
                                 request.maxBuyDepositPercent(),
                                 request.candidateReevaluationMinutes(),
                                 request.swingMinChangePercent(),
+                                request.swingMaxChangePercent(),
                                 request.swingMinVolumeRatio(),
                                 request.swingStopLossPercent(),
                                 request.swingTakeProfitPercent(),
@@ -215,6 +217,7 @@ public class KiwoomStrategyController {
         result.put("maxBuyDepositPercent", s.getMaxBuyDepositPercent());
         result.put("candidateReevaluationMinutes", s.getCandidateReevaluationMinutes());
         result.put("swingMinChangePercent", s.getSwingMinChangePercent());
+        result.put("swingMaxChangePercent", s.getSwingMaxChangePercent());
         result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
@@ -329,6 +332,7 @@ public class KiwoomStrategyController {
             double maxBuyDepositPercent,
             int candidateReevaluationMinutes,
             double swingMinChangePercent,
+            double swingMaxChangePercent,
             double swingMinVolumeRatio,
             double swingStopLossPercent,
             double swingTakeProfitPercent,

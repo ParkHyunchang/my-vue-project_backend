@@ -58,13 +58,22 @@ public class ShortSwingCandidateService {
     }
 
     public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(int limit) {
-        return getKrCandidatesWithCatalysts(limit, 2.0, 2.0);
+        return getKrCandidatesWithCatalysts(limit, 2.0, 2.0, 8.0);
     }
 
     public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(
             int limit, double minChangePercent, double minVolumeRatio) {
+        return getKrCandidatesWithCatalysts(limit, minChangePercent, minVolumeRatio, 8.0);
+    }
+
+    public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(
+            int limit,
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxChangePercent) {
         if (limit <= 0) return List.of();
-        CandidateFilter filter = new CandidateFilter(minChangePercent, minVolumeRatio);
+        CandidateFilter filter =
+                new CandidateFilter(minChangePercent, minVolumeRatio, maxChangePercent);
         if (isFresh() && filter.equals(cacheFilter)) return cache.stream().limit(limit).toList();
 
         synchronized (krLock) {
@@ -82,7 +91,8 @@ public class ShortSwingCandidateService {
                 krxOpenApiService.getShortSwingCandidates(
                         MAX_SCREENED_CANDIDATES,
                         filter.minChangePercent(),
-                        filter.minVolumeRatio());
+                        filter.minVolumeRatio(),
+                        filter.maxChangePercent());
         List<CompletableFuture<KrCandidateCatalyst>> futures = new ArrayList<>();
         for (KrxOpenApiService.KrSwingCandidate candidate : screened) {
             futures.add(
@@ -263,7 +273,8 @@ public class ShortSwingCandidateService {
         }
     }
 
-    private record CandidateFilter(double minChangePercent, double minVolumeRatio) {}
+    private record CandidateFilter(
+            double minChangePercent, double minVolumeRatio, double maxChangePercent) {}
 
     public record UsCandidateSignal(
             YahooFinanceService.RawQuote candidate,
