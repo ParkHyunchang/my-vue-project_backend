@@ -26,8 +26,7 @@ services:
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/parkhyunchang/my-vue-project_backend:latest}
     container_name: vue_personal_project-backend
-    ports:
-      - "3200:3200"
+    # 외부 포트는 열지 않는다. 프론트 컨테이너만 app-internal 네트워크를 통해 접근한다.
     # .env 전체를 컨테이너 환경변수로 주입 → 새 키 추가 시 compose 수정 없이 .env만 갱신하면 됨.
     # (아래 environment 의 항목은 값 조합/기본값이 필요한 것들이며, 동일 키는 environment 가 우선한다)
     env_file:
@@ -63,6 +62,14 @@ services:
       db:
         condition: service_healthy
     restart: always
+    networks:
+      - default
+      - app-internal
 
 volumes:
   db_data:
+
+networks:
+  app-internal:
+    name: my-vue-project-internal
+    external: true

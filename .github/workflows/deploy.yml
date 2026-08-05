@@ -60,6 +60,12 @@ jobs:
             export PATH="/usr/local/bin:$PATH"
             cd /volume1/docker/my-vue-project_backend
             echo "$GHCR_PAT" | $DOCKER login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            $DOCKER network inspect my-vue-project-internal >/dev/null 2>&1 || \
+              $DOCKER network create --internal my-vue-project-internal
+            if ! $DOCKER inspect vue_personal_project 2>/dev/null | grep -q '"my-vue-project-internal"'; then
+              echo "프론트엔드를 먼저 배포해 내부 네트워크 연결을 완료하세요. 기존 3200 공개를 제거하지 않습니다."
+              exit 1
+            fi
 
             # .env 파일에서 BACKEND_IMAGE 업데이트
             if grep -q "^BACKEND_IMAGE=" .env 2>/dev/null; then
