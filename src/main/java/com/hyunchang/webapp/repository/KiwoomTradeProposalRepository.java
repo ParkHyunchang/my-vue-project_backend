@@ -20,8 +20,11 @@ public interface KiwoomTradeProposalRepository extends JpaRepository<KiwoomTrade
             Collection<KiwoomTradeProposal.Status> statuses,
             LocalDateTime at);
 
-    boolean existsByStockCodeAndActionInAndCreatedAtGreaterThanEqual(
-            String code, Collection<KiwoomTradeProposal.Action> actions, LocalDateTime at);
+    boolean existsByStockCodeAndActionInAndStatusInAndOrderedAtGreaterThanEqual(
+            String code,
+            Collection<KiwoomTradeProposal.Action> actions,
+            Collection<KiwoomTradeProposal.Status> statuses,
+            LocalDateTime at);
 
     boolean existsByStockCodeAndActionAndStatusIn(
             String code,

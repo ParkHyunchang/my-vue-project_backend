@@ -44,6 +44,15 @@ public class KiwoomStrategyService {
     /** 유니버스에 편입되는 스윙 후보 상한 — ShortSwingCandidateService.MAX_SCREENED_CANDIDATES와 동일한 관례. */
     private static final int SWING_CANDIDATE_LIMIT = 30;
 
+    /** 실제 키움 주문이 접수됐거나 체결된 상태만 같은 종목 재주문 대기시간의 대상이다. */
+    private static final List<KiwoomTradeProposal.Status> REORDER_COOLDOWN_STATUSES =
+            List.of(
+                    KiwoomTradeProposal.Status.ORDERED,
+                    KiwoomTradeProposal.Status.PARTIALLY_FILLED,
+                    KiwoomTradeProposal.Status.CANCEL_REQUESTED,
+                    KiwoomTradeProposal.Status.FILLED,
+                    KiwoomTradeProposal.Status.ORDER_UNKNOWN);
+
     private volatile String lastCandidateSignature;
     private volatile LocalDateTime lastCandidateDecisionAt;
 
@@ -624,9 +633,10 @@ public class KiwoomStrategyService {
                         List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
                         start);
         if (today >= settings.current().getDailyMaxProposals()) flags.add("DAILY_LIMIT");
-        if (proposals.existsByStockCodeAndActionInAndCreatedAtGreaterThanEqual(
+        if (proposals.existsByStockCodeAndActionInAndStatusInAndOrderedAtGreaterThanEqual(
                 p.getStockCode(),
                 List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
+                REORDER_COOLDOWN_STATUSES,
                 now.minusMinutes(props.getStrategy().getCooldownMinutes())))
             flags.add("SYMBOL_COOLDOWN");
         p.setGuardFlags(String.join(",", flags));
