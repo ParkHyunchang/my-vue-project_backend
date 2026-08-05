@@ -101,13 +101,38 @@ public class KiwoomOrderSyncService {
                 .findByBrokerOrderNo(orderNo)
                 .map(
                         proposal -> {
-                            int ordered = number(record, "ord_qty", "order_qty", "qty");
-                            int filled = number(record, "cntr_qty", "filled_qty", "exec_qty");
-                            int remaining =
-                                    number(record, "rmn_qty", "unfilled_qty", "ord_remain_qty");
-                            if (filled == 0 && ordered > 0 && remaining >= 0)
-                                filled = Math.max(0, ordered - remaining);
-                            if (remaining == 0 && filled == 0) return false;
+                            Long orderedValue = longValue(record, "ord_qty", "order_qty", "qty");
+                            Long filledValue =
+                                    longValue(record, "cntr_qty", "filled_qty", "exec_qty");
+                            Long remainingValue =
+                                    longValue(record, "rmn_qty", "unfilled_qty", "ord_remain_qty");
+
+                            // A missing field is not the same as zero.  In particular, treating an
+                            // omitted remaining quantity as zero incorrectly changed live limit orders
+                            // into FILLED orders.
+                            if (filledValue == null && remainingValue == null) return false;
+
+                            int ordered =
+                                    orderedValue == null
+                                            ? proposal.getQuantity()
+                                            : Math.max(0, orderedValue.intValue());
+                            int filled;
+                            int remaining;
+                            if (remainingValue != null) {
+                                remaining = Math.max(0, remainingValue.intValue());
+                                filled =
+                                        filledValue == null
+                                                ? Math.max(0, ordered - remaining)
+                                                : Math.max(0, filledValue.intValue());
+                            } else {
+                                // A positive explicit execution quantity can advance the state.  Do
+                                // not infer any execution from an omitted field.
+                                filled =
+                                        Math.max(
+                                                proposal.getFilledQuantity(),
+                                                Math.max(0, filledValue.intValue()));
+                                remaining = Math.max(0, proposal.getQuantity() - filled);
+                            }
                             Long price =
                                     longValue(record, "cntr_prc", "avg_cntr_prc", "filled_price");
                             KiwoomTradeProposal.Status before = proposal.getStatus();
@@ -130,7 +155,7 @@ public class KiwoomOrderSyncService {
                             if (changed)
                                 log.info(
                                         "[자동매매][{}] {} {}({}), 체결 {}/{}주, 평균 체결가={}원, 주문번호={}, 주문 근거={}",
-                                        statusLabel(proposal.getStatus()),
+                                        orderSyncLabel(proposal),
                                         actionLabel(proposal.getAction()),
                                         proposal.getStockName(),
                                         proposal.getStockCode(),
@@ -144,6 +169,19 @@ public class KiwoomOrderSyncService {
                             return changed;
                         })
                 .orElse(false);
+    }
+
+    private String orderSyncLabel(KiwoomTradeProposal proposal) {
+        boolean takeProfit =
+                proposal.getReason() != null
+                        && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
+        if (!takeProfit) return statusLabel(proposal.getStatus());
+        return switch (proposal.getStatus()) {
+            case FILLED -> "익절 지정가 주문 체결 완료";
+            case PARTIALLY_FILLED -> "익절 지정가 주문 일부 체결";
+            case ORDERED -> "익절 지정가 주문 미체결";
+            default -> "익절 지정가 주문 상태 변경";
+        };
     }
 
     private String actionLabel(KiwoomTradeProposal.Action action) {
@@ -186,11 +224,6 @@ public class KiwoomOrderSyncService {
     private String text(JsonNode node, String... fields) {
         for (String field : fields) if (node.hasNonNull(field)) return node.path(field).asText();
         return null;
-    }
-
-    private int number(JsonNode node, String... fields) {
-        Long value = longValue(node, fields);
-        return value == null ? 0 : value.intValue();
     }
 
     private Long longValue(JsonNode node, String... fields) {

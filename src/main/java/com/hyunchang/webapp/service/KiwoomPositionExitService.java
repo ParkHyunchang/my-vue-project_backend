@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -27,6 +29,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 public class KiwoomPositionExitService {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomPositionExitService.class);
     private static final List<KiwoomTradeProposal.Status> OPEN_SELL_STATUSES =
             List.of(
                     KiwoomTradeProposal.Status.PROPOSED,
@@ -198,7 +201,27 @@ public class KiwoomPositionExitService {
                         + " / "
                         + position.sellableQuantity()
                         + "주");
-        orders.autoExecute(order.getId());
+        KiwoomProposalOrderService.Result result = orders.autoExecute(order.getId());
+        if (result.success()) {
+            log.info(
+                    "[자동매매][익절 지정가 주문 전송] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 수량={}주, 주문번호={}, 상태=미체결(체결 확인 대기)",
+                    position.stockName(),
+                    position.stockCode(),
+                    String.format("%,d", position.averagePrice()),
+                    settings.current().getSwingTakeProfitPercent(),
+                    String.format("%,d", position.takeProfitPrice()),
+                    position.sellableQuantity(),
+                    order.getBrokerOrderNo() == null ? "미확인" : order.getBrokerOrderNo());
+        } else {
+            log.warn(
+                    "[자동매매][익절 지정가 주문 전송 실패] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 사유={}",
+                    position.stockName(),
+                    position.stockCode(),
+                    String.format("%,d", position.averagePrice()),
+                    settings.current().getSwingTakeProfitPercent(),
+                    String.format("%,d", position.takeProfitPrice()),
+                    result.message());
+        }
     }
 
     private void submitConfirmedStopOrders(Collection<Position> refreshed) {
