@@ -71,5 +71,5 @@ volumes:
 
 networks:
   app-internal:
-    name: my-vue-project-internal
+    name: my-vue-project-private
     external: true
