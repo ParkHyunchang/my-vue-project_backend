@@ -305,13 +305,16 @@ public class KiwoomProposalOrderService {
             long buyBudget = Math.round(deposit * percent / 100.0);
             if (amount > buyBudget) return "매수 금액이 예수금 대비 허용 비율(" + percent + "%)을 초과합니다.";
         }
-        long orderedToday =
+        long filledToday =
                 proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(
-                        List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
-                        List.of(KiwoomTradeProposal.Status.ORDERED),
+                        List.of(KiwoomTradeProposal.Action.BUY),
+                        List.of(
+                                KiwoomTradeProposal.Status.PARTIALLY_FILLED,
+                                KiwoomTradeProposal.Status.FILLED),
                         LocalDateTime.now(KST).toLocalDate().atStartOfDay());
-        if (orderedToday >= settings.current().getDailyMaxProposals())
-            return "오늘의 주문 전송 한도에 도달했습니다.";
+        if (p.getAction() == KiwoomTradeProposal.Action.BUY
+                && filledToday >= settings.current().getDailyMaxProposals())
+            return "오늘의 신규 매수 체결 건수 한도에 도달했습니다.";
         return null;
     }
 
@@ -370,7 +373,7 @@ public class KiwoomProposalOrderService {
     private String guardLabel(String flag) {
         return switch (flag) {
             case "MAX_ORDER_AMOUNT" -> "주문 금액 상한 초과";
-            case "DAILY_LIMIT" -> "오늘의 매수·매도 제안 한도 도달";
+            case "DAILY_LIMIT" -> "오늘의 신규 매수 체결 건수 한도 도달";
             case "SYMBOL_COOLDOWN" -> "같은 종목 재주문 대기시간";
             case "MARKET_CLOSED" -> "장외 시간";
             case "INSUFFICIENT_DEPOSIT" -> "주문 가능 예수금 부족";

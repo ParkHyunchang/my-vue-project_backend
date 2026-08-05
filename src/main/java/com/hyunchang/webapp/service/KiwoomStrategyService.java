@@ -127,9 +127,6 @@ public class KiwoomStrategyService {
                         : KiwoomStrategyRun.TriggeredBy.MANUAL);
         try {
             events.publishEvent("strategy", "AI 전략 판단을 시작합니다.");
-            if ("SCHEDULE".equals(by) && dailyProposalLimitReached()) {
-                return skipped(run, "오늘의 매수·매도 제안 한도에 도달해 AI 검토를 건너뜁니다.");
-            }
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
             // 이번 판단이 실제로 사용할 실계좌 잔고를 화면·이력용 DB 스냅샷에도 남긴다.
@@ -311,20 +308,6 @@ public class KiwoomStrategyService {
         } finally {
             state.finishDecision();
         }
-    }
-
-    private boolean dailyProposalLimitReached() {
-        long today =
-                proposals.countByActionInAndCreatedAtGreaterThanEqual(
-                        List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
-                        LocalDateTime.now(KST).toLocalDate().atStartOfDay());
-        long limit = settings.current().getDailyMaxProposals();
-        if (today < limit) return false;
-        log.info(
-                "[자동매매][일일 제안 한도 도달] 오늘 생성된 매수·매도 제안={}건, 설정 한도={}건 — 신규 AI 검토를 건너뜁니다.",
-                today,
-                limit);
-        return true;
     }
 
     private boolean holdingExitTriggered(List<KiwoomTradeService.Holding> holdings) {
@@ -626,13 +609,17 @@ public class KiwoomStrategyService {
                     Math.round(deposit * settings.current().getMaxBuyDepositPercent() / 100.0);
             if (amount > buyBudget) flags.add("MAX_BUY_BUDGET");
             if (state.isDailyLossTriggered()) flags.add("DAILY_LOSS_LIMIT");
+            LocalDateTime start = now.toLocalDate().atStartOfDay();
+            long todayFilledBuys =
+                    proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(
+                            List.of(KiwoomTradeProposal.Action.BUY),
+                            List.of(
+                                    KiwoomTradeProposal.Status.PARTIALLY_FILLED,
+                                    KiwoomTradeProposal.Status.FILLED),
+                            start);
+            if (todayFilledBuys >= settings.current().getDailyMaxProposals())
+                flags.add("DAILY_LIMIT");
         }
-        LocalDateTime start = now.toLocalDate().atStartOfDay();
-        long today =
-                proposals.countByActionInAndCreatedAtGreaterThanEqual(
-                        List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),
-                        start);
-        if (today >= settings.current().getDailyMaxProposals()) flags.add("DAILY_LIMIT");
         if (proposals.existsByStockCodeAndActionInAndStatusInAndOrderedAtGreaterThanEqual(
                 p.getStockCode(),
                 List.of(KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Action.SELL),

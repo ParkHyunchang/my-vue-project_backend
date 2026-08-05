@@ -280,6 +280,29 @@ class KiwoomStrategyServiceTest {
     }
 
     @Test
+    void dailyLimitAppliesOnlyAfterActuallyFilledBuyOrders() {
+        settings.setDailyMaxProposals(1);
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(catalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+        when(proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(
+                        any(),
+                        eq(
+                                List.of(
+                                        KiwoomTradeProposal.Status.PARTIALLY_FILLED,
+                                        KiwoomTradeProposal.Status.FILLED)),
+                        any()))
+                .thenReturn(1L);
+
+        service.runDecision("SCHEDULE");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertTrue(captor.getValue().getGuardFlags().contains("DAILY_LIMIT"));
+    }
+
+    @Test
     void subscriptionCodesUnionsHoldingsAndCandidates() {
         KiwoomTradeService.Holding held =
                 new KiwoomTradeService.Holding("003550", "LG", 5, 5, 50_000, 51_000, 2.0);
