@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.CareerPublicResponse;
 import com.hyunchang.webapp.entity.Career;
 import com.hyunchang.webapp.repository.CareerRepository;
 import java.util.List;
@@ -17,6 +18,11 @@ public class CareerService {
 
     public List<Career> findAll() {
         return careerRepository.findAllByOrderBySortOrderAsc();
+    }
+
+    /** 공개 홈 화면용 조회 — 노출 필드를 공개 전용 DTO로 제한한다. */
+    public List<CareerPublicResponse> findAllPublic() {
+        return findAll().stream().map(CareerPublicResponse::from).toList();
     }
 
     public Career findById(Long id) {

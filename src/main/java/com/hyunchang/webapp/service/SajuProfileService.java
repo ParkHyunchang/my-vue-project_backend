@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.dto.SajuAnalysisResponse;
 import com.hyunchang.webapp.dto.SajuBirthInputDto;
+import com.hyunchang.webapp.dto.SajuProfileResponse;
 import com.hyunchang.webapp.entity.SajuProfile;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.SajuProfileRepository;
@@ -46,8 +47,10 @@ public class SajuProfileService {
     }
 
     @Transactional(readOnly = true)
-    public List<SajuProfile> list(String userId) {
-        return profileRepository.findByUserUserIdOrderByCreatedAtDesc(userId);
+    public List<SajuProfileResponse> list(String userId) {
+        return profileRepository.findByUserUserIdOrderByCreatedAtDesc(userId).stream()
+                .map(SajuProfileResponse::from)
+                .toList();
     }
 
     /**

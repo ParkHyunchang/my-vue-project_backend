@@ -19,6 +19,8 @@ import com.hyunchang.webapp.entity.KiwoomStrategySettings;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomStrategyRunRepository;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
+import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
+import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;

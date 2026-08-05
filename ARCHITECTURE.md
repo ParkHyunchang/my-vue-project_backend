@@ -12,7 +12,9 @@ src/main/java/com/hyunchang/webapp/
 ├── controller/          # HTTP 요청 진입점. 인증/인가 검사 후 Service 호출
 ├── service/             # 비즈니스 로직 전담
 │   ├── ai/              # AI 프로바이더 인터페이스 및 구현체 (Cloudflare, Gemini, Groq)
-│   └── prompt/          # 프롬프트 정의 및 변수 바인딩
+│   ├── kiwoom/          # 키움 지원 클래스 (상태 홀더, WebSocket 클라이언트)
+│   ├── prompt/          # 프롬프트 정의 및 변수 바인딩
+│   └── saju/            # 사주 외부 API 클라이언트 (KASI 음양력)
 ├── repository/          # DB 접근 전담. JPA Repository 인터페이스
 │   └── todo/            # Todo 도메인 Repository (하위 도메인 분리 예시)
 ├── entity/              # JPA Entity. DB 테이블과 1:1 매핑
@@ -140,6 +142,16 @@ src/main/resources/
 | 예외 | `*Exception` | `UserNotFoundException`, `RateLimitException` |
 | Config | `*Config` | `SecurityConfig`, `CorsConfig` |
 
+`service/` 패키지 **직하**의 클래스는 예외 없이 `*Service` 접미사를 쓴다.  
+비즈니스 로직이 아닌 지원 클래스(상태 홀더, 외부 API 클라이언트, 프로바이더 구현체)는  
+`*Service`로 이름을 비틀지 말고 도메인 서브패키지(`service/ai/`, `service/kiwoom/`, `service/prompt/`, `service/saju/`)에 둔다.
+
+| 지원 클래스 유형 | 접미사 | 위치 | 예시 |
+|-----------------|--------|------|------|
+| 외부 API 클라이언트 | `*Client` | 도메인 서브패키지 | `SajuCalendarClient`, `KiwoomWebsocketClient` |
+| 런타임 상태 홀더 | `*State` | 도메인 서브패키지 | `KiwoomAutoTradeState` |
+| AI 프로바이더 | `*Provider` | `service/ai/` | `GeminiProvider`, `GroqProvider` |
+
 ### 메서드명
 
 | 용도 | 패턴 | 예시 |
@@ -253,6 +265,10 @@ Jackson 직렬화 시 연관관계 포함 여부와 노출 범위를 점검해�
 | `TravelController` | `TravelWishlist`, `TravelVisited`, `TravelItinerary` |
 | `PortfolioSkillController` | `PortfolioSkill` |
 
+인증 없이 열리는 `PublicController`는 위 예외에 해당하지 않는다 —  
+같은 데이터라도 공개 전용 DTO(`CareerPublicResponse`, `ExperiencePublicResponse`, `PortfolioSkillPublicResponse`)로  
+노출 필드를 좁혀서 내보낸다. 어드민 CRUD 컨트롤러와 노출 범위를 분리하기 위함이다.
+
 ### DTO 명명 불일치
 
 다음 DTO는 `*Dto` 접미사를 사용하나, 위 규칙에서는 조회 전용에만 `*Dto`를 쓴다.  
@@ -268,6 +284,8 @@ Jackson 직렬화 시 연관관계 포함 여부와 노출 범위를 점검해�
 
 - `AiProvider` (interface), `AiProviderChain`, `CloudflareProvider`, `GeminiProvider`, `GroqProvider`
 - `PromptDefinition`, `PromptVariable`, `RateLimitTracker`
+
+위 "3. 네이밍 컨벤션"의 지원 클래스 규칙으로 정식화됨 — 서브패키지에 있는 한 예외가 아니다.
 
 ### JSON 파싱 로직 중복
 

@@ -8,6 +8,8 @@ import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomStrategyRunRepository;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import com.hyunchang.webapp.service.ai.AiProviderChain;
+import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
+import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
 import com.hyunchang.webapp.util.KiwoomMarketHours;

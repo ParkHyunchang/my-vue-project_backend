@@ -6,6 +6,7 @@ import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
+import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;

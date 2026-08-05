@@ -1,24 +1,20 @@
 package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.config.KiwoomProperties;
-import com.hyunchang.webapp.entity.KiwoomStrategyRun;
-import com.hyunchang.webapp.entity.KiwoomTradeProposal;
-import com.hyunchang.webapp.repository.KiwoomStrategyRunRepository;
-import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
-import com.hyunchang.webapp.service.KiwoomAutoTradeState;
+import com.hyunchang.webapp.dto.KiwoomStrategyRunResponse;
 import com.hyunchang.webapp.service.KiwoomOrderSyncService;
 import com.hyunchang.webapp.service.KiwoomProposalOrderService;
 import com.hyunchang.webapp.service.KiwoomRiskManagerService;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
+import com.hyunchang.webapp.service.KiwoomStrategyHistoryService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
+import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.prompt.AiPromptCatalog;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -37,8 +33,7 @@ public class KiwoomStrategyController {
     private final KiwoomStrategyService strategy;
     private final KiwoomProposalOrderService orders;
     private final KiwoomProperties props;
-    private final KiwoomStrategyRunRepository runs;
-    private final KiwoomTradeProposalRepository proposals;
+    private final KiwoomStrategyHistoryService history;
     private final KiwoomAutoTradeState state;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomOrderSyncService orderSync;
@@ -50,8 +45,7 @@ public class KiwoomStrategyController {
             KiwoomStrategyService strategy,
             KiwoomProposalOrderService orders,
             KiwoomProperties props,
-            KiwoomStrategyRunRepository runs,
-            KiwoomTradeProposalRepository proposals,
+            KiwoomStrategyHistoryService history,
             KiwoomAutoTradeState state,
             KiwoomStrategyAuditService audit,
             KiwoomOrderSyncService orderSync,
@@ -61,8 +55,7 @@ public class KiwoomStrategyController {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
-        this.runs = runs;
-        this.proposals = proposals;
+        this.history = history;
         this.state = state;
         this.audit = audit;
         this.orderSync = orderSync;
@@ -253,8 +246,8 @@ public class KiwoomStrategyController {
                 state.getLastApiFailureMessage() == null ? "" : state.getLastApiFailureMessage());
         result.put(
                 "lastRunAt", state.getLastRunAt() == null ? "" : state.getLastRunAt().toString());
-        result.put("runCount", runs.count());
-        result.put("proposalCount", proposals.count());
+        result.put("runCount", history.runCount());
+        result.put("proposalCount", history.proposalCount());
         result.put("risk", riskStatus());
         result.put("recentAudit", audit.recent());
         return result;
@@ -282,41 +275,8 @@ public class KiwoomStrategyController {
     }
 
     @GetMapping("/runs")
-    public List<Map<String, Object>> history(@RequestParam(defaultValue = "10") int limit) {
-        List<KiwoomStrategyRun> list =
-                runs.findByOrderByIdDesc(PageRequest.of(0, Math.min(Math.max(limit, 1), 50)))
-                        .getContent();
-        Map<Long, List<KiwoomTradeProposal>> grouped = new HashMap<>();
-        for (KiwoomTradeProposal proposal :
-                proposals.findByRunIdInOrderByIdAsc(
-                        list.stream().map(KiwoomStrategyRun::getId).toList()))
-            grouped.computeIfAbsent(proposal.getRun().getId(), key -> new ArrayList<>())
-                    .add(proposal);
-        return list.stream()
-                .map(
-                        run ->
-                                Map.<String, Object>of(
-                                        "id",
-                                        run.getId(),
-                                        "status",
-                                        run.getStatus(),
-                                        "triggeredBy",
-                                        run.getTriggeredBy(),
-                                        "marketView",
-                                        run.getMarketView() == null ? "" : run.getMarketView(),
-                                        "errorMessage",
-                                        run.getErrorMessage() == null ? "" : run.getErrorMessage(),
-                                        "aiCalled",
-                                        run.isAiCalled(),
-                                        "inputTokens",
-                                        run.getInputTokens(),
-                                        "outputTokens",
-                                        run.getOutputTokens(),
-                                        "createdAt",
-                                        run.getCreatedAt().toString(),
-                                        "proposals",
-                                        grouped.getOrDefault(run.getId(), List.of())))
-                .toList();
+    public List<KiwoomStrategyRunResponse> runs(@RequestParam(defaultValue = "10") int limit) {
+        return history.recentRuns(limit);
     }
 
     private ResponseEntity<?> response(KiwoomProposalOrderService.Result result) {

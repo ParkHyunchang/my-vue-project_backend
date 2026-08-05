@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.PortfolioSkillPublicResponse;
 import com.hyunchang.webapp.entity.PortfolioSkill;
 import com.hyunchang.webapp.repository.PortfolioSkillRepository;
 import java.util.List;
@@ -17,6 +18,11 @@ public class PortfolioSkillService {
 
     public List<PortfolioSkill> findAll() {
         return portfolioSkillRepository.findAllByOrderBySortOrderAsc();
+    }
+
+    /** 공개 홈 화면용 조회 — 노출 필드를 공개 전용 DTO로 제한한다. */
+    public List<PortfolioSkillPublicResponse> findAllPublic() {
+        return findAll().stream().map(PortfolioSkillPublicResponse::from).toList();
     }
 
     public PortfolioSkill findById(Long id) {

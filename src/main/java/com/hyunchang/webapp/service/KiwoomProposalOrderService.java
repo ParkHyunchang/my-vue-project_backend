@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
+import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
+import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
 import java.time.LocalDateTime;

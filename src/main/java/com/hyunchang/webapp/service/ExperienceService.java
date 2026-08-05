@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.ExperiencePublicResponse;
 import com.hyunchang.webapp.entity.Experience;
 import com.hyunchang.webapp.repository.ExperienceRepository;
 import java.util.List;
@@ -17,6 +18,11 @@ public class ExperienceService {
 
     public List<Experience> findAll() {
         return experienceRepository.findAllByOrderBySortOrderAsc();
+    }
+
+    /** 공개 홈 화면용 조회 — 노출 필드를 공개 전용 DTO로 제한한다. */
+    public List<ExperiencePublicResponse> findAllPublic() {
+        return findAll().stream().map(ExperiencePublicResponse::from).toList();
     }
 
     public Experience findById(Long id) {

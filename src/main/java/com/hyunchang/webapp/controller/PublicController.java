@@ -1,9 +1,9 @@
 package com.hyunchang.webapp.controller;
 
+import com.hyunchang.webapp.dto.CareerPublicResponse;
+import com.hyunchang.webapp.dto.ExperiencePublicResponse;
 import com.hyunchang.webapp.dto.MenuDefinitionResponse;
-import com.hyunchang.webapp.entity.Career;
-import com.hyunchang.webapp.entity.Experience;
-import com.hyunchang.webapp.entity.PortfolioSkill;
+import com.hyunchang.webapp.dto.PortfolioSkillPublicResponse;
 import com.hyunchang.webapp.service.CareerService;
 import com.hyunchang.webapp.service.ExperienceService;
 import com.hyunchang.webapp.service.MenuDefinitionService;
@@ -44,17 +44,17 @@ public class PublicController {
     }
 
     @GetMapping("/career")
-    public List<Career> getCareers() {
-        return careerService.findAll();
+    public List<CareerPublicResponse> getCareers() {
+        return careerService.findAllPublic();
     }
 
     @GetMapping("/experience")
-    public List<Experience> getExperiences() {
-        return experienceService.findAll();
+    public List<ExperiencePublicResponse> getExperiences() {
+        return experienceService.findAllPublic();
     }
 
     @GetMapping("/portfolio-skills")
-    public List<PortfolioSkill> getPortfolioSkills() {
-        return portfolioSkillService.findAll();
+    public List<PortfolioSkillPublicResponse> getPortfolioSkills() {
+        return portfolioSkillService.findAllPublic();
     }
 }

@@ -1,4 +1,4 @@
-package com.hyunchang.webapp.service;
+package com.hyunchang.webapp.service.kiwoom;
 
 import com.hyunchang.webapp.entity.KiwoomStrategyControlState;
 import com.hyunchang.webapp.repository.KiwoomStrategyControlStateRepository;
@@ -164,8 +164,7 @@ public class KiwoomAutoTradeState {
     }
 
     /**
-     * 관리자가 당일 일일 손실 차단을 해제할 때 현재 총자산을 새 기준점으로 저장한다.
-     * 이전 기준점만 유지한 채 플래그를 끄면 다음 점검에서 즉시 다시 발동할 수 있으므로,
+     * 관리자가 당일 일일 손실 차단을 해제할 때 현재 총자산을 새 기준점으로 저장한다. 이전 기준점만 유지한 채 플래그를 끄면 다음 점검에서 즉시 다시 발동할 수 있으므로,
      * 반드시 기준자산과 현재자산을 함께 초기화한다.
      */
     public synchronized DailyLossStatus resetDailyLossCheck(long totalAsset) {

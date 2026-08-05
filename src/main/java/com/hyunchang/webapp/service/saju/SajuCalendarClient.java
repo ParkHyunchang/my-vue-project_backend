@@ -1,4 +1,4 @@
-package com.hyunchang.webapp.service;
+package com.hyunchang.webapp.service.saju;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,8 +25,8 @@ import org.springframework.stereotype.Service;
  * 날짜별 간지는 불변이므로 장기 캐시한다.
  *
  * <p><b>윤달 한계</b>: 윤달 기간에는 API가 월건(lunWolgeon)을 빈 문자열로 돌려준다(윤달은 그 해의 절기 상 어느 월에 속하는지 이 API가 알려주지 않기
- * 때문). 이 클라이언트는 monthGanji=null로 그대로 전달하고, 실제 대체값 계산은 {@link SajuPaljaService}가 근접한 날짜의 월건을 빌려오는
- * 방식으로 근사 처리한다.
+ * 때문). 이 클라이언트는 monthGanji=null로 그대로 전달하고, 실제 대체값 계산은 {@link
+ * com.hyunchang.webapp.service.SajuPaljaService}가 근접한 날짜의 월건을 빌려오는 방식으로 근사 처리한다.
  */
 @Service
 public class SajuCalendarClient {

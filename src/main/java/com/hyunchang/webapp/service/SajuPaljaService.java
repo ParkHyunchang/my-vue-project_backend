@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import com.hyunchang.webapp.dto.SajuBirthInputDto;
 import com.hyunchang.webapp.dto.SajuPillarDto;
 import com.hyunchang.webapp.dto.SajuResultDto;
+import com.hyunchang.webapp.service.saju.SajuCalendarClient;
 import com.hyunchang.webapp.util.GanjiTables;
 import java.time.LocalDate;
 import java.util.LinkedHashMap;

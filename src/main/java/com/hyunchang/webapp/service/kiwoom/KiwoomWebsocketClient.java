@@ -1,9 +1,10 @@
-package com.hyunchang.webapp.service;
+package com.hyunchang.webapp.service.kiwoom;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
+import com.hyunchang.webapp.service.KiwoomAuthService;
 import jakarta.annotation.PreDestroy;
 import java.net.URI;
 import java.net.http.HttpClient;

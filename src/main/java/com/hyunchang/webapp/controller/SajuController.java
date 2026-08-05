@@ -4,11 +4,15 @@ import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.dto.SajuAnalysisResponse;
 import com.hyunchang.webapp.dto.SajuBirthInputDto;
-import com.hyunchang.webapp.entity.SajuProfile;
+import com.hyunchang.webapp.dto.SajuProfileResponse;
 import com.hyunchang.webapp.service.SajuAnalysisService;
 import com.hyunchang.webapp.service.SajuProfileService;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.ArraySchema;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -72,7 +76,14 @@ public class SajuController {
 
     // ── 즉석 계산 (저장 없음) ────────────────────────────────────────
 
+    // 아래 엔드포인트들은 메뉴 접근 거부(403) 분기 때문에 ResponseEntity<?>를 쓴다.
+    // 반환 타입만으로는 springdoc이 스키마를 추론하지 못하므로, 정상 응답 DTO를 @ApiResponse로 명시한다.
+    // (명시하지 않으면 npm run gen:api 결과에서 해당 스키마가 통째로 빠진다)
+
     @Operation(summary = "즉석 계산 — 저장 없이 사주팔자 계산 + AI 해석")
+    @ApiResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = SajuAnalysisResponse.class)))
     @PostMapping("/calculate")
     public ResponseEntity<?> calculate(@RequestBody BirthRequest req) {
         if (!hasAccess()) return forbidden();
@@ -85,14 +96,27 @@ public class SajuController {
     // ── 저장된 프로필 ────────────────────────────────────────────────
 
     @Operation(summary = "저장된 사주 프로필 전체 조회")
+    @ApiResponse(
+            responseCode = "200",
+            content =
+                    @Content(
+                            array =
+                                    @ArraySchema(
+                                            schema =
+                                                    @Schema(
+                                                            implementation =
+                                                                    SajuProfileResponse.class))))
     @GetMapping("/profiles")
     public ResponseEntity<?> getProfiles() {
         if (!hasAccess()) return forbidden();
-        List<SajuProfile> list = sajuProfileService.list(SecurityUtils.getCurrentUserId());
+        List<SajuProfileResponse> list = sajuProfileService.list(SecurityUtils.getCurrentUserId());
         return ResponseEntity.ok(list);
     }
 
     @Operation(summary = "사주 프로필 저장 (계산 + AI 해석 포함)")
+    @ApiResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = SajuAnalysisResponse.class)))
     @PostMapping("/profiles")
     public ResponseEntity<?> addProfile(@RequestBody BirthRequest req) {
         if (!hasAccess()) return forbidden();
@@ -104,6 +128,9 @@ public class SajuController {
     }
 
     @Operation(summary = "사주 프로필 수정 (계산 + AI 재해석 포함)")
+    @ApiResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = SajuAnalysisResponse.class)))
     @PutMapping("/profiles/{id}")
     public ResponseEntity<?> updateProfile(@PathVariable Long id, @RequestBody BirthRequest req) {
         if (!hasAccess()) return forbidden();
@@ -115,6 +142,9 @@ public class SajuController {
     }
 
     @Operation(summary = "저장된 프로필 재해석 (AI 재호출)")
+    @ApiResponse(
+            responseCode = "200",
+            content = @Content(schema = @Schema(implementation = SajuAnalysisResponse.class)))
     @PostMapping("/profiles/{id}/reanalyze")
     public ResponseEntity<?> reanalyze(@PathVariable Long id) {
         if (!hasAccess()) return forbidden();

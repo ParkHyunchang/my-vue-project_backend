@@ -2,6 +2,7 @@ package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
+import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
