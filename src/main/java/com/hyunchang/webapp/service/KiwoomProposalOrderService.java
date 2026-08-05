@@ -50,7 +50,7 @@ public class KiwoomProposalOrderService {
             return fail("HOLD 제안은 주문 승인 대상이 아닙니다.");
         if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED)
             return fail("PROPOSED 상태의 제안만 승인할 수 있습니다.");
-        if (hasGuards(p)) return fail("안전 경고가 있는 제안은 승인할 수 없습니다.");
+        if (hasGuards(p)) return fail(guardBlockMessage(p, "제안을 승인할 수 없습니다."));
         p.approve();
         proposals.save(p);
         audit.log("PROPOSAL_APPROVED", p.getId(), "제안을 승인했습니다.");
@@ -207,7 +207,7 @@ public class KiwoomProposalOrderService {
             return fail("자동 전송은 지정가 주문 또는 손절 시장가 매도만 지원합니다.");
         if (p.getOrderType() == KiwoomTradeProposal.OrderType.LIMIT && p.getLimitPrice() == null)
             return fail("지정가 주문에는 가격이 필요합니다.");
-        if (hasGuards(p)) return fail("안전 경고가 있는 제안은 자동 전송할 수 없습니다.");
+        if (hasGuards(p)) return fail(guardBlockMessage(p, "자동 전송할 수 없습니다."));
         Result approved = approve(id);
         if (!approved.success()) return approved;
         Result drafted = draft(id);
@@ -280,7 +280,7 @@ public class KiwoomProposalOrderService {
     private String preflightError(KiwoomTradeProposal p) {
         if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다.";
-        if (hasGuards(p)) return "안전 경고가 있는 주문 초안은 전송할 수 없습니다.";
+        if (hasGuards(p)) return guardBlockMessage(p, "주문 초안을 전송할 수 없습니다.");
         if (!KiwoomMarketHours.isOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";
         if (p.getOrderType() == KiwoomTradeProposal.OrderType.MARKET
                 && p.getAction() != KiwoomTradeProposal.Action.SELL
@@ -351,6 +351,33 @@ public class KiwoomProposalOrderService {
 
     private boolean hasGuards(KiwoomTradeProposal p) {
         return p.getGuardFlags() != null && !p.getGuardFlags().isBlank();
+    }
+
+    private String guardBlockMessage(KiwoomTradeProposal proposal, String action) {
+        return "안전 경고=" + guardSummary(proposal.getGuardFlags()) + " — " + action;
+    }
+
+    private String guardSummary(String guardFlags) {
+        StringBuilder labels = new StringBuilder();
+        for (String flag : guardFlags.split(",")) {
+            if (flag == null || flag.isBlank()) continue;
+            if (!labels.isEmpty()) labels.append(", ");
+            labels.append(guardLabel(flag.trim()));
+        }
+        return labels.isEmpty() ? "확인 필요" : labels.toString();
+    }
+
+    private String guardLabel(String flag) {
+        return switch (flag) {
+            case "MAX_ORDER_AMOUNT" -> "주문 금액 상한 초과";
+            case "DAILY_LIMIT" -> "오늘의 매수·매도 제안 한도 도달";
+            case "SYMBOL_COOLDOWN" -> "같은 종목 재주문 대기시간";
+            case "MARKET_CLOSED" -> "장외 시간";
+            case "INSUFFICIENT_DEPOSIT" -> "주문 가능 예수금 부족";
+            case "MAX_BUY_BUDGET" -> "한 번 매수 예산 비율 초과";
+            case "DAILY_LOSS_LIMIT" -> "일일 손실 한도 발동";
+            default -> flag;
+        };
     }
 
     private boolean isOpenOrder(KiwoomTradeProposal p) {
