@@ -313,6 +313,14 @@ public class KiwoomTradeProposal {
         status = Status.CANCELED;
     }
 
+    /** 전일 미체결 주문이 다음 거래일 키움 미체결 목록에 없을 때 로컬 열린 상태를 종료한다. */
+    public void expired(String reason) {
+        remainingQuantity = 0;
+        lastSyncedAt = LocalDateTime.now();
+        brokerResponse = reason;
+        status = Status.CANCELED;
+    }
+
     public void syncFill(int filled, int remaining, Long averagePrice) {
         filledQuantity = Math.max(0, filled);
         remainingQuantity = Math.max(0, remaining);

@@ -4,8 +4,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -23,7 +26,16 @@ import org.springframework.stereotype.Service;
 @Service
 public class KiwoomOrderSyncService {
     private static final Logger log = LoggerFactory.getLogger(KiwoomOrderSyncService.class);
+    private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final Duration URGENT_CANCEL_POLL_WINDOW = Duration.ofSeconds(60);
+    private static final List<KiwoomTradeProposal.Status> PRE_MARKET_OPEN_STATUSES =
+            List.of(
+                    KiwoomTradeProposal.Status.PROPOSED,
+                    KiwoomTradeProposal.Status.APPROVED,
+                    KiwoomTradeProposal.Status.ORDER_DRAFT,
+                    KiwoomTradeProposal.Status.ORDERED,
+                    KiwoomTradeProposal.Status.PARTIALLY_FILLED,
+                    KiwoomTradeProposal.Status.CANCEL_REQUESTED);
     private final KiwoomTradeService trade;
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomStrategyAuditService audit;
@@ -31,6 +43,8 @@ public class KiwoomOrderSyncService {
     private final KiwoomPositionExitService exits;
     private final AtomicBoolean syncInProgress = new AtomicBoolean();
     private final Set<String> urgentCancelDelayLogged = ConcurrentHashMap.newKeySet();
+    private volatile LocalDate preMarketRecoveryCompletedDate;
+    private volatile LocalDate marketOpenExitStartedDate;
 
     public KiwoomOrderSyncService(
             KiwoomTradeService trade,
@@ -48,6 +62,103 @@ public class KiwoomOrderSyncService {
     @Scheduled(fixedDelay = 60000)
     public void scheduledSync() {
         if (props.isConfigured() && hasPendingOrders()) sync();
+    }
+
+    /** 08:50부터 사전 복구가 성공할 때까지 매분 재시도한다. 이 단계에서는 실제 주문을 보내지 않는다. */
+    @Scheduled(cron = "0 50-59 8 * * MON-FRI", zone = "Asia/Seoul")
+    public void scheduledPreMarketRecovery() {
+        LocalDate today = LocalDate.now(KST);
+        if (!KiwoomMarketHours.isTradingDay(today)
+                || !props.isConfigured()
+                || !exits.isExitManagementEnabled()
+                || today.equals(preMarketRecoveryCompletedDate)) return;
+        runPreMarketRecovery(today);
+    }
+
+    /** 09:00에 시작하고, 자동매매가 늦게 켜지거나 조회가 실패하면 장중 매분 재시도한다. */
+    @Scheduled(cron = "0 * 9-15 * * MON-FRI", zone = "Asia/Seoul")
+    public void scheduledMarketOpenExitStart() {
+        LocalDate today = LocalDate.now(KST);
+        if (!KiwoomMarketHours.isTradingDay(today)
+                || !KiwoomMarketHours.isOpen()
+                || !props.isConfigured()
+                || !exits.isExitManagementEnabled()
+                || today.equals(marketOpenExitStartedDate)) return;
+        if (!today.equals(preMarketRecoveryCompletedDate) && !runPreMarketRecovery(today)) {
+            log.error(
+                    "[자동매매][장 시작 주문 보류] 08:50 사전 복구가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
+            return;
+        }
+        if (exits.startExitOrdersAtMarketOpen()) marketOpenExitStartedDate = today;
+    }
+
+    private boolean runPreMarketRecovery(LocalDate today) {
+        PreMarketRecoveryResult result = reconcilePreviousDayTakeProfitOrders(today);
+        if (!result.success()) {
+            log.warn("[자동매매][장 시작 사전 복구 재시도 대기] 사유={}", result.message());
+            return false;
+        }
+        if (!exits.preparePositionsBeforeMarketOpen()) {
+            log.warn("[자동매매][장 시작 사전 복구 재시도 대기] 사유=보유 종목 조회 또는 실시간 구독 준비 실패");
+            return false;
+        }
+        preMarketRecoveryCompletedDate = today;
+        log.info(
+                "[자동매매][장 시작 사전 복구 완료] 기준일={}, 키움 주문 응답={}건, 전일 익절 주문 만료={}건, 처리=09:00 주문 시작 대기",
+                today,
+                result.records(),
+                result.expired());
+        audit.log(
+                "PRE_MARKET_RECOVERY_COMPLETED",
+                null,
+                "전일 익절 주문 " + result.expired() + "건을 정리하고 09:00 주문 시작을 준비했습니다.");
+        return true;
+    }
+
+    PreMarketRecoveryResult reconcilePreviousDayTakeProfitOrders(LocalDate today) {
+        if (!syncInProgress.compareAndSet(false, true))
+            return new PreMarketRecoveryResult(false, 0, 0, "다른 주문 상태 동기화가 진행 중입니다.");
+        try {
+            List<JsonNode> unfilledRecords = new ArrayList<>();
+            List<JsonNode> allRecords = new ArrayList<>();
+            collectRecords(
+                    trade.getUnfilledOrders().block(Duration.ofSeconds(15)), unfilledRecords);
+            allRecords.addAll(unfilledRecords);
+            collectRecords(trade.getFilledOrders().block(Duration.ofSeconds(15)), allRecords);
+            for (JsonNode record : allRecords) apply(record);
+
+            Set<String> brokerUnfilledOrderNumbers = ConcurrentHashMap.newKeySet();
+            for (JsonNode record : unfilledRecords) {
+                String orderNo = normalizeOrderNo(text(record, "ord_no", "order_no"));
+                if (orderNo != null) brokerUnfilledOrderNumbers.add(orderNo);
+            }
+
+            int expired = 0;
+            for (KiwoomTradeProposal proposal :
+                    proposals.findByStatusIn(PRE_MARKET_OPEN_STATUSES)) {
+                if (!isTakeProfit(proposal) || !isFromPreviousDate(proposal, today)) continue;
+                String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
+                if (orderNo != null && brokerUnfilledOrderNumbers.contains(orderNo)) continue;
+
+                String reason = "전일 미체결 익절 주문이 다음 거래일 키움 미체결 목록에 없어 자동 만료 처리했습니다.";
+                proposal.expired(reason);
+                proposals.save(proposal);
+                audit.log("TAKE_PROFIT_ORDER_EXPIRED", proposal.getId(), reason);
+                log.info(
+                        "[자동매매][전일 익절 주문 만료] {}({}), 주문번호={}, 기존 상태 종료 후 09:00 재등록 대상",
+                        proposal.getStockName(),
+                        proposal.getStockCode(),
+                        proposal.getBrokerOrderNo() == null ? "미전송" : proposal.getBrokerOrderNo());
+                expired++;
+            }
+            return new PreMarketRecoveryResult(
+                    true, allRecords.size(), expired, "장 시작 사전 주문 복구 완료");
+        } catch (Exception e) {
+            return new PreMarketRecoveryResult(
+                    false, 0, 0, "장 시작 사전 주문 복구 실패: " + trim(e.getMessage()));
+        } finally {
+            syncInProgress.set(false);
+        }
     }
 
     /**
@@ -326,6 +437,14 @@ public class KiwoomOrderSyncService {
                 && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
     }
 
+    private boolean isFromPreviousDate(KiwoomTradeProposal proposal, LocalDate today) {
+        LocalDateTime reference = proposal.getOrderedAt();
+        if (reference == null) reference = proposal.getDraftedAt();
+        if (reference == null) reference = proposal.getApprovedAt();
+        if (reference == null) reference = proposal.getCreatedAt();
+        return reference != null && reference.toLocalDate().isBefore(today);
+    }
+
     private String urgentCancelKey(KiwoomTradeProposal proposal) {
         if (proposal.getId() != null) return "id:" + proposal.getId();
         return "order:" + proposal.getBrokerOrderNo() + ":" + proposal.getStockCode();
@@ -366,4 +485,6 @@ public class KiwoomOrderSyncService {
     }
 
     public record SyncResult(int records, int updated, String message) {}
+
+    record PreMarketRecoveryResult(boolean success, int records, int expired, String message) {}
 }

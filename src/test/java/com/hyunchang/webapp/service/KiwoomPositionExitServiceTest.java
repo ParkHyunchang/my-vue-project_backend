@@ -2,6 +2,7 @@ package com.hyunchang.webapp.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -69,7 +70,8 @@ class KiwoomPositionExitServiceTest {
         when(settings.current()).thenReturn(current);
 
         when(proposals.existsByStockCodeAndActionAndStatusIn(any(), any(), any())).thenReturn(true);
-        when(proposals.findByStatusIn(any()))
+        lenient()
+                .when(proposals.findByStatusIn(any()))
                 .thenAnswer(
                         invocation -> {
                             List<KiwoomTradeProposal.Status> statuses = invocation.getArgument(0);
@@ -115,8 +117,8 @@ class KiwoomPositionExitServiceTest {
         when(orders.cancel(takeProfit.getId(), 6))
                 .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit));
 
-        service.refreshPositions("TEST");
-        priceListener.accept(new KiwoomWebsocketClient.PriceTick(CODE, 1000));
+        service.refreshPositions("TEST", true);
+        service.handlePriceTick(CODE, 1000);
 
         verify(websocket).connectAndSubscribe(List.of(CODE));
         verify(orders).cancel(takeProfit.getId(), 6);
@@ -135,9 +137,9 @@ class KiwoomPositionExitServiceTest {
                             return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
                         });
 
-        service.refreshPositions("TEST");
-        priceListener.accept(new KiwoomWebsocketClient.PriceTick(CODE, 1000));
-        service.refreshPositions("CANCEL_REQUESTED");
+        service.refreshPositions("TEST", true);
+        service.handlePriceTick(CODE, 1000);
+        service.refreshPositions("CANCEL_REQUESTED", true);
         verify(orders, never()).autoExecute(anyLong());
 
         takeProfit.cancelled();
@@ -159,7 +161,7 @@ class KiwoomPositionExitServiceTest {
                             return new KiwoomProposalOrderService.Result(true, "주문 전송", stopOrder);
                         });
 
-        service.retryPendingStopTransition();
+        service.retryPendingStopTransitionNow();
 
         ArgumentCaptor<KiwoomTradeProposal> proposalCaptor =
                 ArgumentCaptor.forClass(KiwoomTradeProposal.class);
@@ -175,6 +177,18 @@ class KiwoomPositionExitServiceTest {
         assertEquals(KiwoomTradeProposal.OrderType.MARKET, stopOrder.getOrderType());
         assertEquals(6, stopOrder.getQuantity());
         verify(orders).autoExecute(stopOrder.getId());
+    }
+
+    @Test
+    void preMarketPreparationRestoresPositionsWithoutSendingOrders() {
+        stubHolding(6, 6, 1119, 1100);
+
+        boolean prepared = service.preparePositionsBeforeMarketOpen();
+
+        assertEquals(true, prepared);
+        verify(websocket).connectAndSubscribe(List.of(CODE));
+        verify(orders, never()).autoExecute(anyLong());
+        verify(orders, never()).cancel(anyLong(), anyInt());
     }
 
     private void stubHolding(int quantity, int sellable, long averagePrice, long currentPrice) {

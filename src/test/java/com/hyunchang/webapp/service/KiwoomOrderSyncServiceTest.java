@@ -13,6 +13,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
+import java.lang.reflect.Field;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -154,8 +157,63 @@ class KiwoomOrderSyncServiceTest {
         verify(trade, never()).getFilledOrders();
     }
 
+    @Test
+    void previousDayTakeProfitMissingFromBrokerIsExpiredBeforeMarketOpen() throws Exception {
+        LocalDate today = LocalDate.of(2026, 8, 7);
+        setOrderedAt(today.minusDays(1).atTime(14, 30));
+        stubResponses(objectMapper.createArrayNode());
+
+        KiwoomOrderSyncService.PreMarketRecoveryResult result =
+                service.reconcilePreviousDayTakeProfitOrders(today);
+
+        assertEquals(true, result.success());
+        assertEquals(1, result.expired());
+        assertEquals(KiwoomTradeProposal.Status.CANCELED, proposal.getStatus());
+    }
+
+    @Test
+    void sameDayOrderIsNotExpiredOnlyBecauseBrokerInquiryMissedIt() throws Exception {
+        LocalDate today = LocalDate.of(2026, 8, 7);
+        setOrderedAt(today.atTime(9, 0));
+        stubResponses(objectMapper.createArrayNode());
+
+        KiwoomOrderSyncService.PreMarketRecoveryResult result =
+                service.reconcilePreviousDayTakeProfitOrders(today);
+
+        assertEquals(true, result.success());
+        assertEquals(0, result.expired());
+        assertEquals(KiwoomTradeProposal.Status.ORDERED, proposal.getStatus());
+    }
+
+    @Test
+    void previousDayOrderStillReportedUnfilledByBrokerIsKept() throws Exception {
+        LocalDate today = LocalDate.of(2026, 8, 7);
+        setOrderedAt(today.minusDays(1).atTime(14, 30));
+        JsonNode unfilled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"ord_qty\":\"6\",\"oso_qty\":\"6\"}");
+        stubOrderInquiries(unfilled, objectMapper.createArrayNode());
+
+        KiwoomOrderSyncService.PreMarketRecoveryResult result =
+                service.reconcilePreviousDayTakeProfitOrders(today);
+
+        assertEquals(true, result.success());
+        assertEquals(0, result.expired());
+        assertEquals(KiwoomTradeProposal.Status.ORDERED, proposal.getStatus());
+    }
+
     private void stubResponses(JsonNode filledResponse) {
-        when(trade.getUnfilledOrders()).thenReturn(Mono.just(objectMapper.createArrayNode()));
+        stubOrderInquiries(objectMapper.createArrayNode(), filledResponse);
+    }
+
+    private void stubOrderInquiries(JsonNode unfilledResponse, JsonNode filledResponse) {
+        when(trade.getUnfilledOrders()).thenReturn(Mono.just(unfilledResponse));
         when(trade.getFilledOrders()).thenReturn(Mono.just(filledResponse));
+    }
+
+    private void setOrderedAt(LocalDateTime value) throws Exception {
+        Field field = KiwoomTradeProposal.class.getDeclaredField("orderedAt");
+        field.setAccessible(true);
+        field.set(proposal, value);
     }
 }

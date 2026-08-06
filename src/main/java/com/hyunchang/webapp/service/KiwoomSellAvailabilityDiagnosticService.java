@@ -93,7 +93,8 @@ public class KiwoomSellAvailabilityDiagnosticService {
     private int unfilledSellQuantity(List<JsonNode> rows, String stockCode) {
         return rows.stream()
                 .filter(row -> stockCode.equals(normalizedCode(text(row, "stk_cd", "stock_code"))))
-                .mapToInt(row -> number(row, "rmn_qty", "unfilled_qty", "ord_remain_qty"))
+                .mapToInt(
+                        row -> number(row, "rmn_qty", "unfilled_qty", "ord_remain_qty", "oso_qty"))
                 .sum();
     }
 

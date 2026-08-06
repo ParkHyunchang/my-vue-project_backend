@@ -12,6 +12,7 @@ import com.hyunchang.webapp.util.KiwoomMarketHours;
 import com.hyunchang.webapp.util.KiwoomPriceRules;
 import jakarta.annotation.PostConstruct;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -58,6 +59,7 @@ public class KiwoomPositionExitService {
     private final Set<String> stopWaitingForSellableLogged = ConcurrentHashMap.newKeySet();
     private final Map<String, LocalDateTime> stopTriggeredAt = new ConcurrentHashMap<>();
     private final Set<String> stopTransitionDelayLogged = ConcurrentHashMap.newKeySet();
+    private volatile LocalDate preMarketPreparedDate;
 
     public KiwoomPositionExitService(
             KiwoomProperties props,
@@ -91,8 +93,13 @@ public class KiwoomPositionExitService {
      * Called when automation starts, after restart recovery, and after an actual order-state
      * change.
      */
-    public synchronized void refreshPositions(String source) {
-        if (!canManageExits()) return;
+    public void refreshPositions(String source) {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        refreshPositions(source, KiwoomMarketHours.isOpen() && today.equals(preMarketPreparedDate));
+    }
+
+    synchronized boolean refreshPositions(String source, boolean manageOrders) {
+        if (!canManageExits()) return false;
         try {
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
             accountHoldings.syncBalance(balance, source);
@@ -114,25 +121,59 @@ public class KiwoomPositionExitService {
             stopTransitionDelayLogged.retainAll(refreshed.keySet());
             websocket.connectAndSubscribe(new ArrayList<>(refreshed.keySet()));
 
-            // 익절 주문이 전 수량을 예약하면 키움 잔고의 매도 가능 수량은 0이 된다. 그래도
-            // 보유 수량과 현재가를 기준으로 손절 감시는 계속해야 한다. 재시작·실시간 연결
-            // 끊김 상황에서도 잔고 현재가가 이미 손절가 이하라면 즉시 익절 취소 절차를 시작한다.
-            for (Position position : refreshed.values()) {
-                if (position.currentPrice() > 0
-                        && position.currentPrice() <= position.stopLossPrice())
-                    onPriceTick(position.stockCode(), position.currentPrice());
-            }
+            boolean ordersReady = true;
+            if (manageOrders) {
+                // 익절 주문이 전 수량을 예약하면 키움 잔고의 매도 가능 수량은 0이 된다. 그래도
+                // 보유 수량과 현재가를 기준으로 손절 감시는 계속해야 한다. 재시작·실시간 연결
+                // 끊김 상황에서도 잔고 현재가가 이미 손절가 이하라면 즉시 익절 취소 절차를 시작한다.
+                for (Position position : refreshed.values()) {
+                    if (position.currentPrice() > 0
+                            && position.currentPrice() <= position.stopLossPrice())
+                        handlePriceTick(position.stockCode(), position.currentPrice());
+                }
 
-            for (Position position : refreshed.values()) {
-                if (!stopPending.contains(position.stockCode())
-                        && !stopSubmitted.contains(position.stockCode()))
-                    ensureTakeProfitOrder(position);
+                for (Position position : refreshed.values()) {
+                    if (!stopPending.contains(position.stockCode())
+                            && !stopSubmitted.contains(position.stockCode()))
+                        ordersReady &= ensureTakeProfitOrder(position);
+                }
+                submitConfirmedStopOrders(refreshed.values());
             }
-            submitConfirmedStopOrders(refreshed.values());
+            return !manageOrders || ordersReady;
         } catch (Exception e) {
-            // No recurring log for refresh failures. The active WebSocket feed remains the primary
-            // path.
+            if (source.startsWith("PRE_MARKET") || source.startsWith("MARKET_OPEN"))
+                log.warn(
+                        "[자동매매][보유 종목 복구 실패] 확인 시점={}, 사유={}",
+                        source,
+                        e.getMessage() == null ? "알 수 없음" : e.getMessage());
+            return false;
         }
+    }
+
+    boolean isExitManagementEnabled() {
+        return canManageExits();
+    }
+
+    boolean preparePositionsBeforeMarketOpen() {
+        boolean prepared = refreshPositions("PRE_MARKET_0850", false);
+        if (prepared) {
+            preMarketPreparedDate = LocalDate.now(KiwoomMarketHours.KST);
+            log.info(
+                    "[자동매매][08:50 보유 종목 준비 완료] 보유={}종목, 처리=주문 전송 없이 잔고 복구 및 실시간 구독 준비",
+                    positions.size());
+        }
+        return prepared;
+    }
+
+    boolean startExitOrdersAtMarketOpen() {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        if (!today.equals(preMarketPreparedDate)) return false;
+        boolean started = refreshPositions("MARKET_OPEN_0900", true);
+        if (started)
+            log.info(
+                    "[자동매매][09:00 청산 관리 시작] 보유={}종목, 처리=익절 지정가 주문 확인 및 실시간 손절 감시 시작",
+                    positions.size());
+        return started;
     }
 
     /**
@@ -152,6 +193,11 @@ public class KiwoomPositionExitService {
      */
     @Scheduled(fixedDelay = 2000, initialDelay = 2000)
     public void retryPendingStopTransition() {
+        if (!KiwoomMarketHours.isOpen()) return;
+        retryPendingStopTransitionNow();
+    }
+
+    void retryPendingStopTransitionNow() {
         if (!canManageExits() || stopPending.isEmpty()) return;
 
         LocalDateTime now = LocalDateTime.now();
@@ -172,13 +218,7 @@ public class KiwoomPositionExitService {
                 websocket.publishEvent("error", "손절 전환 지연: " + code + " (수동 확인 필요)");
             }
         }
-        if (needsRefresh) refreshPositions("STOP_TRANSITION_RECHECK");
-    }
-
-    /** 전일 매수분처럼 매도가능수량이 장 시작과 함께 바뀌는 종목의 익절 주문을 다시 건다. */
-    @Scheduled(cron = "0 1 9 * * MON-FRI", zone = "Asia/Seoul")
-    public void refreshAtMarketOpen() {
-        refreshPositions("MARKET_OPEN_RECHECK");
+        if (needsRefresh) refreshPositions("STOP_TRANSITION_RECHECK", true);
     }
 
     /** Invoked by the order synchronizer only when a broker order actually changed state. */
@@ -193,7 +233,12 @@ public class KiwoomPositionExitService {
                 && !stopSubmitted.contains(stockCode);
     }
 
-    private synchronized void onPriceTick(String stockCode, long currentPrice) {
+    private void onPriceTick(String stockCode, long currentPrice) {
+        if (!KiwoomMarketHours.isOpen()) return;
+        handlePriceTick(stockCode, currentPrice);
+    }
+
+    synchronized void handlePriceTick(String stockCode, long currentPrice) {
         Position position = positions.get(stockCode);
         if (position == null || currentPrice <= 0 || !canManageExits()) return;
         positions.put(stockCode, position.withCurrentPrice(currentPrice));
@@ -248,21 +293,21 @@ public class KiwoomPositionExitService {
         }
     }
 
-    private void ensureTakeProfitOrder(Position position) {
+    private boolean ensureTakeProfitOrder(Position position) {
         List<KiwoomTradeProposal> current = openTakeProfitOrders(position.stockCode());
         if (current.size() == 1
                 && current.get(0).getLimitPrice() != null
                 && current.get(0).getLimitPrice() == position.takeProfitPrice()
-                && current.get(0).getRemainingQuantity() == position.holdingQuantity()) return;
+                && current.get(0).getRemainingQuantity() == position.holdingQuantity()) return true;
 
         if (!current.isEmpty()) {
             for (KiwoomTradeProposal order : current) {
                 if (order.getRemainingQuantity() > 0)
                     orders.cancel(order.getId(), order.getRemainingQuantity());
             }
-            return;
+            return false;
         }
-        if (position.sellableQuantity() <= 0) return;
+        if (position.sellableQuantity() <= 0) return false;
 
         KiwoomTradeProposal order = newExitProposal(position, KiwoomTradeProposal.OrderType.LIMIT);
         order.setLimitPrice(position.takeProfitPrice());
@@ -296,7 +341,13 @@ public class KiwoomPositionExitService {
                     submitted == null || submitted.getBrokerOrderNo() == null
                             ? "미확인"
                             : submitted.getBrokerOrderNo());
+            return true;
         } else {
+            KiwoomTradeProposal failed = result.proposal() == null ? order : result.proposal();
+            if (failed.getStatus() != KiwoomTradeProposal.Status.ORDER_UNKNOWN) {
+                failed.expired("익절 지정가 주문 전송 실패로 재시도 대기: " + result.message());
+                proposals.save(failed);
+            }
             log.warn(
                     "[자동매매][익절 지정가 주문 전송 실패] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 사유={}",
                     position.stockName(),
@@ -305,6 +356,7 @@ public class KiwoomPositionExitService {
                     settings.current().getSwingTakeProfitPercent(),
                     String.format("%,d", position.takeProfitPrice()),
                     result.message());
+            return false;
         }
     }
 
