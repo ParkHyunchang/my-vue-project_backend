@@ -5,9 +5,13 @@ import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -19,11 +23,14 @@ import org.springframework.stereotype.Service;
 @Service
 public class KiwoomOrderSyncService {
     private static final Logger log = LoggerFactory.getLogger(KiwoomOrderSyncService.class);
+    private static final Duration URGENT_CANCEL_POLL_WINDOW = Duration.ofSeconds(60);
     private final KiwoomTradeService trade;
     private final KiwoomTradeProposalRepository proposals;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomProperties props;
     private final KiwoomPositionExitService exits;
+    private final AtomicBoolean syncInProgress = new AtomicBoolean();
+    private final Set<String> urgentCancelDelayLogged = ConcurrentHashMap.newKeySet();
 
     public KiwoomOrderSyncService(
             KiwoomTradeService trade,
@@ -43,6 +50,50 @@ public class KiwoomOrderSyncService {
         if (props.isConfigured() && hasPendingOrders()) sync();
     }
 
+    /**
+     * 손절가가 감지되어 기존 익절 주문을 취소하는 동안에만 키움 주문 상태를 빠르게 확인한다. 일반 주문은 기존 1분 동기화를 사용하므로 불필요한 API 호출을 늘리지
+     * 않는다.
+     */
+    @Scheduled(fixedDelay = 2000, initialDelay = 2000)
+    public void urgentStopCancellationSync() {
+        if (!props.isConfigured()) return;
+
+        List<KiwoomTradeProposal> cancelRequests =
+                proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED));
+        Set<String> activeKeys = ConcurrentHashMap.newKeySet();
+        LocalDateTime now = LocalDateTime.now();
+        boolean needsUrgentSync = false;
+
+        for (KiwoomTradeProposal proposal : cancelRequests) {
+            if (!isTakeProfit(proposal) || !exits.isStopTransitionPending(proposal.getStockCode()))
+                continue;
+
+            String key = urgentCancelKey(proposal);
+            activeKeys.add(key);
+            LocalDateTime requestedAt = proposal.getCancelRequestedAt();
+            boolean insideFastWindow =
+                    requestedAt == null
+                            || Duration.between(requestedAt, now)
+                                            .compareTo(URGENT_CANCEL_POLL_WINDOW)
+                                    <= 0;
+            if (insideFastWindow) {
+                needsUrgentSync = true;
+            } else if (urgentCancelDelayLogged.add(key)) {
+                log.warn(
+                        "[자동매매][손절 전환 지연] {}({}), 익절 주문번호={}, 60초 동안 취소 확인이 되지 않아 일반 주문 동기화로 계속 확인합니다. 키움 주문 상태를 확인해 주세요.",
+                        proposal.getStockName(),
+                        proposal.getStockCode(),
+                        proposal.getBrokerOrderNo());
+                audit.log(
+                        "STOP_CANCEL_CONFIRMATION_DELAYED",
+                        proposal.getId(),
+                        "손절 전환을 위한 익절 주문 취소가 60초 안에 확인되지 않았습니다.");
+            }
+        }
+        urgentCancelDelayLogged.retainAll(activeKeys);
+        if (needsUrgentSync) sync();
+    }
+
     /** 재시작 직후, 새 스케줄 판단이 돌기 전에 저장된 주문번호들을 키움 조회로 복구 동기화한다. */
     @EventListener(ApplicationReadyEvent.class)
     public void recoverAfterRestart() {
@@ -56,6 +107,16 @@ public class KiwoomOrderSyncService {
     }
 
     public SyncResult sync() {
+        if (!syncInProgress.compareAndSet(false, true))
+            return new SyncResult(0, 0, "다른 주문 상태 동기화가 진행 중입니다.");
+        try {
+            return doSync();
+        } finally {
+            syncInProgress.set(false);
+        }
+    }
+
+    private SyncResult doSync() {
         if (!hasPendingOrders()) return new SyncResult(0, 0, "동기화 대상 주문이 없습니다.");
         try {
             List<JsonNode> unfilledRecords = new ArrayList<>();
@@ -69,21 +130,22 @@ public class KiwoomOrderSyncService {
             for (KiwoomTradeProposal proposal :
                     proposals.findByStatusIn(
                             List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED))) {
-                boolean stillUnfilled =
-                        unfilledRecords.stream()
-                                .anyMatch(
-                                        record ->
-                                                proposal.getBrokerOrderNo() != null
-                                                        && proposal.getBrokerOrderNo()
-                                                                .equals(
-                                                                        text(
-                                                                                record,
-                                                                                "ord_no",
-                                                                                "order_no")));
-                if (!stillUnfilled) {
+                boolean cancellationConfirmed =
+                        records.stream()
+                                .anyMatch(record -> isCancellationConfirmation(record, proposal));
+                if (cancellationConfirmed) {
                     proposal.cancelled();
                     proposals.save(proposal);
-                    audit.log("ORDER_CANCELLED_SYNC", proposal.getId(), "키움 주문 조회로 취소가 확정되었습니다.");
+                    audit.log(
+                            "ORDER_CANCELLED_SYNC",
+                            proposal.getId(),
+                            "키움 주문상태·주문구분 응답으로 취소가 명시적으로 확인되었습니다.");
+                    log.info(
+                            "[자동매매][주문 취소 확인] {} {}({}), 원주문번호={}, 상태=취소 완료",
+                            actionLabel(proposal.getAction()),
+                            proposal.getStockName(),
+                            proposal.getStockCode(),
+                            proposal.getBrokerOrderNo());
                     updated++;
                 }
             }
@@ -101,11 +163,20 @@ public class KiwoomOrderSyncService {
                 .findByBrokerOrderNo(orderNo)
                 .map(
                         proposal -> {
+                            // 취소 확인 레코드에는 잔량 0이 함께 내려올 수 있다. 이를 일반 체결로
+                            // 처리하면 CANCEL_REQUESTED가 다시 ORDERED로 바뀔 수 있으므로 취소
+                            // 상태 동기화 전용 경로에 맡긴다.
+                            if (isCancellationConfirmation(record, proposal)) return false;
                             Long orderedValue = longValue(record, "ord_qty", "order_qty", "qty");
                             Long filledValue =
                                     longValue(record, "cntr_qty", "filled_qty", "exec_qty");
                             Long remainingValue =
-                                    longValue(record, "rmn_qty", "unfilled_qty", "ord_remain_qty");
+                                    longValue(
+                                            record,
+                                            "rmn_qty",
+                                            "unfilled_qty",
+                                            "ord_remain_qty",
+                                            "oso_qty");
 
                             // A missing field is not the same as zero.  In particular, treating an
                             // omitted remaining quantity as zero incorrectly changed live limit
@@ -135,7 +206,12 @@ public class KiwoomOrderSyncService {
                                 remaining = Math.max(0, proposal.getQuantity() - filled);
                             }
                             Long price =
-                                    longValue(record, "cntr_prc", "avg_cntr_prc", "filled_price");
+                                    longValue(
+                                            record,
+                                            "cntr_prc",
+                                            "cntr_pric",
+                                            "avg_cntr_prc",
+                                            "filled_price");
                             KiwoomTradeProposal.Status before = proposal.getStatus();
                             int beforeFilled = proposal.getFilledQuantity();
                             int beforeRemaining = proposal.getRemainingQuantity();
@@ -173,10 +249,45 @@ public class KiwoomOrderSyncService {
                 .orElse(false);
     }
 
+    private boolean isCancellationConfirmation(JsonNode record, KiwoomTradeProposal proposal) {
+        String brokerOrderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
+        if (brokerOrderNo == null) return false;
+        String recordOrderNo = normalizeOrderNo(text(record, "ord_no", "order_no"));
+        String originalOrderNo =
+                normalizeOrderNo(text(record, "orig_ord_no", "org_ord_no", "ori_ord_no"));
+        boolean sameOrder =
+                brokerOrderNo.equals(recordOrderNo) || brokerOrderNo.equals(originalOrderNo);
+        if (!sameOrder) return false;
+        for (String field :
+                List.of(
+                        "ord_stt",
+                        "order_status",
+                        "io_tp_nm",
+                        "trde_tp",
+                        "tsk_tp",
+                        "mdfy_cncl_tp",
+                        "mdfy_cncl",
+                        "acpt_tp")) {
+            String value = text(record, field);
+            if (value == null) continue;
+            String normalized = value.trim().toUpperCase(java.util.Locale.ROOT);
+            if (normalized.contains("취소")
+                    || normalized.contains("CANCELLED")
+                    || normalized.contains("CANCELED")
+                    || normalized.equals("CANCEL")) return true;
+        }
+        return false;
+    }
+
+    private String normalizeOrderNo(String value) {
+        if (value == null || value.isBlank()) return null;
+        String digits = value.replaceAll("[^0-9]", "");
+        if (digits.isBlank()) return value.trim();
+        return digits.replaceFirst("^0+(?!$)", "");
+    }
+
     private String orderSyncLabel(KiwoomTradeProposal proposal) {
-        boolean takeProfit =
-                proposal.getReason() != null
-                        && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
+        boolean takeProfit = isTakeProfit(proposal);
         if (!takeProfit) return statusLabel(proposal.getStatus());
         return switch (proposal.getStatus()) {
             case FILLED -> "익절 지정가 주문 체결 완료";
@@ -208,6 +319,16 @@ public class KiwoomOrderSyncService {
                                 KiwoomTradeProposal.Status.PARTIALLY_FILLED,
                                 KiwoomTradeProposal.Status.CANCEL_REQUESTED))
                 .isEmpty();
+    }
+
+    private boolean isTakeProfit(KiwoomTradeProposal proposal) {
+        return proposal.getReason() != null
+                && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
+    }
+
+    private String urgentCancelKey(KiwoomTradeProposal proposal) {
+        if (proposal.getId() != null) return "id:" + proposal.getId();
+        return "order:" + proposal.getBrokerOrderNo() + ":" + proposal.getStockCode();
     }
 
     private void collectRecords(JsonNode node, List<JsonNode> result) {

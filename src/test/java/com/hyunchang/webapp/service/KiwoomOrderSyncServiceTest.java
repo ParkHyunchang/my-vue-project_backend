@@ -39,6 +39,7 @@ class KiwoomOrderSyncServiceTest {
         KiwoomProperties properties = new KiwoomProperties();
         properties.setAppKey("test-app-key");
         properties.setSecretKey("test-secret-key");
+        properties.setAccountNo("12345678");
         service = new KiwoomOrderSyncService(trade, proposals, audit, properties, exits);
 
         proposal = new KiwoomTradeProposal();
@@ -52,13 +53,17 @@ class KiwoomOrderSyncServiceTest {
                 .thenAnswer(
                         invocation -> {
                             List<KiwoomTradeProposal.Status> statuses = invocation.getArgument(0);
-                            return statuses.contains(KiwoomTradeProposal.Status.ORDERED)
+                            return statuses.contains(proposal.getStatus())
                                     ? List.of(proposal)
                                     : List.of();
                         });
         lenient()
                 .when(proposals.findByBrokerOrderNo(anyString()))
-                .thenReturn(Optional.of(proposal));
+                .thenAnswer(
+                        invocation ->
+                                "0357151".equals(invocation.getArgument(0))
+                                        ? Optional.of(proposal)
+                                        : Optional.empty());
         lenient().when(proposals.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     }
 
@@ -89,6 +94,64 @@ class KiwoomOrderSyncServiceTest {
         assertEquals(0, proposal.getRemainingQuantity());
         assertEquals(1235L, proposal.getAverageFillPrice());
         verify(exits).onOrderStateChanged();
+    }
+
+    @Test
+    void disappearanceFromUnfilledOrdersDoesNotConfirmCancellation() {
+        proposal.cancelRequested("{}");
+        stubResponses(objectMapper.createArrayNode());
+
+        service.sync();
+
+        assertEquals(KiwoomTradeProposal.Status.CANCEL_REQUESTED, proposal.getStatus());
+        verify(exits, never()).onOrderStateChanged();
+    }
+
+    @Test
+    void explicitBrokerCancellationRecordConfirmsCancellation() throws Exception {
+        proposal.cancelRequested("{}");
+        JsonNode cancelled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357999\",\"orig_ord_no\":\"0357151\","
+                                + "\"ord_stt\":\"확인\",\"io_tp_nm\":\"-매도취소\","
+                                + "\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"0\"}");
+        stubResponses(cancelled);
+
+        service.sync();
+
+        assertEquals(KiwoomTradeProposal.Status.CANCELED, proposal.getStatus());
+        assertEquals(0, proposal.getRemainingQuantity());
+        verify(exits).onOrderStateChanged();
+    }
+
+    @Test
+    void stopTransitionPollsImmediatelyAndConfirmsTakeProfitCancellation() throws Exception {
+        proposal.cancelRequested("{}");
+        when(exits.isStopTransitionPending("063440")).thenReturn(true);
+        JsonNode cancelled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357999\",\"orig_ord_no\":\"0357151\","
+                                + "\"ord_stt\":\"확인\",\"io_tp_nm\":\"-매도취소\","
+                                + "\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"0\"}");
+        stubResponses(cancelled);
+
+        service.urgentStopCancellationSync();
+
+        assertEquals(KiwoomTradeProposal.Status.CANCELED, proposal.getStatus());
+        verify(trade).getUnfilledOrders();
+        verify(trade).getFilledOrders();
+        verify(exits).onOrderStateChanged();
+    }
+
+    @Test
+    void ordinaryTakeProfitCancellationDoesNotUseUrgentPolling() {
+        proposal.cancelRequested("{}");
+
+        service.urgentStopCancellationSync();
+
+        assertEquals(KiwoomTradeProposal.Status.CANCEL_REQUESTED, proposal.getStatus());
+        verify(trade, never()).getUnfilledOrders();
+        verify(trade, never()).getFilledOrders();
     }
 
     private void stubResponses(JsonNode filledResponse) {
