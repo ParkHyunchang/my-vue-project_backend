@@ -46,6 +46,7 @@ public class KrxOpenApiService {
     private static final String ETN_URL = "https://data-dbg.krx.co.kr/svc/apis/etp/etn_bydd_trd";
     private static final DateTimeFormatter DATE_FMT = DateTimeFormatter.ofPattern("yyyyMMdd");
     private static final long SWING_SCREEN_CACHE_TTL_MS = 30 * 60 * 1000L;
+    private static final long INTRADAY_SWING_SCREEN_CACHE_TTL_MS = 5 * 60 * 1000L;
     private static final int SWING_LOOKBACK_DAYS = 20;
     private static final int SWING_HISTORY_FETCH_DAYS = 35;
     private static final double DEFAULT_SWING_MIN_CHANGE_PCT = 2.0;
@@ -84,6 +85,8 @@ public class KrxOpenApiService {
 
     private volatile List<KrSwingCandidate> swingCandidatesCache = Collections.emptyList();
     private volatile long swingCandidatesCacheTime = 0;
+    private volatile boolean swingCandidatesCacheUsesIntradayData;
+    private final KiwoomTradeService kiwoomTradeService;
     // 스윙 스크리닝 전용 락 — KOSPI/KOSDAQ/ETP 캐시 로드(synchronized(this))와 분리해서
     // 히스토리 수집이 오래 걸려도 앱 전체의 KR 시세 조회가 같이 막히지 않게 한다.
     private final Object swingScreenLock = new Object();
@@ -94,6 +97,10 @@ public class KrxOpenApiService {
             swingSessionCache = new TtlCache<>(Duration.ofDays(30), Duration.ofMinutes(30));
     private static final ExecutorService HISTORY_POOL =
             Executors.newFixedThreadPool(HISTORY_FETCH_PARALLELISM);
+
+    public KrxOpenApiService(KiwoomTradeService kiwoomTradeService) {
+        this.kiwoomTradeService = kiwoomTradeService;
+    }
 
     @PreDestroy
     void shutdownHistoryPool() {
@@ -147,12 +154,12 @@ public class KrxOpenApiService {
     public List<KrSwingCandidate> getShortSwingCandidates(
             int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
         if (limit <= 0 || !hasApiKey()) return List.of();
-        if (!isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
+        if (!swingScreenNeedsRefresh()) {
             return filterSwingCandidates(limit, minChangePercent, minVolumeRatio, maxChangePercent);
         }
 
         synchronized (swingScreenLock) {
-            if (isStale(swingCandidatesCacheTime, SWING_SCREEN_CACHE_TTL_MS)) {
+            if (swingScreenNeedsRefresh()) {
                 swingCandidatesCache = collectShortSwingCandidates();
                 swingCandidatesCacheTime = System.currentTimeMillis();
             }
@@ -168,6 +175,13 @@ public class KrxOpenApiService {
                 .filter(candidate -> candidate.volumeRatio() >= minVolumeRatio)
                 .limit(limit)
                 .toList();
+    }
+
+    private boolean swingScreenNeedsRefresh() {
+        boolean marketOpen = KiwoomMarketHours.isOpen();
+        if (marketOpen && !swingCandidatesCacheUsesIntradayData) return true;
+        long ttl = marketOpen ? INTRADAY_SWING_SCREEN_CACHE_TTL_MS : SWING_SCREEN_CACHE_TTL_MS;
+        return isStale(swingCandidatesCacheTime, ttl);
     }
 
     private List<KrSwingCandidate> collectShortSwingCandidates() {
@@ -215,6 +229,22 @@ public class KrxOpenApiService {
 
         Map.Entry<LocalDate, Map<String, NaverFinanceService.NaverStockData>> latest =
                 sessions.entrySet().iterator().next();
+        if (KiwoomMarketHours.isOpen()) {
+            List<KrSwingCandidate> intraday =
+                    collectIntradaySwingCandidates(
+                            latest.getValue(),
+                            sessions.values().stream().limit(SWING_LOOKBACK_DAYS).toList());
+            if (!intraday.isEmpty()) {
+                swingCandidatesCacheUsesIntradayData = true;
+                log.info(
+                        "[자동매매][장중 후보 원본 갱신] 기준=키움 현재 상승률·누적 거래량, 종목={}개, 평균 거래량=KRX 직전 20거래일",
+                        intraday.size());
+                return intraday;
+            }
+            log.warn(
+                    "[자동매매][장중 후보 조회 대체] 키움 장중 상승률 조회가 비어 있어 직전 KRX 종가 기준 후보를 사용합니다.");
+        }
+        swingCandidatesCacheUsesIntradayData = false;
         List<Map<String, NaverFinanceService.NaverStockData>> history =
                 sessions.entrySet().stream()
                         .skip(1)
@@ -230,6 +260,60 @@ public class KrxOpenApiService {
                                 .thenComparingDouble(KrSwingCandidate::changePercent)
                                 .reversed())
                 .toList();
+    }
+
+    private List<KrSwingCandidate> collectIntradaySwingCandidates(
+            Map<String, NaverFinanceService.NaverStockData> latestSession,
+            List<Map<String, NaverFinanceService.NaverStockData>> history) {
+        try {
+            List<KiwoomTradeService.IntradayRankStock> ranked =
+                    kiwoomTradeService.getTopRisingStocks().block(Duration.ofSeconds(15));
+            if (ranked == null || ranked.isEmpty()) return List.of();
+            return ranked.stream()
+                    .map(stock -> toIntradaySwingCandidate(stock, latestSession, history))
+                    .filter(candidate -> candidate != null)
+                    .sorted(
+                            Comparator.comparingDouble(KrSwingCandidate::volumeRatio)
+                                    .thenComparingDouble(KrSwingCandidate::changePercent)
+                                    .reversed())
+                    .toList();
+        } catch (Exception e) {
+            log.warn(
+                    "[자동매매][장중 후보 조회 실패] 키움 현재 상승률·거래량 조회 실패, 사유={}",
+                    e.getMessage() == null ? "알 수 없음" : e.getMessage());
+            return List.of();
+        }
+    }
+
+    private KrSwingCandidate toIntradaySwingCandidate(
+            KiwoomTradeService.IntradayRankStock intraday,
+            Map<String, NaverFinanceService.NaverStockData> latestSession,
+            List<Map<String, NaverFinanceService.NaverStockData>> history) {
+        NaverFinanceService.NaverStockData reference = latestSession.get(intraday.code() + ".KS");
+        if (reference == null) reference = latestSession.get(intraday.code() + ".KQ");
+        if (reference == null) return null;
+
+        String symbol = reference.symbol().toUpperCase();
+        List<Long> volumes =
+                history.stream()
+                        .map(day -> day.get(symbol))
+                        .filter(item -> item != null && item.volume() > 0)
+                        .map(NaverFinanceService.NaverStockData::volume)
+                        .toList();
+        if (volumes.size() < SWING_LOOKBACK_DAYS) return null;
+        double averageVolume = volumes.stream().mapToLong(Long::longValue).average().orElse(0);
+        if (averageVolume <= 0) return null;
+        double ratio = intraday.currentVolume() / averageVolume;
+        return new KrSwingCandidate(
+                symbol,
+                intraday.name().isBlank() ? reference.name() : intraday.name(),
+                symbol.endsWith(".KQ") ? "KOSDAQ" : "KOSPI",
+                intraday.currentPrice(),
+                Math.round(intraday.changePercent() * 100.0) / 100.0,
+                intraday.currentVolume(),
+                Math.round(averageVolume),
+                Math.round(ratio * 100.0) / 100.0,
+                LocalDate.now(KiwoomMarketHours.KST));
     }
 
     /**

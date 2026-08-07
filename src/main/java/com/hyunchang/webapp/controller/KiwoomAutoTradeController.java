@@ -79,8 +79,6 @@ public class KiwoomAutoTradeController {
                 authService.hasUsableToken(),
                 "autoTrading",
                 state.isAutoTrading(),
-                "emergencyStopped",
-                state.isEmergencyStopped(),
                 "orderEnabled",
                 properties.isTradeEnabled(),
                 "consecutiveApiFailures",
@@ -93,7 +91,7 @@ public class KiwoomAutoTradeController {
 
     @EventListener(ApplicationReadyEvent.class)
     public void resumeRealtimeSubscription() {
-        if (properties.isConfigured() && state.isAutoTrading() && !state.isEmergencyStopped()) {
+        if (properties.isConfigured() && state.isAutoTrading()) {
             websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
             exits.refreshPositions("APPLICATION_RESTART");
             audit.log("AUTOMATION_RESTORED", null, "재시작 후 저장된 자동매매 상태와 실시간 시세 구독을 복구했습니다.");
@@ -121,10 +119,6 @@ public class KiwoomAutoTradeController {
     @PostMapping("/control")
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<Map<String, Object>> control(@RequestBody ControlRequest request) {
-        if (request.enabled() && state.isEmergencyStopped()) {
-            return ResponseEntity.status(409)
-                    .body(Map.of("success", false, "message", "긴급 중지 상태입니다. 먼저 재개를 명시적으로 실행하세요."));
-        }
         if (request.enabled() && !properties.isConfigured()) {
             // 자동매매 ON은 'AI 판단 스케줄 시작'만 의미한다. 주문 전송은 KIWOOM_TRADE_ENABLED가 별도로 게이트한다.
             return ResponseEntity.status(409)
@@ -145,32 +139,35 @@ public class KiwoomAutoTradeController {
                                     "KIWOOM_TRADE_ENABLED=true 설정이 필요합니다."));
         }
         if (request.enabled()) {
+            // 이전 버전의 안전 중지 상태도 이제 하나의 자동주문 스위치로 복구한다.
+            state.clearEmergencyStop();
             settings.activateFullAutomation();
             audit.log("FULL_AUTOMATION_ACTIVATED", null, "관리자 시작 요청으로 자동 주문 및 리스크 청산 루프를 활성화했습니다.");
-        }
-        state.setAutoTrading(request.enabled());
-        if (request.enabled()) {
+            state.setAutoTrading(true);
             websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
-            exits.refreshPositions("AUTOMATION_ACTIVATED");
+            boolean exitsReady = exits.resumeExitManagement();
+            websocketClient.publishEvent(
+                    "system", "자동주문을 재개하고 현재 보유종목의 익절·손절 기준을 다시 계산했습니다.");
+            return ResponseEntity.ok(
+                    Map.of(
+                            "success", true,
+                            "autoTrading", true,
+                            "exitManagementReady", exitsReady));
         }
-        return ResponseEntity.ok(Map.of("success", true, "autoTrading", state.isAutoTrading()));
-    }
-
-    @PostMapping("/emergency-stop")
-    @PreAuthorize("hasRole('ADMIN')")
-    public Map<String, Object> emergencyStop() {
-        state.emergencyStop();
-        websocketClient.publishEvent("system", "긴급 중지가 실행되었습니다. 자동 판단과 주문 전송을 중단합니다.");
-        audit.log("EMERGENCY_STOP", null, "관리자가 긴급 중지를 실행했습니다.");
-        return Map.of("success", true, "emergencyStopped", true);
-    }
-
-    @PostMapping("/emergency-resume")
-    @PreAuthorize("hasRole('ADMIN')")
-    public Map<String, Object> emergencyResume() {
-        state.clearEmergencyStop();
-        audit.log("EMERGENCY_RESUME", null, "관리자가 긴급 중지를 해제했습니다.");
-        return Map.of("success", true, "emergencyStopped", false);
+        state.setAutoTrading(false);
+        KiwoomPositionExitService.PauseResult paused = exits.pauseExitManagement();
+        audit.log("FULL_AUTOMATION_STOPPED", null, "자동주문 완전 중지: 미체결 자동주문 취소 요청 " + paused.cancellationRequested() + "건");
+        if (paused.cancellationFailed() > 0)
+            websocketClient.publishEvent(
+                    "error", "자동주문은 중지했지만 미체결 자동주문 " + paused.cancellationFailed() + "건의 취소 요청이 실패했습니다. 키움 주문을 확인하세요.");
+        websocketClient.publishEvent(
+                "system", "자동주문을 완전히 중지했습니다. 기존 미체결 자동주문도 취소하며 재개 전까지 신규 자동주문을 보내지 않습니다.");
+        return ResponseEntity.ok(
+                Map.of(
+                        "success", true,
+                        "autoTrading", false,
+                        "orderCancellationRequested", paused.cancellationRequested(),
+                        "orderCancellationFailed", paused.cancellationFailed()));
     }
 
     @GetMapping("/summary")
@@ -201,6 +198,10 @@ public class KiwoomAutoTradeController {
                                         "averagePrice", holding.getAveragePrice(),
                                         "currentPrice", holding.getCurrentPrice(),
                                         "profitLossPercent", holding.getProfitLossPercent(),
+                                        "positionOpenedAt",
+                                                holding.getPositionOpenedAt() == null
+                                                        ? ""
+                                                        : holding.getPositionOpenedAt().toString(),
                                         "syncedAt", holding.getSyncedAt().toString()))
                 .toList();
     }

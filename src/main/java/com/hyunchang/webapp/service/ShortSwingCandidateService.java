@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 
 /** KRX 가격·거래량 1차 후보에 DART 공시와 종목별 뉴스를 붙여 단기 매매 촉매를 확인한다. 후보 선별은 코드가 맡고, 최종 해석만 AI 프롬프트에 전달한다. */
 @Service
@@ -38,6 +39,7 @@ public class ShortSwingCandidateService {
     private volatile List<KrCandidateCatalyst> cache = List.of();
     private volatile long cacheTime = 0;
     private volatile CandidateFilter cacheFilter;
+    private volatile boolean cacheCapturedDuringMarketOpen;
     private volatile List<UsCandidateSignal> usCache = List.of();
     private volatile long usCacheTime = 0;
     // KR/US 수집 락 분리 — 하나의 락을 공유하면 KR 수집이 오래 걸릴 때 US 조회까지 줄을 선다
@@ -78,6 +80,7 @@ public class ShortSwingCandidateService {
                 cache = collectCandidates(filter);
                 cacheTime = System.currentTimeMillis();
                 cacheFilter = filter;
+                cacheCapturedDuringMarketOpen = KiwoomMarketHours.isOpen();
             }
         }
         return cache.stream().limit(limit).toList();
@@ -179,7 +182,10 @@ public class ShortSwingCandidateService {
     }
 
     private boolean isFresh() {
-        return cacheTime > 0 && (System.currentTimeMillis() - cacheTime) < CACHE_TTL_MS;
+        boolean marketOpen = KiwoomMarketHours.isOpen();
+        if (marketOpen && !cacheCapturedDuringMarketOpen) return false;
+        long ttl = marketOpen ? 5 * 60 * 1000L : CACHE_TTL_MS;
+        return cacheTime > 0 && (System.currentTimeMillis() - cacheTime) < ttl;
     }
 
     /**

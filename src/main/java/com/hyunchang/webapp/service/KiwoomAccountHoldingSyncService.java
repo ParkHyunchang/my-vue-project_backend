@@ -11,6 +11,7 @@ import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
@@ -67,6 +68,13 @@ public class KiwoomAccountHoldingSyncService {
         return holdings.findByActiveTrueOrderByStockCodeAsc();
     }
 
+    /** 자동·수동 구분 없이 이번 보유가 계좌 동기화에서 처음 확인된 시각이다. */
+    public Optional<LocalDateTime> positionOpenedAt(String stockCode) {
+        return holdings.findByStockCode(stockCode)
+                .filter(KiwoomAccountHolding::isActive)
+                .map(KiwoomAccountHolding::getPositionOpenedAt);
+    }
+
     private SyncResult syncBalance(JsonNode balance, String source, boolean forceTimestamp) {
         if (!hasHoldingArray(balance))
             return new SyncResult(0, 0, false, "키움 잔고 응답에 종목 배열이 없어 기존 스냅샷을 유지했습니다.");
@@ -118,6 +126,7 @@ public class KiwoomAccountHoldingSyncService {
 
     private boolean differs(KiwoomAccountHolding stored, KiwoomTradeService.Holding broker) {
         return !stored.isActive()
+                || stored.getPositionOpenedAt() == null
                 || !stored.getStockName().equals(broker.name())
                 || stored.getQuantity() != broker.quantity()
                 || stored.getSellableQuantity() != broker.sellable()

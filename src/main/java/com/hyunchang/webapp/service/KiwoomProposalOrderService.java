@@ -122,7 +122,7 @@ public class KiwoomProposalOrderService {
                         "ORDER_UNKNOWN",
                         p.getId(),
                         "Broker response had no order number; automation was stopped to prevent duplicates.");
-                events.publishEvent("error", "주문번호를 받지 못해 자동매매를 긴급 중지했습니다: " + p.getStockCode());
+                events.publishEvent("error", "주문번호를 받지 못해 자동주문을 안전 중지했습니다: " + p.getStockCode());
                 return fail("주문번호가 없어 주문 상태를 확정할 수 없습니다. 자동매매를 중지했습니다.");
             }
             p.ordered(raw, orderNo);
@@ -221,7 +221,7 @@ public class KiwoomProposalOrderService {
 
     public synchronized Result amend(long id, int quantity, Long limitPrice) {
         KiwoomTradeProposal p = find(id);
-        if (state.isEmergencyStopped()) return fail("긴급 중지 상태에서는 주문을 정정할 수 없습니다.");
+        if (state.isEmergencyStopped()) return fail("안전 자동중지 상태에서는 주문을 정정할 수 없습니다.");
         if (!props.isTradeEnabled()) return fail("주문 전송이 비활성화되어 있습니다.");
         if (!isOpenOrder(p)) return fail("미체결·부분체결 상태의 주문만 정정할 수 있습니다.");
         if (p.getBrokerOrderNo() == null || p.getBrokerOrderNo().isBlank())
@@ -254,7 +254,7 @@ public class KiwoomProposalOrderService {
         }
     }
 
-    /** 긴급 중지 중에도 취소는 허용한다 — 노출(포지션)을 줄이는 방향의 조작은 항상 가능해야 한다. */
+    /** 안전 자동중지 중에도 취소는 허용한다 — 노출(포지션)을 줄이는 방향의 조작은 항상 가능해야 한다. */
     public synchronized Result cancel(long id, int quantity) {
         KiwoomTradeProposal p = find(id);
         if (!isOpenOrder(p)) return fail("미체결·부분체결 상태의 주문만 취소할 수 있습니다.");
@@ -280,7 +280,7 @@ public class KiwoomProposalOrderService {
     }
 
     private String preflightError(KiwoomTradeProposal p) {
-        if (state.isEmergencyStopped()) return "긴급 중지 상태에서는 주문을 전송할 수 없습니다.";
+        if (state.isEmergencyStopped()) return "안전 자동중지 상태에서는 주문을 전송할 수 없습니다.";
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다.";
         if (hasGuards(p)) return guardBlockMessage(p, "주문 초안을 전송할 수 없습니다.");
         if (!KiwoomMarketHours.isOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";

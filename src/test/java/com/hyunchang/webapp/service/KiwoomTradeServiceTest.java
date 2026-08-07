@@ -103,6 +103,27 @@ class KiwoomTradeServiceTest {
     }
 
     @Test
+    void parsesIntradayRiseAndCurrentVolumeFromRankingResponse() throws Exception {
+        var response =
+                json.readTree(
+                        """
+                        {
+                          "pred_pre_flu_rt_upper": [
+                            {"stk_cd":"A005930","stk_nm":"삼성전자","cur_prc":"+71,500","flu_rt":"+3.25","now_trde_qty":"1,234,567"}
+                          ]
+                        }
+                        """);
+
+        var stocks = tradeService().parseTopRisingStocks(response);
+
+        assertEquals(1, stocks.size());
+        assertEquals("005930", stocks.get(0).code());
+        assertEquals(71_500, stocks.get(0).currentPrice());
+        assertEquals(3.25, stocks.get(0).changePercent());
+        assertEquals(1_234_567, stocks.get(0).currentVolume());
+    }
+
+    @Test
     void requestsTheAccountBalanceTrForHoldings() {
         AtomicReference<String> apiId = new AtomicReference<>();
         WebClient.Builder clientBuilder =

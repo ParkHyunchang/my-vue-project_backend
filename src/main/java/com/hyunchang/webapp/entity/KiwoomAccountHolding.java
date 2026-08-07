@@ -28,6 +28,7 @@ public class KiwoomAccountHolding {
     private long currentPrice;
     private double profitLossPercent;
     private boolean active;
+    private LocalDateTime positionOpenedAt;
     private LocalDateTime syncedAt;
 
     public Long getId() {
@@ -70,6 +71,10 @@ public class KiwoomAccountHolding {
         return syncedAt;
     }
 
+    public LocalDateTime getPositionOpenedAt() {
+        return positionOpenedAt;
+    }
+
     public void updateFrom(
             String stockCode,
             String stockName,
@@ -79,6 +84,9 @@ public class KiwoomAccountHolding {
             long currentPrice,
             double profitLossPercent,
             LocalDateTime syncedAt) {
+        if (positionOpenedAt == null || !active || this.quantity <= 0) {
+            positionOpenedAt = syncedAt;
+        }
         this.stockCode = stockCode;
         this.stockName = stockName;
         this.quantity = quantity;

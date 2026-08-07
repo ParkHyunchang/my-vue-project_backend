@@ -53,7 +53,7 @@ public class KiwoomRiskManagerService {
             try {
                 runRiskScan("SCHEDULE");
             } catch (IllegalStateException ignored) {
-                // 긴급 중지 또는 AI 판단이 실행 중 — 다음 주기에 다시 시도한다.
+                // 안전 자동중지 또는 AI 판단이 실행 중 — 다음 주기에 다시 시도한다.
             }
         }
     }
@@ -61,7 +61,7 @@ public class KiwoomRiskManagerService {
     /** AI 판단(runDecision)과 단일 실행 가드를 공유해 동일 계좌 조회가 동시에 실행되지 않게 한다. */
     public RiskScanResult runRiskScan(String by) {
         if (state.isEmergencyStopped())
-            throw new IllegalStateException("긴급 중지 상태에서는 리스크 스캔을 실행할 수 없습니다.");
+            throw new IllegalStateException("안전 자동중지 상태에서는 리스크 스캔을 실행할 수 없습니다.");
         if (!state.tryStartDecision()) throw new IllegalStateException("이미 전략 판단이 실행 중입니다.");
         try {
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));

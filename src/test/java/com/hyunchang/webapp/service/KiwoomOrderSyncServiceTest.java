@@ -164,7 +164,23 @@ class KiwoomOrderSyncServiceTest {
         stubResponses(objectMapper.createArrayNode());
 
         KiwoomOrderSyncService.PreMarketRecoveryResult result =
-                service.reconcilePreviousDayTakeProfitOrders(today);
+                service.reconcilePreviousDayOrders(today);
+
+        assertEquals(true, result.success());
+        assertEquals(1, result.expired());
+        assertEquals(KiwoomTradeProposal.Status.CANCELED, proposal.getStatus());
+    }
+
+    @Test
+    void previousDayBuyOrderMissingFromBrokerIsAlsoExpiredBeforeMarketOpen() throws Exception {
+        LocalDate today = LocalDate.of(2026, 8, 7);
+        proposal.setAction(KiwoomTradeProposal.Action.BUY);
+        proposal.setReason("AI 매수 주문");
+        setOrderedAt(today.minusDays(1).atTime(14, 30));
+        stubResponses(objectMapper.createArrayNode());
+
+        KiwoomOrderSyncService.PreMarketRecoveryResult result =
+                service.reconcilePreviousDayOrders(today);
 
         assertEquals(true, result.success());
         assertEquals(1, result.expired());
@@ -178,7 +194,7 @@ class KiwoomOrderSyncServiceTest {
         stubResponses(objectMapper.createArrayNode());
 
         KiwoomOrderSyncService.PreMarketRecoveryResult result =
-                service.reconcilePreviousDayTakeProfitOrders(today);
+                service.reconcilePreviousDayOrders(today);
 
         assertEquals(true, result.success());
         assertEquals(0, result.expired());
@@ -195,7 +211,7 @@ class KiwoomOrderSyncServiceTest {
         stubOrderInquiries(unfilled, objectMapper.createArrayNode());
 
         KiwoomOrderSyncService.PreMarketRecoveryResult result =
-                service.reconcilePreviousDayTakeProfitOrders(today);
+                service.reconcilePreviousDayOrders(today);
 
         assertEquals(true, result.success());
         assertEquals(0, result.expired());

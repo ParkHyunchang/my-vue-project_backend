@@ -122,6 +122,48 @@ public class KiwoomPositionExitService {
         return new SettingsApplyResult(true, false, "기존 익절 주문 취소 확인 후 새 가격으로 재등록합니다.");
     }
 
+    /** 자동주문을 완전히 멈출 때 시스템이 전송한 미체결 매수·매도 주문도 함께 취소한다. */
+    public synchronized PauseResult pauseExitManagement() {
+        int requested = 0;
+        int failed = 0;
+        for (KiwoomTradeProposal order :
+                proposals.findByStatusIn(
+                        List.of(
+                                KiwoomTradeProposal.Status.ORDERED,
+                                KiwoomTradeProposal.Status.PARTIALLY_FILLED))) {
+            if (order.getRemainingQuantity() <= 0
+                    || order.getBrokerOrderNo() == null
+                    || order.getBrokerOrderNo().isBlank()) continue;
+            KiwoomProposalOrderService.Result result =
+                    orders.cancel(order.getId(), order.getRemainingQuantity());
+            if (result.success()) requested++;
+            else failed++;
+        }
+        pendingExits.clear();
+        exitTriggeredAt.clear();
+        exitTransitionDelayLogged.clear();
+        exitWaitingForSellableLogged.clear();
+        log.info(
+                "[자동매매][자동주문 완전 중지] 미체결 자동주문 취소 요청={}건, 실패={}건, 처리=신규 매수·익절·손절·보유기간 청산 중지",
+                requested,
+                failed);
+        return new PauseResult(requested, failed);
+    }
+
+    /** 자동주문 재개 시 현재 잔고와 새 손익률을 다시 계산하고 장중이면 즉시 청산 관리를 복구한다. */
+    public synchronized boolean resumeExitManagement() {
+        boolean marketOpen = KiwoomMarketHours.isOpen();
+        boolean ready = refreshPositions("AUTOMATION_RESUMED", marketOpen);
+        log.info(
+                "[자동매매][자동주문 재개] 보유={}종목, 장중={}, 처리={}",
+                positions.size(),
+                marketOpen ? "예" : "아니오",
+                marketOpen
+                        ? "현재 설정으로 익절·손절·최대 보유기간 재계산 및 주문 복구"
+                        : "현재 설정으로 보유 종목 복구, 다음 정규장 시작 시 주문 실행");
+        return ready;
+    }
+
     synchronized boolean refreshPositions(String source, boolean manageOrders) {
         if (!canManageExits()) return false;
         try {
@@ -130,9 +172,7 @@ public class KiwoomPositionExitService {
             List<KiwoomTradeService.Holding> holdings = trade.parseHoldings(balance);
             Map<String, Position> refreshed = new HashMap<>();
             for (KiwoomTradeService.Holding holding : holdings) {
-                if (!isAutomatedPosition(holding)
-                        || holding.avgPrice() <= 0
-                        || holding.quantity() <= 0) continue;
+                if (holding.avgPrice() <= 0 || holding.quantity() <= 0) continue;
                 Position position = toPosition(holding);
                 refreshed.put(position.stockCode(), position);
             }
@@ -182,24 +222,26 @@ public class KiwoomPositionExitService {
         return canManageExits();
     }
 
-    boolean preparePositionsBeforeMarketOpen() {
-        boolean prepared = refreshPositions("PRE_MARKET_0850", false);
+    boolean preparePositionsBeforeMarketOpen(String executionReason, String refreshSource) {
+        boolean prepared = refreshPositions(refreshSource, false);
         if (prepared) {
             preMarketPreparedDate = LocalDate.now(KiwoomMarketHours.KST);
             log.info(
-                    "[자동매매][08:50 보유 종목 준비 완료] 보유={}종목, 처리=주문 전송 없이 잔고 복구 및 실시간 구독 준비",
+                    "[자동매매][보유 종목 사전 준비 완료] 실행={}, 보유={}종목, 처리=주문 전송 없이 잔고 복구 및 실시간 구독 준비",
+                    executionReason,
                     positions.size());
         }
         return prepared;
     }
 
-    boolean startExitOrdersAtMarketOpen() {
+    boolean startExitOrdersAtMarketOpen(String executionReason, String refreshSource) {
         LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
         if (!today.equals(preMarketPreparedDate)) return false;
-        boolean started = refreshPositions("MARKET_OPEN_0900", true);
+        boolean started = refreshPositions(refreshSource, true);
         if (started)
             log.info(
-                    "[자동매매][09:00 청산 관리 시작] 보유={}종목, 처리=익절 지정가 주문 확인 및 실시간 손절 감시 시작",
+                    "[자동매매][청산 관리 시작] 실행={}, 보유={}종목, 처리=익절 지정가 주문 확인 및 실시간 손절 감시 시작",
+                    executionReason,
                     positions.size());
         return started;
     }
@@ -253,7 +295,7 @@ public class KiwoomPositionExitService {
 
     /** Invoked by the order synchronizer only when a broker order actually changed state. */
     public void onOrderStateChanged() {
-        refreshPositions("ORDER_STATE_CHANGED");
+        refreshPositions("ORDER_STATE_CHANGED", KiwoomMarketHours.isOpen());
     }
 
     /** 주문 동기화 서비스가 손절 전환 중인 익절 취소 건만 빠르게 조회할 때 사용한다. */
@@ -530,21 +572,26 @@ public class KiwoomPositionExitService {
     }
 
     private long engineHoldingTradingDays(String code) {
+        LocalDateTime observedAt = accountHoldings.positionOpenedAt(code).orElse(null);
+        if (observedAt != null) return tradingDaysSince(observedAt.toLocalDate());
         return proposals
                 .findFirstByStockCodeAndActionAndStatusOrderByCreatedAtDesc(
                         code, KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Status.FILLED)
                 .filter(proposal -> proposal.getCreatedAt() != null)
                 .map(
                         proposal -> {
-                            LocalDate bought = proposal.getCreatedAt().toLocalDate();
-                            LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
-                            if (!bought.isBefore(today)) return 0L;
-                            return bought.plusDays(1)
-                                    .datesUntil(today.plusDays(1))
-                                    .filter(KiwoomMarketHours::isTradingDay)
-                                    .count();
+                            return tradingDaysSince(proposal.getCreatedAt().toLocalDate());
                         })
                 .orElse(0L);
+    }
+
+    private long tradingDaysSince(LocalDate opened) {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        if (opened == null || !opened.isBefore(today)) return 0L;
+        return opened.plusDays(1)
+                .datesUntil(today.plusDays(1))
+                .filter(KiwoomMarketHours::isTradingDay)
+                .count();
     }
 
     private KiwoomTradeProposal newExitProposal(
@@ -573,15 +620,6 @@ public class KiwoomPositionExitService {
         return runs.save(run);
     }
 
-    private boolean isAutomatedPosition(KiwoomTradeService.Holding holding) {
-        return proposals.existsByStockCodeAndActionAndStatusIn(
-                holding.code(),
-                KiwoomTradeProposal.Action.BUY,
-                List.of(
-                        KiwoomTradeProposal.Status.PARTIALLY_FILLED,
-                        KiwoomTradeProposal.Status.FILLED));
-    }
-
     private List<KiwoomTradeProposal> openTakeProfitOrders(String stockCode) {
         return proposals.findByStatusIn(OPEN_SELL_STATUSES).stream()
                 .filter(
@@ -591,6 +629,12 @@ public class KiwoomPositionExitService {
                                         && proposal.getReason() != null
                                         && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]"))
                 .toList();
+    }
+
+    private boolean isTakeProfit(KiwoomTradeProposal proposal) {
+        return proposal.getAction() == KiwoomTradeProposal.Action.SELL
+                && proposal.getReason() != null
+                && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
     }
 
     private boolean hasOtherOpenSell(String stockCode) {
@@ -708,4 +752,6 @@ public class KiwoomPositionExitService {
 
     public record SettingsApplyResult(
             boolean balanceRefreshed, boolean completed, String message) {}
+
+    public record PauseResult(int cancellationRequested, int cancellationFailed) {}
 }

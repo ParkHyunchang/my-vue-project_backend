@@ -90,7 +90,7 @@ public class KiwoomStrategyController {
         try {
             return ResponseEntity.ok(strategy.runDecision("MANUAL"));
         } catch (IllegalStateException e) {
-            // 긴급 중지 또는 판단 중복 실행 — 서버 오류(500)가 아니라 상태 충돌(409)로 응답한다.
+            // 안전 자동중지 또는 판단 중복 실행 — 서버 오류(500)가 아니라 상태 충돌(409)로 응답한다.
             return ResponseEntity.status(409).body(Map.of("message", e.getMessage()));
         }
     }
@@ -250,7 +250,6 @@ public class KiwoomStrategyController {
         Map<String, Object> result = new HashMap<>();
         result.put("configured", props.isConfigured());
         result.put("autoTrading", state.isAutoTrading());
-        result.put("emergencyStopped", state.isEmergencyStopped());
         result.put("decisionRunning", state.isDeciding());
         result.put("consecutiveApiFailures", state.getConsecutiveApiFailures());
         result.put(

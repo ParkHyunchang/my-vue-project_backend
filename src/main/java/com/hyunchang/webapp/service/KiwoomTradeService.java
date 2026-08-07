@@ -82,6 +82,50 @@ public class KiwoomTradeService {
     }
 
     /**
+     * 장중 전일대비 상승률 상위 종목을 조회한다. 후보 선별에 사용하는 등락률과 거래량은
+     * 전일 KRX 종가가 아니라 이 응답의 현재가·현재 누적 거래량을 기준으로 한다.
+     */
+    public Mono<List<IntradayRankStock>> getTopRisingStocks() {
+        return readRequest(
+                        "ka10027",
+                        "/api/dostk/frgnistt",
+                        Map.of(
+                                "mrkt_tp", "000",
+                                "sort_tp", "1",
+                                "trde_qty_cnd", "0000",
+                                "stk_cnd", "4",
+                                "crd_cnd", "0",
+                                "updown_incls", "0",
+                                "pric_cnd", "0",
+                                "trde_prica_cnd", "0",
+                                "stex_tp", "1"))
+                .map(this::parseTopRisingStocks);
+    }
+
+    List<IntradayRankStock> parseTopRisingStocks(JsonNode response) {
+        List<IntradayRankStock> result = new ArrayList<>();
+        if (response == null) return result;
+        JsonNode rows = response.path("pred_pre_flu_rt_upper");
+        if (!rows.isArray()) return result;
+        for (JsonNode row : rows) {
+            String code = row.path("stk_cd").asText("").replaceAll("^[A-Za-z]+", "");
+            if (!code.matches("\\d{6}")) continue;
+            long currentPrice = Math.abs(number(row, "cur_prc"));
+            long currentVolume = Math.max(0, number(row, "now_trde_qty"));
+            double changePercent = decimalNumber(row, "flu_rt");
+            if (currentPrice <= 0 || currentVolume <= 0 || changePercent <= 0) continue;
+            result.add(
+                    new IntradayRankStock(
+                            code,
+                            row.path("stk_nm").asText(code).trim(),
+                            currentPrice,
+                            changePercent,
+                            currentVolume));
+        }
+        return result;
+    }
+
+    /**
      * 현금(일반) 시장가(3) 또는 지정가(0) 국내 주식 매수/매도 요청입니다. 신용 매수/매도 TR(kt10006/kt10007)은 이 자동매매 서비스에서 절대 사용하지
      * 않습니다.
      */
@@ -320,6 +364,17 @@ public class KiwoomTradeService {
         return Math.abs(number(n, names));
     }
 
+    private double decimalNumber(JsonNode node, String field) {
+        if (node == null || !node.hasNonNull(field)) return 0;
+        String value = node.path(field).asText("").replace(",", "").replace("%", "").trim();
+        if (value.isEmpty()) return 0;
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
     private void logEmptyBalanceResponse(JsonNode balance) {
         if (balance == null
                 || !parseHoldings(balance).isEmpty()
@@ -427,6 +482,9 @@ public class KiwoomTradeService {
             long avgPrice,
             long curPrice,
             double plPct) {}
+
+    public record IntradayRankStock(
+            String code, String name, long currentPrice, double changePercent, long currentVolume) {}
 
     public record SellAvailability(
             String stockCode,

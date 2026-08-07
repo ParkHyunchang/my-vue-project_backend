@@ -60,10 +60,10 @@ class KiwoomPositionExitServiceTest {
     void setUp() throws Exception {
         KiwoomProperties.Strategy strategy = new KiwoomProperties.Strategy();
         strategy.setEnabled(true);
-        when(props.getStrategy()).thenReturn(strategy);
-        when(props.isConfigured()).thenReturn(true);
-        when(state.isAutoTrading()).thenReturn(true);
-        when(state.isEmergencyStopped()).thenReturn(false);
+        lenient().when(props.getStrategy()).thenReturn(strategy);
+        lenient().when(props.isConfigured()).thenReturn(true);
+        lenient().when(state.isAutoTrading()).thenReturn(true);
+        lenient().when(state.isEmergencyStopped()).thenReturn(false);
 
         current = new KiwoomStrategySettings();
         current.setAutoExecute(true);
@@ -71,9 +71,8 @@ class KiwoomPositionExitServiceTest {
         current.setSwingStopLossPercent(10);
         current.setSwingTakeProfitPercent(10);
         current.setSwingMaxHoldingDays(5);
-        when(settings.current()).thenReturn(current);
+        lenient().when(settings.current()).thenReturn(current);
 
-        when(proposals.existsByStockCodeAndActionAndStatusIn(any(), any(), any())).thenReturn(true);
         lenient()
                 .when(proposals.findByStatusIn(any()))
                 .thenAnswer(
@@ -190,11 +189,9 @@ class KiwoomPositionExitServiceTest {
         KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
         openOrders.add(takeProfit);
         stubHolding(6, 0, 1119, 1100);
-        KiwoomTradeProposal filledBuy = new KiwoomTradeProposal();
-        setCreatedAt(filledBuy, LocalDateTime.now().minusDays(10));
-        when(proposals.findFirstByStockCodeAndActionAndStatusOrderByCreatedAtDesc(
-                        CODE, KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Status.FILLED))
-                .thenReturn(Optional.of(filledBuy));
+        // 자동매수 제안 이력이 없는 수동 보유종목도 기존 계좌 보유 테이블의 시작일로 계산한다.
+        when(accountHoldings.positionOpenedAt(CODE))
+                .thenReturn(Optional.of(LocalDateTime.now().minusDays(10)));
         when(orders.cancel(takeProfit.getId(), 6))
                 .thenAnswer(
                         invocation -> {
@@ -245,7 +242,8 @@ class KiwoomPositionExitServiceTest {
     void preMarketPreparationRestoresPositionsWithoutSendingOrders() {
         stubHolding(6, 6, 1119, 1100);
 
-        boolean prepared = service.preparePositionsBeforeMarketOpen();
+        boolean prepared =
+                service.preparePositionsBeforeMarketOpen("08:50 정기 사전 복구", "PRE_MARKET_0850");
 
         assertEquals(true, prepared);
         verify(websocket).connectAndSubscribe(List.of(CODE));
@@ -304,6 +302,32 @@ class KiwoomPositionExitServiceTest {
         verify(orders, never()).autoExecute(anyLong());
     }
 
+    @Test
+    void completeStopCancelsAllOpenAutomatedOrders() throws Exception {
+        KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
+        KiwoomTradeProposal pendingBuy = new KiwoomTradeProposal();
+        setId(pendingBuy, ids.incrementAndGet());
+        pendingBuy.setAction(KiwoomTradeProposal.Action.BUY);
+        pendingBuy.setStockCode("005930");
+        pendingBuy.setStockName("삼성전자");
+        pendingBuy.setQuantity(2);
+        pendingBuy.setReason("AI 자동 매수");
+        pendingBuy.ordered("{}", "0067225");
+        openOrders.add(takeProfit);
+        openOrders.add(pendingBuy);
+        when(orders.cancel(takeProfit.getId(), 6))
+                .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit));
+        when(orders.cancel(pendingBuy.getId(), 2))
+                .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", pendingBuy));
+
+        KiwoomPositionExitService.PauseResult result = service.pauseExitManagement();
+
+        assertEquals(2, result.cancellationRequested());
+        assertEquals(0, result.cancellationFailed());
+        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders).cancel(pendingBuy.getId(), 2);
+    }
+
     private void stubHolding(int quantity, int sellable, long averagePrice, long currentPrice) {
         JsonNode balance = objectMapper.createObjectNode();
         when(trade.getBalance()).thenReturn(Mono.just(balance));
@@ -341,10 +365,4 @@ class KiwoomPositionExitServiceTest {
         field.set(proposal, id);
     }
 
-    private void setCreatedAt(KiwoomTradeProposal proposal, LocalDateTime createdAt)
-            throws Exception {
-        Field field = KiwoomTradeProposal.class.getDeclaredField("createdAt");
-        field.setAccessible(true);
-        field.set(proposal, createdAt);
-    }
 }

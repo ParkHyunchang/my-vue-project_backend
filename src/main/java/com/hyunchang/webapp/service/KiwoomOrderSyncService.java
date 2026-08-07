@@ -28,6 +28,7 @@ public class KiwoomOrderSyncService {
     private static final Logger log = LoggerFactory.getLogger(KiwoomOrderSyncService.class);
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final Duration URGENT_CANCEL_POLL_WINDOW = Duration.ofSeconds(60);
+    private static final Duration APPLICATION_RESTART_LOG_WINDOW = Duration.ofMinutes(5);
     private static final List<KiwoomTradeProposal.Status> PRE_MARKET_OPEN_STATUSES =
             List.of(
                     KiwoomTradeProposal.Status.PROPOSED,
@@ -43,6 +44,7 @@ public class KiwoomOrderSyncService {
     private final KiwoomPositionExitService exits;
     private final AtomicBoolean syncInProgress = new AtomicBoolean();
     private final Set<String> urgentCancelDelayLogged = ConcurrentHashMap.newKeySet();
+    private final LocalDateTime serviceStartedAt = LocalDateTime.now(KST);
     private volatile LocalDate preMarketRecoveryCompletedDate;
     private volatile LocalDate marketOpenExitStartedDate;
 
@@ -61,7 +63,27 @@ public class KiwoomOrderSyncService {
 
     @Scheduled(fixedDelay = 60000)
     public void scheduledSync() {
-        if (props.isConfigured() && hasPendingOrders()) sync();
+        if (props.isConfigured() && KiwoomMarketHours.isOpen() && hasPendingOrders()) sync();
+    }
+
+    /** 새 매수 체결 뒤 익절·손절 관리 시작이 1분 늦어지지 않도록 장중 매수 주문만 빠르게 확인한다. */
+    @Scheduled(fixedDelay = 3000, initialDelay = 3000)
+    public void fastPendingBuySync() {
+        if (props.isConfigured() && KiwoomMarketHours.isOpen() && hasPendingBuyOrders()) sync();
+    }
+
+    /** 정규장 종료 뒤에는 반복 조회하지 않고 한 번만 최종 체결 상태를 확인한다. */
+    @Scheduled(cron = "0 36 15 * * MON-FRI", zone = "Asia/Seoul")
+    public void finalMarketCloseSync() {
+        LocalDate today = LocalDate.now(KST);
+        if (!props.isConfigured() || !KiwoomMarketHours.isTradingDay(today) || !hasPendingOrders())
+            return;
+        SyncResult result = sync();
+        log.info(
+                "[자동매매][장 마감 최종 주문 확인] 조회={}건, 갱신={}건, 결과={}",
+                result.records(),
+                result.updated(),
+                result.message());
     }
 
     /** 08:50부터 사전 복구가 성공할 때까지 매분 재시도한다. 이 단계에서는 실제 주문을 보내지 않는다. */
@@ -72,7 +94,8 @@ public class KiwoomOrderSyncService {
                 || !props.isConfigured()
                 || !exits.isExitManagementEnabled()
                 || today.equals(preMarketRecoveryCompletedDate)) return;
-        runPreMarketRecovery(today);
+        runPreMarketRecovery(
+                today, recoveryTrigger("08:50 정기 사전 복구", "PRE_MARKET_0850"));
     }
 
     /** 09:00에 시작하고, 자동매매가 늦게 켜지거나 조회가 실패하면 장중 매분 재시도한다. */
@@ -84,38 +107,80 @@ public class KiwoomOrderSyncService {
                 || !props.isConfigured()
                 || !exits.isExitManagementEnabled()
                 || today.equals(marketOpenExitStartedDate)) return;
-        if (!today.equals(preMarketRecoveryCompletedDate) && !runPreMarketRecovery(today)) {
+        RecoveryTrigger recoveryTrigger =
+                recoveryTrigger("장 시작 복구 재확인", "MARKET_OPEN_RECHECK");
+        boolean recoveredNow = !today.equals(preMarketRecoveryCompletedDate);
+        if (recoveredNow && !runPreMarketRecovery(today, recoveryTrigger)) {
             log.error(
-                    "[자동매매][장 시작 주문 보류] 08:50 사전 복구가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
+                    "[자동매매][장 시작 주문 보류] 사전 복구가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
             return;
         }
-        if (exits.startExitOrdersAtMarketOpen()) marketOpenExitStartedDate = today;
+        boolean recentApplicationRestart = isRecentApplicationRestart();
+        String startReason =
+                recentApplicationRestart
+                        ? "서버 재기동 후 확인"
+                        : recoveredNow
+                                ? recoveryTrigger.label()
+                                : "09:00 정규장 시작";
+        String refreshSource =
+                recentApplicationRestart
+                        ? "APPLICATION_RESTART"
+                        : recoveredNow ? recoveryTrigger.refreshSource() : "MARKET_OPEN_0900";
+        if (exits.startExitOrdersAtMarketOpen(startReason, refreshSource))
+            marketOpenExitStartedDate = today;
     }
 
-    private boolean runPreMarketRecovery(LocalDate today) {
-        PreMarketRecoveryResult result = reconcilePreviousDayTakeProfitOrders(today);
+    private boolean runPreMarketRecovery(LocalDate today, RecoveryTrigger trigger) {
+        PreMarketRecoveryResult result = reconcilePreviousDayOrders(today);
         if (!result.success()) {
-            log.warn("[자동매매][장 시작 사전 복구 재시도 대기] 사유={}", result.message());
+            log.warn(
+                    "[자동매매][장 시작 사전 복구 재시도 대기] 실행={}, 사유={}",
+                    trigger.label(),
+                    result.message());
             return false;
         }
-        if (!exits.preparePositionsBeforeMarketOpen()) {
-            log.warn("[자동매매][장 시작 사전 복구 재시도 대기] 사유=보유 종목 조회 또는 실시간 구독 준비 실패");
+        if (!exits.preparePositionsBeforeMarketOpen(trigger.label(), trigger.refreshSource())) {
+            log.warn(
+                    "[자동매매][장 시작 사전 복구 재시도 대기] 실행={}, 사유=보유 종목 조회 또는 실시간 구독 준비 실패",
+                    trigger.label());
             return false;
         }
         preMarketRecoveryCompletedDate = today;
+        String nextAction =
+                KiwoomMarketHours.isOpen()
+                        ? "현재 장중 청산 관리 시작 준비"
+                        : "09:00 주문 시작 대기";
         log.info(
-                "[자동매매][장 시작 사전 복구 완료] 기준일={}, 키움 주문 응답={}건, 전일 익절 주문 만료={}건, 처리=09:00 주문 시작 대기",
+                "[자동매매][장 시작 사전 복구 완료] 실행={}, 기준일={}, 키움 주문 응답={}건, 전일 미종결 주문 만료={}건, 처리={}",
+                trigger.label(),
                 today,
                 result.records(),
-                result.expired());
+                result.expired(),
+                nextAction);
         audit.log(
                 "PRE_MARKET_RECOVERY_COMPLETED",
                 null,
-                "전일 익절 주문 " + result.expired() + "건을 정리하고 09:00 주문 시작을 준비했습니다.");
+                trigger.label()
+                        + ": 전일 미종결 주문 "
+                        + result.expired()
+                        + "건을 정리하고 "
+                        + nextAction
+                        + "를 완료했습니다.");
         return true;
     }
 
-    PreMarketRecoveryResult reconcilePreviousDayTakeProfitOrders(LocalDate today) {
+    private RecoveryTrigger recoveryTrigger(String scheduledLabel, String scheduledSource) {
+        if (isRecentApplicationRestart())
+            return new RecoveryTrigger("서버 재기동 후 확인", "APPLICATION_RESTART");
+        return new RecoveryTrigger(scheduledLabel, scheduledSource);
+    }
+
+    private boolean isRecentApplicationRestart() {
+        Duration elapsed = Duration.between(serviceStartedAt, LocalDateTime.now(KST));
+        return !elapsed.isNegative() && elapsed.compareTo(APPLICATION_RESTART_LOG_WINDOW) <= 0;
+    }
+
+    PreMarketRecoveryResult reconcilePreviousDayOrders(LocalDate today) {
         if (!syncInProgress.compareAndSet(false, true))
             return new PreMarketRecoveryResult(false, 0, 0, "다른 주문 상태 동기화가 진행 중입니다.");
         try {
@@ -136,19 +201,23 @@ public class KiwoomOrderSyncService {
             int expired = 0;
             for (KiwoomTradeProposal proposal :
                     proposals.findByStatusIn(PRE_MARKET_OPEN_STATUSES)) {
-                if (!isTakeProfit(proposal) || !isFromPreviousDate(proposal, today)) continue;
+                if (!isFromPreviousDate(proposal, today) || proposal.getBrokerOrderNo() == null)
+                    continue;
                 String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
                 if (orderNo != null && brokerUnfilledOrderNumbers.contains(orderNo)) continue;
 
-                String reason = "전일 미체결 익절 주문이 다음 거래일 키움 미체결 목록에 없어 자동 만료 처리했습니다.";
+                String reason =
+                        "전일 일일 주문이 다음 거래일 키움 미체결 목록에 없어 자동 만료 처리했습니다.";
                 proposal.expired(reason);
                 proposals.save(proposal);
-                audit.log("TAKE_PROFIT_ORDER_EXPIRED", proposal.getId(), reason);
+                audit.log("PREVIOUS_DAY_ORDER_EXPIRED", proposal.getId(), reason);
                 log.info(
-                        "[자동매매][전일 익절 주문 만료] {}({}), 주문번호={}, 기존 상태 종료 후 09:00 재등록 대상",
+                        "[자동매매][전일 주문 만료] {} {}({}), 주문번호={}, 주문 종류={}, 기존 열린 상태 종료",
+                        actionLabel(proposal.getAction()),
                         proposal.getStockName(),
                         proposal.getStockCode(),
-                        proposal.getBrokerOrderNo() == null ? "미전송" : proposal.getBrokerOrderNo());
+                        proposal.getBrokerOrderNo(),
+                        isTakeProfit(proposal) ? "익절 지정가" : "일반 주문");
                 expired++;
             }
             return new PreMarketRecoveryResult(
@@ -167,7 +236,7 @@ public class KiwoomOrderSyncService {
      */
     @Scheduled(fixedDelay = 2000, initialDelay = 2000)
     public void urgentStopCancellationSync() {
-        if (!props.isConfigured()) return;
+        if (!props.isConfigured() || !KiwoomMarketHours.isOpen()) return;
 
         List<KiwoomTradeProposal> cancelRequests =
                 proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED));
@@ -446,6 +515,17 @@ public class KiwoomOrderSyncService {
                 .isEmpty();
     }
 
+    private boolean hasPendingBuyOrders() {
+        return proposals
+                .findByStatusIn(
+                        List.of(
+                                KiwoomTradeProposal.Status.ORDERED,
+                                KiwoomTradeProposal.Status.PARTIALLY_FILLED))
+                .stream()
+                .anyMatch(
+                        proposal -> proposal.getAction() == KiwoomTradeProposal.Action.BUY);
+    }
+
     private boolean isTakeProfit(KiwoomTradeProposal proposal) {
         return hasExitReason(proposal, "[EXIT:TAKE_PROFIT]");
     }
@@ -504,4 +584,6 @@ public class KiwoomOrderSyncService {
     public record SyncResult(int records, int updated, String message) {}
 
     record PreMarketRecoveryResult(boolean success, int records, int expired, String message) {}
+
+    private record RecoveryTrigger(String label, String refreshSource) {}
 }

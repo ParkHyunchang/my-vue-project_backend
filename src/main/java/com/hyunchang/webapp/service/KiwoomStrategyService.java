@@ -113,14 +113,14 @@ public class KiwoomStrategyService {
             try {
                 runDecision("SCHEDULE");
             } catch (IllegalStateException ignored) {
-                // 긴급 중지 또는 이미 실행 중 — 다음 주기에 다시 시도한다.
+                // 안전 자동중지 또는 이미 실행 중 — 다음 주기에 다시 시도한다.
             }
         }
     }
 
     public DecisionResult runDecision(String by) {
         if (state.isEmergencyStopped())
-            throw new IllegalStateException("긴급 중지 상태에서는 전략 판단을 실행할 수 없습니다.");
+            throw new IllegalStateException("안전 자동중지 상태입니다. 자동주문 시작 버튼으로 다시 시작하세요.");
         if (!state.tryStartDecision()) throw new IllegalStateException("이미 전략 판단이 실행 중입니다.");
         KiwoomStrategyRun run = new KiwoomStrategyRun();
         run.setTriggeredBy(
