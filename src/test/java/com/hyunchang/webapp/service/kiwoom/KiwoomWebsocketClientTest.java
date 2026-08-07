@@ -2,6 +2,7 @@ package com.hyunchang.webapp.service.kiwoom;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -18,9 +19,11 @@ import com.hyunchang.webapp.service.KiwoomAuthService;
 import java.net.http.WebSocket;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import reactor.core.publisher.Mono;
 
 class KiwoomWebsocketClientTest {
@@ -89,6 +92,21 @@ class KiwoomWebsocketClientTest {
         client.handleMessage("{\"trnm\":\"REG\",\"return_code\":0}");
         assertTrue(client.isConnected());
         verify(secondSocket, times(2)).sendText(anyString(), eq(true));
+    }
+
+    @Test
+    void springContextUsesProductionConstructor() {
+        try (AnnotationConfigApplicationContext context =
+                new AnnotationConfigApplicationContext()) {
+            context.registerBean(KiwoomProperties.class, () -> properties);
+            context.registerBean(KiwoomAuthService.class, () -> auth);
+            context.registerBean(
+                    ObjectMapper.class, (Supplier<ObjectMapper>) () -> new ObjectMapper());
+            context.register(KiwoomWebsocketClient.class);
+            context.refresh();
+
+            assertNotNull(context.getBean(KiwoomWebsocketClient.class));
+        }
     }
 
     private WebSocket socket() {

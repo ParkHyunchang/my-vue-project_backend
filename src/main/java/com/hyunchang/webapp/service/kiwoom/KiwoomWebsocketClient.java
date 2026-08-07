@@ -26,6 +26,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
@@ -58,6 +59,7 @@ public class KiwoomWebsocketClient implements WebSocket.Listener {
     private volatile WebSocket socket;
     private volatile boolean shuttingDown;
 
+    @Autowired
     public KiwoomWebsocketClient(
             KiwoomProperties properties, KiwoomAuthService authService, ObjectMapper objectMapper) {
         this(
