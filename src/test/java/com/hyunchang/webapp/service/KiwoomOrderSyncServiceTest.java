@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -16,6 +17,7 @@ import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -97,6 +99,27 @@ class KiwoomOrderSyncServiceTest {
         assertEquals(0, proposal.getRemainingQuantity());
         assertEquals(1235L, proposal.getAverageFillPrice());
         verify(exits).onOrderStateChanged();
+    }
+
+    @Test
+    void takeProfitReregistrationRunsOutsideTheBrokerInquiryLock() throws Exception {
+        JsonNode filled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"cntr_qty\":\"6\",\"cntr_prc\":\"1235\"}");
+        stubResponses(filled);
+        List<String> nestedSync = new ArrayList<>();
+        doAnswer(
+                        invocation -> {
+                            nestedSync.add(service.sync().message());
+                            return null;
+                        })
+                .when(exits)
+                .onOrderStateChanged();
+
+        service.sync();
+
+        // 락을 쥔 채 익절 주문을 다시 걸면 그 사이 손절 취소 확인과 장 시작 사전 복구가 튕긴다.
+        assertEquals(List.of("동기화 대상 주문이 없습니다."), nestedSync);
     }
 
     @Test

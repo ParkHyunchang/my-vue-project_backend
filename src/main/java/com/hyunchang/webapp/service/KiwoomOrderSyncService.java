@@ -114,10 +114,15 @@ public class KiwoomOrderSyncService {
         RecoveryTrigger recoveryTrigger =
                 recoveryTrigger("장 시작 복구 재확인", "MARKET_OPEN_RECHECK");
         boolean recoveredNow = !today.equals(preMarketRecoveryCompletedDate);
-        if (recoveredNow && !runPreMarketRecovery(today, recoveryTrigger)) {
-            log.error(
-                    "[자동매매][장 시작 주문 보류] 사전 복구가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
-            return;
+        if (recoveredNow) {
+            RecoveryOutcome outcome = runPreMarketRecovery(today, recoveryTrigger);
+            // 다른 동기화가 락을 쥐고 있어 비켜준 것뿐이면 다음 분 크론이 그대로 재시도한다.
+            if (outcome == RecoveryOutcome.BUSY) return;
+            if (outcome != RecoveryOutcome.COMPLETED) {
+                log.error(
+                        "[자동매매][장 시작 주문 보류] 사전 복구가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
+                return;
+            }
         }
         boolean recentApplicationRestart = isRecentApplicationRestart();
         String startReason =
@@ -134,20 +139,27 @@ public class KiwoomOrderSyncService {
             marketOpenExitStartedDate = today;
     }
 
-    private boolean runPreMarketRecovery(LocalDate today, RecoveryTrigger trigger) {
+    private RecoveryOutcome runPreMarketRecovery(LocalDate today, RecoveryTrigger trigger) {
         PreMarketRecoveryResult result = reconcilePreviousDayOrders(today);
+        if (result.busy()) {
+            // 정상적인 락 양보다. 진짜 실패와 섞이면 로그에서 장애를 가려버린다.
+            log.info(
+                    "[자동매매][장 시작 사전 복구 대기] 실행={}, 사유=다른 주문 상태 동기화가 진행 중, 처리=다음 분에 다시 시도",
+                    trigger.label());
+            return RecoveryOutcome.BUSY;
+        }
         if (!result.success()) {
             log.warn(
                     "[자동매매][장 시작 사전 복구 재시도 대기] 실행={}, 사유={}",
                     trigger.label(),
                     result.message());
-            return false;
+            return RecoveryOutcome.FAILED;
         }
         if (!exits.preparePositionsBeforeMarketOpen(trigger.label(), trigger.refreshSource())) {
             log.warn(
                     "[자동매매][장 시작 사전 복구 재시도 대기] 실행={}, 사유=보유 종목 조회 또는 실시간 구독 준비 실패",
                     trigger.label());
-            return false;
+            return RecoveryOutcome.FAILED;
         }
         preMarketRecoveryCompletedDate = today;
         String nextAction =
@@ -170,7 +182,7 @@ public class KiwoomOrderSyncService {
                         + "건을 정리하고 "
                         + nextAction
                         + "를 완료했습니다.");
-        return true;
+        return RecoveryOutcome.COMPLETED;
     }
 
     private RecoveryTrigger recoveryTrigger(String scheduledLabel, String scheduledSource) {
@@ -185,8 +197,7 @@ public class KiwoomOrderSyncService {
     }
 
     PreMarketRecoveryResult reconcilePreviousDayOrders(LocalDate today) {
-        if (!syncInProgress.compareAndSet(false, true))
-            return new PreMarketRecoveryResult(false, 0, 0, "다른 주문 상태 동기화가 진행 중입니다.");
+        if (!syncInProgress.compareAndSet(false, true)) return PreMarketRecoveryResult.lockBusy();
         try {
             List<JsonNode> unfilledRecords = new ArrayList<>();
             List<JsonNode> allRecords = new ArrayList<>();
@@ -220,11 +231,11 @@ public class KiwoomOrderSyncService {
                         isTakeProfit(proposal) ? "익절 지정가" : "일반 주문");
                 expired++;
             }
-            return new PreMarketRecoveryResult(
-                    true, allRecords.size(), expired, "장 시작 사전 주문 복구 완료");
+            return PreMarketRecoveryResult.completed(
+                    allRecords.size(), expired, "장 시작 사전 주문 복구 완료");
         } catch (Exception e) {
-            return new PreMarketRecoveryResult(
-                    false, 0, 0, "장 시작 사전 주문 복구 실패: " + trim(e.getMessage()));
+            return PreMarketRecoveryResult.failed(
+                    "장 시작 사전 주문 복구 실패: " + trim(e.getMessage()));
         } finally {
             syncInProgress.set(false);
         }
@@ -289,11 +300,17 @@ public class KiwoomOrderSyncService {
     public SyncResult sync() {
         if (!syncInProgress.compareAndSet(false, true))
             return new SyncResult(0, 0, "다른 주문 상태 동기화가 진행 중입니다.");
+        SyncResult result;
         try {
-            return doSync();
+            result = doSync();
         } finally {
             syncInProgress.set(false);
         }
+        // 익절 주문 재등록은 브로커 조회 락 밖에서 한다. 여러 건을 다시 거는 동안 락을 쥐고 있으면
+        // 2초 주기 손절 취소 확인과 장 시작 사전 복구가 그만큼 밀린다. 청산 작업 자체는
+        // refreshPositions가 synchronized라 그대로 직렬로 돈다.
+        if (result.updated() > 0) exits.onOrderStateChanged();
+        return result;
     }
 
     private SyncResult doSync() {
@@ -337,7 +354,6 @@ public class KiwoomOrderSyncService {
                     updated++;
                 }
             }
-            if (updated > 0) exits.onOrderStateChanged();
             return new SyncResult(records.size(), updated, "주문 상태 동기화 완료");
         } catch (Exception e) {
             return new SyncResult(0, 0, "주문 상태 동기화 실패: " + trim(e.getMessage()));
@@ -627,7 +643,29 @@ public class KiwoomOrderSyncService {
 
     public record SyncResult(int records, int updated, String message) {}
 
-    record PreMarketRecoveryResult(boolean success, int records, int expired, String message) {}
+    record PreMarketRecoveryResult(
+            boolean success, boolean busy, int records, int expired, String message) {
+        /** 다른 동기화가 락을 쥐고 있어 이번 차례를 건너뛴 것 — 재시도로 풀리는 정상 상황이다. */
+        static PreMarketRecoveryResult lockBusy() {
+            return new PreMarketRecoveryResult(
+                    false, true, 0, 0, "다른 주문 상태 동기화가 진행 중입니다.");
+        }
+
+        static PreMarketRecoveryResult failed(String message) {
+            return new PreMarketRecoveryResult(false, false, 0, 0, message);
+        }
+
+        static PreMarketRecoveryResult completed(int records, int expired, String message) {
+            return new PreMarketRecoveryResult(true, false, records, expired, message);
+        }
+    }
+
+    /** 사전 복구가 끝났는지, 락 때문에 비켜준 것인지, 진짜 실패인지 구분한다. */
+    private enum RecoveryOutcome {
+        COMPLETED,
+        BUSY,
+        FAILED
+    }
 
     private record RecoveryTrigger(String label, String refreshSource) {}
 }
