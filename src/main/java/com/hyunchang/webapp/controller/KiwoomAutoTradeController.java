@@ -173,15 +173,20 @@ public class KiwoomAutoTradeController {
     @GetMapping("/summary")
     public Mono<Map<String, Object>> summary() {
         return Mono.zip(tradeService.getDeposit(), tradeService.getBalance())
-                .map(
-                        data ->
-                                Map.of(
-                                        "deposit",
-                                        number(data.getT1(), "entr", "ord_alow_amt"),
-                                        "profitLoss",
-                                        tradeService.totalEvaluationProfitLoss(data.getT2()),
-                                        "totalEvaluation",
-                                        tradeService.totalEvaluationAmount(data.getT2())));
+                .map(data -> {
+                    KiwoomTradeService.AccountAsset totalAsset =
+                            tradeService.accountAsset(data.getT1(), data.getT2());
+                    return Map.<String, Object>of(
+                            "totalAsset", totalAsset.amount(),
+                            "totalAssetSource",
+                            "추정예탁자산".equals(totalAsset.source())
+                                    ? "키움 기준 · 결제 예정금액 포함"
+                                    : "예수금 + 보유주식 평가액",
+                            "deposit", number(data.getT1(), "entr"),
+                            "orderAvailable", number(data.getT1(), "ord_alow_amt", "ord_psbl_cash", "entr"),
+                            "profitLoss", tradeService.totalEvaluationProfitLoss(data.getT2()),
+                            "totalEvaluation", tradeService.totalEvaluationAmount(data.getT2()));
+                });
     }
 
     /** 자동매매가 실제로 사용하는 키움 계좌 보유현황 스냅샷이다. */
