@@ -277,7 +277,9 @@ public class KiwoomWebsocketClient implements WebSocket.Listener {
         } catch (Exception e) {
             log.debug("키움 실시간 패킷 해석 실패: {}", e.getMessage());
         }
-        publish("market", raw);
+        // 체결 틱은 위 priceListeners(손절·익절 감시)로만 전달한다. 사람이 읽을 형태로
+        // 가공하지 않은 채 원본 필드코드 JSON을 그대로 SSE 로그에 흘리면 화면 로그 300건
+        // 버퍼가 시세 틱으로 밀려 정작 중요한 시스템·주문 로그가 밀려나므로 관리자 로그에는 올리지 않는다.
     }
 
     private void markSubscribed() {
