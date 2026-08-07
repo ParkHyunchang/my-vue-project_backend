@@ -11,6 +11,8 @@ import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
 import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -81,6 +83,10 @@ public class KiwoomAutoTradeController {
                 state.isAutoTrading(),
                 "orderEnabled",
                 properties.isTradeEnabled(),
+                "marketOpen",
+                KiwoomMarketHours.isOpen(),
+                "marketMessage",
+                "장전·장후 시세는 표시하며, 자동매매 주문은 정규장(평일 09:00~15:30)에만 실행됩니다.",
                 "consecutiveApiFailures",
                 state.getConsecutiveApiFailures(),
                 "lastApiFailureAt",
@@ -176,16 +182,29 @@ public class KiwoomAutoTradeController {
                 .map(data -> {
                     KiwoomTradeService.AccountAsset totalAsset =
                             tradeService.accountAsset(data.getT1(), data.getT2());
-                    return Map.<String, Object>of(
-                            "totalAsset", totalAsset.amount(),
+                    KiwoomAutoTradeState.AssetChange assetChange =
+                            state.assetChangeFromPreviousClose(totalAsset.amount());
+                    Map<String, Object> summary = new LinkedHashMap<>();
+                    summary.put("totalAsset", totalAsset.amount());
+                    summary.put(
                             "totalAssetSource",
                             "추정예탁자산".equals(totalAsset.source())
                                     ? "키움 기준 · 결제 예정금액 포함"
-                                    : "예수금 + 보유주식 평가액",
-                            "deposit", number(data.getT1(), "entr"),
-                            "orderAvailable", number(data.getT1(), "ord_alow_amt", "ord_psbl_cash", "entr"),
-                            "profitLoss", tradeService.totalEvaluationProfitLoss(data.getT2()),
-                            "totalEvaluation", tradeService.totalEvaluationAmount(data.getT2()));
+                                    : "예수금 + 보유주식 평가액");
+                    summary.put("totalAssetChange", assetChange == null ? null : assetChange.amount());
+                    summary.put(
+                            "totalAssetChangePercent",
+                            assetChange == null ? null : assetChange.percent());
+                    summary.put("deposit", number(data.getT1(), "entr"));
+                    summary.put("d1Deposit", number(data.getT1(), "d1_entra"));
+                    summary.put("d2Deposit", number(data.getT1(), "d2_entra"));
+                    summary.put(
+                            "orderAvailable",
+                            number(data.getT1(), "ord_alow_amt", "ord_psbl_cash", "entr"));
+                    summary.put("profitLoss", tradeService.totalEvaluationProfitLoss(data.getT2()));
+                    summary.put("stockProfitRate", tradeService.totalEvaluationProfitRate(data.getT2()));
+                    summary.put("totalEvaluation", tradeService.totalEvaluationAmount(data.getT2()));
+                    return summary;
                 });
     }
 

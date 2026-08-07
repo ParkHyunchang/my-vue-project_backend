@@ -21,6 +21,8 @@ public class KiwoomAutoTradeState {
     private volatile int consecutiveApiFailures;
     private volatile LocalDateTime lastApiFailureAt;
     private volatile String lastApiFailureMessage;
+    private volatile ClosingAsset lastCloseAsset;
+    private volatile ClosingAsset previousCloseAsset;
 
     public KiwoomAutoTradeState(KiwoomStrategyControlStateRepository controlStateRepository) {
         this.controlStateRepository = controlStateRepository;
@@ -44,6 +46,13 @@ public class KiwoomAutoTradeState {
                             saved.isDailyLossTriggered(),
                             saved.getDailyLossLastCheckedAt());
         }
+        if (saved.getLastCloseAssetDate() != null)
+            lastCloseAsset =
+                    new ClosingAsset(saved.getLastCloseAssetDate(), saved.getLastCloseAssetAmount());
+        if (saved.getPreviousCloseAssetDate() != null)
+            previousCloseAsset =
+                    new ClosingAsset(
+                            saved.getPreviousCloseAssetDate(), saved.getPreviousCloseAssetAmount());
     }
 
     public boolean isAutoTrading() {
@@ -214,6 +223,36 @@ public class KiwoomAutoTradeState {
         return dailyLoss;
     }
 
+    /** Stores one official regular-session close for the next session's asset comparison. */
+    public synchronized void recordClosingAsset(long totalAsset) {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        ClosingAsset current = lastCloseAsset;
+        if (current != null && today.equals(current.date())) {
+            lastCloseAsset = new ClosingAsset(today, totalAsset);
+        } else {
+            previousCloseAsset = current;
+            lastCloseAsset = new ClosingAsset(today, totalAsset);
+        }
+        KiwoomStrategyControlState entity = control();
+        entity.setLastCloseAssetDate(lastCloseAsset.date());
+        entity.setLastCloseAssetAmount(lastCloseAsset.amount());
+        entity.setPreviousCloseAssetDate(
+                previousCloseAsset == null ? null : previousCloseAsset.date());
+        entity.setPreviousCloseAssetAmount(
+                previousCloseAsset == null ? 0 : previousCloseAsset.amount());
+        controlStateRepository.save(entity);
+    }
+
+    /** Returns the change from the previous regular-session close when a baseline exists. */
+    public AssetChange assetChangeFromPreviousClose(long currentAsset) {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        ClosingAsset baseline = lastCloseAsset;
+        if (baseline != null && today.equals(baseline.date())) baseline = previousCloseAsset;
+        if (baseline == null || baseline.amount() <= 0) return null;
+        long amount = currentAsset - baseline.amount();
+        return new AssetChange(amount, amount * 100.0 / baseline.amount(), baseline.date());
+    }
+
     private void persistDailyLoss(DailyLossStatus s) {
         KiwoomStrategyControlState entity = control();
         entity.setDailyLossSnapshotDate(s.snapshotDate());
@@ -238,4 +277,8 @@ public class KiwoomAutoTradeState {
             return Math.max(0, baseAsset - lastAsset);
         }
     }
+
+    private record ClosingAsset(LocalDate date, long amount) {}
+
+    public record AssetChange(long amount, double percent, LocalDate baselineDate) {}
 }

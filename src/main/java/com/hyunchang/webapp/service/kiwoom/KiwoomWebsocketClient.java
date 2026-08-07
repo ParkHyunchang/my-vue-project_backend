@@ -396,6 +396,17 @@ public class KiwoomWebsocketClient implements WebSocket.Listener {
                 Map.of("type", type, "message", message, "at", System.currentTimeMillis()));
     }
 
+    /** Sends a holding-price update to the dashboard without persisting each market tick. */
+    public void publishPriceTick(PriceTick tick) {
+        if (tick == null) return;
+        events.tryEmitNext(
+                Map.of(
+                        "type", "price",
+                        "stockCode", tick.stockCode(),
+                        "price", tick.price(),
+                        "at", System.currentTimeMillis()));
+    }
+
     private void publish(String type, String message) {
         publishEvent(type, message);
     }

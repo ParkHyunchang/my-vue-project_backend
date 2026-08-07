@@ -333,6 +333,14 @@ public class KiwoomTradeService {
         return sum;
     }
 
+    /** Current holding return based on total evaluation amount and evaluation profit/loss. */
+    public double totalEvaluationProfitRate(JsonNode balance) {
+        long evaluation = totalEvaluationAmount(balance);
+        long profitLoss = totalEvaluationProfitLoss(balance);
+        long purchaseAmount = evaluation - profitLoss;
+        return purchaseAmount > 0 ? profitLoss * 100.0 / purchaseAmount : 0;
+    }
+
     private JsonNode firstHoldingsArray(JsonNode node) {
         for (JsonNode child : node) {
             if (child.isArray() && child.size() > 0 && child.get(0).has("stk_cd")) return child;

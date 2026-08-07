@@ -25,6 +25,11 @@ public class KiwoomStrategyControlState {
     private LocalDateTime dailyLossLastCheckedAt;
     private boolean dailyLossTriggered;
 
+    private LocalDate lastCloseAssetDate;
+    private long lastCloseAssetAmount;
+    private LocalDate previousCloseAssetDate;
+    private long previousCloseAssetAmount;
+
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -111,5 +116,37 @@ public class KiwoomStrategyControlState {
 
     public void setDailyLossTriggered(boolean v) {
         dailyLossTriggered = v;
+    }
+
+    public LocalDate getLastCloseAssetDate() {
+        return lastCloseAssetDate;
+    }
+
+    public void setLastCloseAssetDate(LocalDate v) {
+        lastCloseAssetDate = v;
+    }
+
+    public long getLastCloseAssetAmount() {
+        return lastCloseAssetAmount;
+    }
+
+    public void setLastCloseAssetAmount(long v) {
+        lastCloseAssetAmount = v;
+    }
+
+    public LocalDate getPreviousCloseAssetDate() {
+        return previousCloseAssetDate;
+    }
+
+    public void setPreviousCloseAssetDate(LocalDate v) {
+        previousCloseAssetDate = v;
+    }
+
+    public long getPreviousCloseAssetAmount() {
+        return previousCloseAssetAmount;
+    }
+
+    public void setPreviousCloseAssetAmount(long v) {
+        previousCloseAssetAmount = v;
     }
 }

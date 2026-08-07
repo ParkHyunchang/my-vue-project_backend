@@ -95,7 +95,11 @@ public class KiwoomPositionExitService {
 
     @PostConstruct
     void listenForPriceTicks() {
-        websocket.addPriceListener(tick -> onPriceTick(tick.stockCode(), tick.price()));
+        websocket.addPriceListener(
+                tick -> {
+                    onPriceTick(tick.stockCode(), tick.price());
+                    if (positions.containsKey(tick.stockCode())) websocket.publishPriceTick(tick);
+                });
     }
 
     /**

@@ -120,4 +120,19 @@ class KiwoomAutoTradeStateTest {
         assertFalse(state.isDailyLossTriggered());
         assertEquals(900_000, state.dailyLossStatus().baseAsset());
     }
+
+    @Test
+    void calculatesAssetChangeFromPreviousRegularClose() {
+        KiwoomStrategyControlState saved = new KiwoomStrategyControlState();
+        saved.setLastCloseAssetDate(LocalDate.now(KiwoomMarketHours.KST).minusDays(1));
+        saved.setLastCloseAssetAmount(1_000_000);
+        org.mockito.Mockito.reset(repo);
+        when(repo.findById(1L)).thenReturn(Optional.of(saved));
+        state.restoreControlState();
+
+        KiwoomAutoTradeState.AssetChange change = state.assetChangeFromPreviousClose(1_025_000);
+
+        assertEquals(25_000, change.amount());
+        assertEquals(2.5, change.percent());
+    }
 }
