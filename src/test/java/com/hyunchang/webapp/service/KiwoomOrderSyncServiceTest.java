@@ -111,6 +111,54 @@ class KiwoomOrderSyncServiceTest {
     }
 
     @Test
+    void cancelRequestStaysPendingWhileBrokerStillListsTheOrderAsUnfilled() throws Exception {
+        proposal.cancelRequested("{}");
+        JsonNode stillUnfilled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"6\"}");
+        stubOrderInquiries(stillUnfilled, objectMapper.createArrayNode());
+
+        service.sync();
+
+        // ORDERED로 되돌아가면 이미 접수된 취소를 다시 취소하려다 "취소가능수량이 없습니다"로 막힌다.
+        assertEquals(KiwoomTradeProposal.Status.CANCEL_REQUESTED, proposal.getStatus());
+        assertEquals(6, proposal.getRemainingQuantity());
+    }
+
+    @Test
+    void repeatedDisappearanceAfterTheGracePeriodConfirmsCancellation() throws Exception {
+        proposal.cancelRequested("{}");
+        setCancelRequestedAt(LocalDateTime.now().minusSeconds(30));
+        stubResponses(objectMapper.createArrayNode());
+
+        service.sync();
+        assertEquals(KiwoomTradeProposal.Status.CANCEL_REQUESTED, proposal.getStatus());
+
+        service.sync();
+        assertEquals(KiwoomTradeProposal.Status.CANCELED, proposal.getStatus());
+        assertEquals(0, proposal.getRemainingQuantity());
+        verify(exits).onOrderStateChanged();
+    }
+
+    @Test
+    void aSingleMissedInquiryDoesNotConfirmCancellationAfterTheOrderReappears() throws Exception {
+        proposal.cancelRequested("{}");
+        setCancelRequestedAt(LocalDateTime.now().minusSeconds(30));
+        JsonNode stillUnfilled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"6\"}");
+
+        stubResponses(objectMapper.createArrayNode());
+        service.sync();
+        stubOrderInquiries(stillUnfilled, objectMapper.createArrayNode());
+        service.sync();
+        stubResponses(objectMapper.createArrayNode());
+        service.sync();
+
+        assertEquals(KiwoomTradeProposal.Status.CANCEL_REQUESTED, proposal.getStatus());
+    }
+
+    @Test
     void explicitBrokerCancellationRecordConfirmsCancellation() throws Exception {
         proposal.cancelRequested("{}");
         JsonNode cancelled =
@@ -228,7 +276,15 @@ class KiwoomOrderSyncServiceTest {
     }
 
     private void setOrderedAt(LocalDateTime value) throws Exception {
-        Field field = KiwoomTradeProposal.class.getDeclaredField("orderedAt");
+        setField("orderedAt", value);
+    }
+
+    private void setCancelRequestedAt(LocalDateTime value) throws Exception {
+        setField("cancelRequestedAt", value);
+    }
+
+    private void setField(String name, LocalDateTime value) throws Exception {
+        Field field = KiwoomTradeProposal.class.getDeclaredField(name);
         field.setAccessible(true);
         field.set(proposal, value);
     }

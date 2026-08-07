@@ -215,6 +215,19 @@ public class KiwoomAutoTradeController {
                 : ResponseEntity.status(502).body(Map.of("message", result.message()));
     }
 
+    /** 관리자 수동 시장가 청산. stockCodes가 비어 있으면 보유 전 종목이 대상이다. */
+    @PostMapping("/holdings/liquidate")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<?> liquidateHoldings(
+            @RequestBody(required = false) LiquidateRequest request) {
+        KiwoomPositionExitService.LiquidationResult result =
+                exits.liquidate(request == null ? List.of() : request.stockCodes());
+        if (!result.accepted())
+            return ResponseEntity.status(409).body(Map.of("message", result.message()));
+        audit.log("MANUAL_LIQUIDATION_COMPLETED", null, result.message());
+        return ResponseEntity.ok(result);
+    }
+
     @PostMapping("/orders")
     @PreAuthorize("hasRole('ADMIN')")
     public Mono<JsonNode> placeOrder(@RequestBody KiwoomTradeService.OrderRequest request) {
@@ -234,4 +247,6 @@ public class KiwoomAutoTradeController {
     }
 
     public record ControlRequest(boolean enabled) {}
+
+    public record LiquidateRequest(List<String> stockCodes) {}
 }

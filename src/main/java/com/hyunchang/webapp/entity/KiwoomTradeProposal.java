@@ -326,10 +326,15 @@ public class KiwoomTradeProposal {
         remainingQuantity = Math.max(0, remaining);
         averageFillPrice = averagePrice;
         lastSyncedAt = LocalDateTime.now();
-        status =
-                remainingQuantity == 0 && filledQuantity > 0
-                        ? Status.FILLED
-                        : (filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED);
+        if (remainingQuantity == 0 && filledQuantity > 0) {
+            status = Status.FILLED;
+            return;
+        }
+        // 취소를 접수한 주문도 키움이 취소를 처리하는 동안에는 미체결 목록에 그대로 남는다. 이때
+        // ORDERED로 되돌리면 이미 접수된 취소를 다시 취소하려다 "취소가능수량이 없습니다"로 막히고,
+        // 익절 주문이 옛 가격에 그대로 남아 손절·익절 전환이 영영 진행되지 않는다.
+        if (status == Status.CANCEL_REQUESTED) return;
+        status = filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED;
     }
 
     public void orderFailed(String error) {

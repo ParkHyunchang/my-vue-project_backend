@@ -17,10 +17,13 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -42,6 +45,10 @@ public class KiwoomPositionExitService {
                     KiwoomTradeProposal.Status.ORDERED,
                     KiwoomTradeProposal.Status.PARTIALLY_FILLED,
                     KiwoomTradeProposal.Status.CANCEL_REQUESTED);
+    // 익절 주문 취소가 키움 잔고의 매도가능수량에 반영되기까지 몇 초가 걸린다. 요청 응답이 지나치게
+    // 길어지지 않는 선에서 재확인하고, 남은 건은 2초 주기 청산 재시도 루프에 넘긴다.
+    private static final int LIQUIDATION_ATTEMPTS = 4;
+    private static final long LIQUIDATION_RETRY_INTERVAL_MS = 1500;
 
     private final KiwoomProperties props;
     private final KiwoomTradeService trade;
@@ -59,6 +66,7 @@ public class KiwoomPositionExitService {
     private final Set<String> exitWaitingForSellableLogged = ConcurrentHashMap.newKeySet();
     private final Map<String, LocalDateTime> exitTriggeredAt = new ConcurrentHashMap<>();
     private final Set<String> exitTransitionDelayLogged = ConcurrentHashMap.newKeySet();
+    private final AtomicBoolean liquidationInProgress = new AtomicBoolean();
     private volatile LocalDate preMarketPreparedDate;
 
     public KiwoomPositionExitService(
@@ -148,6 +156,237 @@ public class KiwoomPositionExitService {
                 requested,
                 failed);
         return new PauseResult(requested, failed);
+    }
+
+    /**
+     * 화면에서 누른 수동 시장가 청산이다. 보유 전량을 예약 중인 익절 지정가 주문을 먼저 취소하고, 키움 잔고의 매도가능수량이 돌아오는 대로 시장가로 전량 매도한다.
+     * 자동 주문 스위치와 무관하게 동작한다.
+     *
+     * @param requestedCodes 비어 있으면 보유 전 종목
+     */
+    public LiquidationResult liquidate(Collection<String> requestedCodes) {
+        String blocked = liquidationBlockReason();
+        if (blocked != null) return LiquidationResult.blocked(blocked);
+        if (!liquidationInProgress.compareAndSet(false, true))
+            return LiquidationResult.blocked("이전 청산 요청이 아직 처리 중입니다. 잠시 후 다시 시도해 주세요.");
+        try {
+            return runLiquidation(requestedCodes);
+        } finally {
+            liquidationInProgress.set(false);
+        }
+    }
+
+    private LiquidationResult runLiquidation(Collection<String> requestedCodes) {
+        List<KiwoomTradeService.Holding> targets;
+        try {
+            targets = liquidationTargets(requestedCodes);
+        } catch (Exception e) {
+            return LiquidationResult.blocked("키움 잔고를 조회하지 못해 청산을 시작하지 않았습니다: " + message(e));
+        }
+        if (targets.isEmpty())
+            return LiquidationResult.blocked(
+                    requestedCodes == null || requestedCodes.isEmpty()
+                            ? "청산할 보유 종목이 없습니다."
+                            : "요청한 종목이 현재 키움 잔고에 없습니다.");
+
+        String targetLabel =
+                targets.stream()
+                        .map(holding -> holding.name() + "(" + holding.code() + ")")
+                        .collect(Collectors.joining(", "));
+        log.warn(
+                "[자동매매][수동 청산 요청] 대상={}종목, 목록={}, 처리=미체결 매도 주문 취소 후 매도가능수량이 돌아오는 대로 시장가 전량 매도",
+                targets.size(),
+                targetLabel);
+        audit.log("MANUAL_LIQUIDATION_REQUESTED", null, "수동 청산 요청: " + targetLabel);
+        websocket.publishEvent("order", "수동 청산 요청: " + targets.size() + "종목");
+
+        Map<String, Liquidation> pending = new LinkedHashMap<>();
+        for (KiwoomTradeService.Holding holding : targets) {
+            Liquidation item = new Liquidation(holding);
+            pending.put(holding.code(), item);
+            // 자동 청산 루프가 방금 취소한 익절 주문을 다시 걸지 않도록 청산 대기로 표시한다.
+            pendingExits.put(holding.code(), ExitTrigger.MANUAL_EXIT);
+            exitTriggeredAt.putIfAbsent(holding.code(), LocalDateTime.now());
+            exitSubmitted.remove(holding.code());
+            item.canceledOrders = cancelOpenSellOrders(holding);
+        }
+
+        for (int attempt = 0; attempt < LIQUIDATION_ATTEMPTS; attempt++) {
+            if (attempt > 0 && !sleepBetweenLiquidationAttempts()) break;
+            Map<String, KiwoomTradeService.Holding> latest;
+            try {
+                latest = holdingsByCode();
+            } catch (Exception e) {
+                continue;
+            }
+            boolean waiting = false;
+            for (Liquidation item : pending.values()) {
+                if (item.settled()) continue;
+                KiwoomTradeService.Holding holding = latest.get(item.stockCode());
+                if (holding == null || holding.quantity() <= 0) {
+                    item.markAlreadyFlat();
+                    continue;
+                }
+                item.holding = holding;
+                if (holding.sellable() <= 0) {
+                    waiting = true;
+                    continue;
+                }
+                submitManualExit(item);
+                if (!item.settled()) waiting = true;
+            }
+            if (!waiting) break;
+        }
+
+        List<LiquidationItem> items = pending.values().stream().map(Liquidation::toItem).toList();
+        long submitted = items.stream().filter(item -> "SUBMITTED".equals(item.status())).count();
+        long waiting = items.stream().filter(item -> "WAITING_SELLABLE".equals(item.status())).count();
+        long failed = items.stream().filter(item -> "FAILED".equals(item.status())).count();
+        log.warn(
+                "[자동매매][수동 청산 결과] 대상={}종목, 시장가 매도 전송={}건, 매도가능수량 대기={}건, 실패={}건",
+                items.size(),
+                submitted,
+                waiting,
+                failed);
+        // 남은 대기 건은 자동주문이 켜져 있으면 2초 주기 청산 재시도 루프가 이어받는다. 자동주문이
+        // 꺼져 있으면 refreshPositions가 그대로 빠져나가므로 보유현황 스냅샷만이라도 최신으로 맞춘다.
+        if (canManageExits()) refreshPositions("MANUAL_LIQUIDATION", KiwoomMarketHours.isOpen());
+        else accountHoldings.sync("MANUAL_LIQUIDATION");
+        return new LiquidationResult(true, liquidationSummary(submitted, waiting, failed), items);
+    }
+
+    private String liquidationSummary(long submitted, long waiting, long failed) {
+        StringBuilder summary = new StringBuilder("시장가 매도 " + submitted + "건을 전송했습니다.");
+        if (waiting > 0)
+            summary.append(" 매도가능수량 복구 대기 ")
+                    .append(waiting)
+                    .append("건은 취소 확인 후 자동으로 재시도합니다")
+                    .append(canManageExits() ? "." : " (자동주문이 꺼져 있어 다시 눌러야 합니다).");
+        if (failed > 0) summary.append(" 실패 ").append(failed).append("건은 키움 주문을 확인해 주세요.");
+        return summary.toString();
+    }
+
+    private String liquidationBlockReason() {
+        if (!props.isConfigured()) return "키움 API 키가 설정되지 않았습니다.";
+        if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다. KIWOOM_TRADE_ENABLED 설정을 확인하세요.";
+        if (state.isEmergencyStopped()) return "안전 자동중지 상태입니다. 자동주문을 다시 시작해 해제한 뒤 청산하세요.";
+        if (!KiwoomMarketHours.isOpen()) return "시장가 청산은 정규장(평일 09:00~15:30 KST)에만 보낼 수 있습니다.";
+        return null;
+    }
+
+    private List<KiwoomTradeService.Holding> liquidationTargets(Collection<String> requestedCodes)
+            throws Exception {
+        Collection<KiwoomTradeService.Holding> all = holdingsByCode().values();
+        if (requestedCodes == null || requestedCodes.isEmpty()) return List.copyOf(all);
+        Set<String> wanted = Set.copyOf(requestedCodes);
+        return all.stream().filter(holding -> wanted.contains(holding.code())).toList();
+    }
+
+    private Map<String, KiwoomTradeService.Holding> holdingsByCode() throws Exception {
+        JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
+        Map<String, KiwoomTradeService.Holding> result = new LinkedHashMap<>();
+        for (KiwoomTradeService.Holding holding : trade.parseHoldings(balance))
+            if (holding.quantity() > 0) result.put(holding.code(), holding);
+        return result;
+    }
+
+    /** 청산 전에 해당 종목의 미체결 매도 주문을 모두 정리한다. 익절 지정가뿐 아니라 사람이 낸 매도 주문도 대상이다. */
+    private int cancelOpenSellOrders(KiwoomTradeService.Holding holding) {
+        int canceled = 0;
+        for (KiwoomTradeProposal order : proposals.findByStatusIn(OPEN_SELL_STATUSES)) {
+            if (order.getAction() != KiwoomTradeProposal.Action.SELL
+                    || !holding.code().equals(order.getStockCode())
+                    || order.getRemainingQuantity() <= 0) continue;
+            if (order.getStatus() != KiwoomTradeProposal.Status.ORDERED
+                    && order.getStatus() != KiwoomTradeProposal.Status.PARTIALLY_FILLED) continue;
+            KiwoomProposalOrderService.Result result =
+                    orders.cancel(order.getId(), order.getRemainingQuantity());
+            if (result.success()) {
+                canceled++;
+                log.info(
+                        "[자동매매][수동 청산 준비] {}({}), 기존 매도 주문번호={}, 취소 수량={}주, 상태=취소 확인 대기",
+                        holding.name(),
+                        holding.code(),
+                        order.getBrokerOrderNo() == null ? "미확인" : order.getBrokerOrderNo(),
+                        order.getRemainingQuantity());
+            } else if (isNothingLeftToCancel(result.message())) {
+                // 키움에 취소할 수량이 없다는 것은 이 주문이 이미 종료됐다는 뜻이다. 로컬 상태만
+                // 살아 있으면 매번 취소를 재시도하다 청산이 막히므로 여기서 닫는다.
+                order.expired("수동 청산 확인: 키움에 남은 취소 가능 수량이 없어 종료 처리했습니다.");
+                proposals.save(order);
+                log.info(
+                        "[자동매매][수동 청산 준비] {}({}), 기존 매도 주문번호={}, 처리=키움에 남은 취소 가능 수량이 없어 로컬 주문 종료",
+                        holding.name(),
+                        holding.code(),
+                        order.getBrokerOrderNo() == null ? "미확인" : order.getBrokerOrderNo());
+            } else {
+                log.warn(
+                        "[자동매매][수동 청산 준비 실패] {}({}), 기존 매도 주문번호={}, 단계=주문 취소 요청, 사유={}",
+                        holding.name(),
+                        holding.code(),
+                        order.getBrokerOrderNo() == null ? "미확인" : order.getBrokerOrderNo(),
+                        result.message());
+            }
+        }
+        return canceled;
+    }
+
+    private boolean isNothingLeftToCancel(String message) {
+        return message != null && (message.contains("취소가능수량") || message.contains("506550"));
+    }
+
+    private void submitManualExit(Liquidation item) {
+        Position position = toPosition(item.holding);
+        KiwoomTradeProposal order =
+                newExitProposal(position, KiwoomTradeProposal.OrderType.MARKET);
+        order.setReason(exitReason(ExitTrigger.MANUAL_EXIT, position));
+        proposals.save(order);
+        audit.log(ExitTrigger.MANUAL_EXIT.auditOrderEvent(), order.getId(), order.getReason());
+        KiwoomProposalOrderService.Result result = orders.submitManualExit(order.getId());
+        if (result.success()) {
+            exitSubmitted.add(item.stockCode());
+            exitTriggeredAt.remove(item.stockCode());
+            exitTransitionDelayLogged.remove(item.stockCode());
+            KiwoomTradeProposal submitted = result.proposal();
+            item.markSubmitted(
+                    position.sellableQuantity(),
+                    submitted == null ? null : submitted.getBrokerOrderNo());
+            log.warn(
+                    "[자동매매][수동 청산 시장가 주문 전송] {}({}), 수량={}주, 주문번호={}, 근거={}",
+                    position.stockName(),
+                    position.stockCode(),
+                    position.sellableQuantity(),
+                    submitted == null || submitted.getBrokerOrderNo() == null
+                            ? "미확인"
+                            : submitted.getBrokerOrderNo(),
+                    order.getReason());
+        } else {
+            audit.log(
+                    ExitTrigger.MANUAL_EXIT.auditFailureEvent(), order.getId(), result.message());
+            item.markFailed(result.message());
+            log.error(
+                    "[자동매매][수동 청산 시장가 주문 전송 실패] {}({}), 수량={}주, 사유={}",
+                    position.stockName(),
+                    position.stockCode(),
+                    position.sellableQuantity(),
+                    result.message());
+            websocket.publishEvent(
+                    "error", "수동 청산 주문 전송 실패: " + item.stockCode() + " (수동 확인 필요)");
+        }
+    }
+
+    private boolean sleepBetweenLiquidationAttempts() {
+        try {
+            Thread.sleep(LIQUIDATION_RETRY_INTERVAL_MS);
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
+        }
+    }
+
+    private String message(Exception e) {
+        return e.getMessage() == null ? "알 수 없음" : e.getMessage();
     }
 
     /** 자동주문 재개 시 현재 잔고와 새 손익률을 다시 계산하고 장중이면 즉시 청산 관리를 복구한다. */
@@ -298,11 +537,14 @@ public class KiwoomPositionExitService {
         refreshPositions("ORDER_STATE_CHANGED", KiwoomMarketHours.isOpen());
     }
 
-    /** 주문 동기화 서비스가 손절 전환 중인 익절 취소 건만 빠르게 조회할 때 사용한다. */
+    /**
+     * 주문 동기화 서비스가 빠르게 조회해야 할 익절 취소 건인지 알려준다. 손절과 수동 청산은 취소 확인이 늦어질수록 시장가 매도가 그만큼 밀리므로 1분 정기
+     * 동기화를 기다리지 않는다. 보유기간 청산은 급하지 않아 정기 동기화에 맡긴다.
+     */
     boolean isStopTransitionPending(String stockCode) {
-        return stockCode != null
-                && pendingExits.get(stockCode) == ExitTrigger.STOP_LOSS
-                && !exitSubmitted.contains(stockCode);
+        if (stockCode == null || exitSubmitted.contains(stockCode)) return false;
+        ExitTrigger trigger = pendingExits.get(stockCode);
+        return trigger == ExitTrigger.STOP_LOSS || trigger == ExitTrigger.MANUAL_EXIT;
     }
 
     private void onPriceTick(String stockCode, long currentPrice) {
@@ -560,6 +802,12 @@ public class KiwoomPositionExitService {
     }
 
     private String exitReason(ExitTrigger trigger, Position position) {
+        if (trigger == ExitTrigger.MANUAL_EXIT)
+            return "[EXIT:MANUAL] 관리자 수동 청산 요청 시장가 매도 (평단 "
+                    + String.format("%,d", position.averagePrice())
+                    + "원, 현재가 "
+                    + String.format("%,d", position.currentPrice())
+                    + "원)";
         if (trigger == ExitTrigger.TIME_EXIT)
             return "[EXIT:TIME_EXIT] 최대 보유기간 "
                     + settings.current().getSwingMaxHoldingDays()
@@ -657,7 +905,9 @@ public class KiwoomPositionExitService {
                                         && proposal.getReason() != null
                                         && (proposal.getReason().startsWith("[EXIT:STOP_LOSS]")
                                                 || proposal.getReason()
-                                                        .startsWith("[EXIT:TIME_EXIT]")));
+                                                        .startsWith("[EXIT:TIME_EXIT]")
+                                                || proposal.getReason()
+                                                        .startsWith("[EXIT:MANUAL]")));
     }
 
     private Position toPosition(KiwoomTradeService.Holding holding) {
@@ -703,7 +953,8 @@ public class KiwoomPositionExitService {
 
     private enum ExitTrigger {
         STOP_LOSS("손절", "STOP_LOSS_ORDER_CREATED", "STOP_LOSS_ORDER_NOT_SUBMITTED"),
-        TIME_EXIT("보유기간 청산", "TIME_EXIT_ORDER_CREATED", "TIME_EXIT_ORDER_NOT_SUBMITTED");
+        TIME_EXIT("보유기간 청산", "TIME_EXIT_ORDER_CREATED", "TIME_EXIT_ORDER_NOT_SUBMITTED"),
+        MANUAL_EXIT("수동 청산", "MANUAL_EXIT_ORDER_CREATED", "MANUAL_EXIT_ORDER_NOT_SUBMITTED");
 
         private final String label;
         private final String auditOrderEvent;
@@ -754,4 +1005,71 @@ public class KiwoomPositionExitService {
             boolean balanceRefreshed, boolean completed, String message) {}
 
     public record PauseResult(int cancellationRequested, int cancellationFailed) {}
+
+    /** 수동 청산 한 종목의 진행 상태를 모으는 가변 버퍼다. 응답으로는 {@link LiquidationItem}만 나간다. */
+    private static final class Liquidation {
+        private KiwoomTradeService.Holding holding;
+        private int canceledOrders;
+        private int submittedQuantity;
+        private String brokerOrderNo;
+        private String status = "WAITING_SELLABLE";
+        private String message = "익절 주문 취소 확인 후 매도가능수량 복구를 기다리는 중입니다.";
+
+        private Liquidation(KiwoomTradeService.Holding holding) {
+            this.holding = holding;
+        }
+
+        private String stockCode() {
+            return holding.code();
+        }
+
+        private boolean settled() {
+            return !"WAITING_SELLABLE".equals(status);
+        }
+
+        private void markSubmitted(int quantity, String orderNo) {
+            submittedQuantity = quantity;
+            brokerOrderNo = orderNo;
+            status = "SUBMITTED";
+            message = quantity + "주 시장가 매도를 전송했습니다.";
+        }
+
+        private void markAlreadyFlat() {
+            status = "SUBMITTED";
+            message = "이미 보유 수량이 없습니다.";
+        }
+
+        private void markFailed(String reason) {
+            status = "FAILED";
+            message = reason == null ? "주문 전송에 실패했습니다." : reason;
+        }
+
+        private LiquidationItem toItem() {
+            return new LiquidationItem(
+                    holding.code(),
+                    holding.name(),
+                    holding.quantity(),
+                    submittedQuantity,
+                    canceledOrders,
+                    brokerOrderNo == null ? "" : brokerOrderNo,
+                    status,
+                    message);
+        }
+    }
+
+    public record LiquidationItem(
+            String stockCode,
+            String stockName,
+            int quantity,
+            int submittedQuantity,
+            int canceledOrders,
+            String brokerOrderNo,
+            String status,
+            String message) {}
+
+    public record LiquidationResult(boolean accepted, String message, List<LiquidationItem> items) {
+        static LiquidationResult blocked(String message) {
+            return new LiquidationResult(false, message, List.of());
+        }
+    }
 }

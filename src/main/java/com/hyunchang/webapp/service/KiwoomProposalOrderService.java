@@ -219,6 +219,26 @@ public class KiwoomProposalOrderService {
         return submitted;
     }
 
+    /**
+     * 화면에서 누른 수동 청산 전용 전송이다. 자동 주문 스위치와 무관하게 동작하지만 승인→초안→전송의 동일 경로와 사전 점검(장 운영시간, 안전 자동중지, 주문 전송
+     * 활성화)은 그대로 거친다.
+     */
+    public synchronized Result submitManualExit(long id) {
+        KiwoomTradeProposal p = find(id);
+        if (p.getAction() != KiwoomTradeProposal.Action.SELL)
+            return fail("수동 청산은 매도 주문만 전송할 수 있습니다.");
+        if (p.getStatus() != KiwoomTradeProposal.Status.PROPOSED)
+            return fail("전송 대상 상태(PROPOSED)가 아닙니다.");
+        Result approved = approve(id);
+        if (!approved.success()) return approved;
+        Result drafted = draft(id);
+        if (!drafted.success()) return drafted;
+        Result submitted = execute(id, true);
+        if (submitted.success())
+            audit.log("ORDER_MANUAL_EXIT_SUBMITTED", id, "수동 청산 요청으로 시장가 매도를 전송했습니다.");
+        return submitted;
+    }
+
     public synchronized Result amend(long id, int quantity, Long limitPrice) {
         KiwoomTradeProposal p = find(id);
         if (state.isEmergencyStopped()) return fail("안전 자동중지 상태에서는 주문을 정정할 수 없습니다.");

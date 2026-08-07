@@ -29,6 +29,8 @@ public class KiwoomOrderSyncService {
     private static final ZoneId KST = ZoneId.of("Asia/Seoul");
     private static final Duration URGENT_CANCEL_POLL_WINDOW = Duration.ofSeconds(60);
     private static final Duration APPLICATION_RESTART_LOG_WINDOW = Duration.ofMinutes(5);
+    private static final Duration CANCEL_DISAPPEARANCE_GRACE = Duration.ofSeconds(10);
+    private static final int CANCEL_DISAPPEARANCE_CONFIRMATIONS = 2;
     private static final List<KiwoomTradeProposal.Status> PRE_MARKET_OPEN_STATUSES =
             List.of(
                     KiwoomTradeProposal.Status.PROPOSED,
@@ -44,6 +46,8 @@ public class KiwoomOrderSyncService {
     private final KiwoomPositionExitService exits;
     private final AtomicBoolean syncInProgress = new AtomicBoolean();
     private final Set<String> urgentCancelDelayLogged = ConcurrentHashMap.newKeySet();
+    private final java.util.Map<String, Integer> cancelDisappearanceCounts =
+            new ConcurrentHashMap<>();
     private final LocalDateTime serviceStartedAt = LocalDateTime.now(KST);
     private volatile LocalDate preMarketRecoveryCompletedDate;
     private volatile LocalDate marketOpenExitStartedDate;
@@ -192,11 +196,7 @@ public class KiwoomOrderSyncService {
             collectRecords(trade.getFilledOrders().block(Duration.ofSeconds(15)), allRecords);
             for (JsonNode record : allRecords) apply(record);
 
-            Set<String> brokerUnfilledOrderNumbers = ConcurrentHashMap.newKeySet();
-            for (JsonNode record : unfilledRecords) {
-                String orderNo = normalizeOrderNo(text(record, "ord_no", "order_no"));
-                if (orderNo != null) brokerUnfilledOrderNumbers.add(orderNo);
-            }
+            Set<String> brokerUnfilledOrderNumbers = orderNumbers(unfilledRecords);
 
             int expired = 0;
             for (KiwoomTradeProposal proposal :
@@ -260,14 +260,14 @@ public class KiwoomOrderSyncService {
                 needsUrgentSync = true;
             } else if (urgentCancelDelayLogged.add(key)) {
                 log.warn(
-                        "[자동매매][손절 전환 지연] {}({}), 익절 주문번호={}, 60초 동안 취소 확인이 되지 않아 일반 주문 동기화로 계속 확인합니다. 키움 주문 상태를 확인해 주세요.",
+                        "[자동매매][청산 전환 지연] {}({}), 익절 주문번호={}, 60초 동안 취소 확인이 되지 않아 일반 주문 동기화로 계속 확인합니다. 키움 주문 상태를 확인해 주세요.",
                         proposal.getStockName(),
                         proposal.getStockCode(),
                         proposal.getBrokerOrderNo());
                 audit.log(
                         "STOP_CANCEL_CONFIRMATION_DELAYED",
                         proposal.getId(),
-                        "손절 전환을 위한 익절 주문 취소가 60초 안에 확인되지 않았습니다.");
+                        "손절·수동 청산 전환을 위한 익절 주문 취소가 60초 안에 확인되지 않았습니다.");
             }
         }
         urgentCancelDelayLogged.retainAll(activeKeys);
@@ -307,25 +307,33 @@ public class KiwoomOrderSyncService {
             collectRecords(trade.getFilledOrders().block(Duration.ofSeconds(15)), records);
             int updated = 0;
             for (JsonNode record : records) if (apply(record)) updated++;
+            Set<String> unfilledOrderNumbers = orderNumbers(unfilledRecords);
             for (KiwoomTradeProposal proposal :
                     proposals.findByStatusIn(
                             List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED))) {
-                boolean cancellationConfirmed =
+                boolean explicitlyConfirmed =
                         records.stream()
                                 .anyMatch(record -> isCancellationConfirmation(record, proposal));
-                if (cancellationConfirmed) {
+                boolean goneFromBroker =
+                        !explicitlyConfirmed && isGoneFromUnfilledOrders(proposal, unfilledOrderNumbers);
+                if (explicitlyConfirmed || goneFromBroker) {
+                    String evidence =
+                            explicitlyConfirmed
+                                    ? "키움 주문상태·주문구분 응답으로 취소가 명시적으로 확인되었습니다."
+                                    : "취소 요청 뒤 키움 미체결 목록에서 연속 "
+                                            + CANCEL_DISAPPEARANCE_CONFIRMATIONS
+                                            + "회 사라져 취소로 확정했습니다.";
                     proposal.cancelled();
                     proposals.save(proposal);
-                    audit.log(
-                            "ORDER_CANCELLED_SYNC",
-                            proposal.getId(),
-                            "키움 주문상태·주문구분 응답으로 취소가 명시적으로 확인되었습니다.");
+                    forgetCancelDisappearance(proposal);
+                    audit.log("ORDER_CANCELLED_SYNC", proposal.getId(), evidence);
                     log.info(
-                            "[자동매매][주문 취소 확인] {} {}({}), 원주문번호={}, 상태=취소 완료",
+                            "[자동매매][주문 취소 확인] {} {}({}), 원주문번호={}, 상태=취소 완료, 확인 근거={}",
                             actionLabel(proposal.getAction()),
                             proposal.getStockName(),
                             proposal.getStockCode(),
-                            proposal.getBrokerOrderNo());
+                            proposal.getBrokerOrderNo(),
+                            explicitlyConfirmed ? "키움 취소 응답" : "미체결 목록에서 사라짐");
                     updated++;
                 }
             }
@@ -457,6 +465,42 @@ public class KiwoomOrderSyncService {
                     || normalized.equals("CANCEL")) return true;
         }
         return false;
+    }
+
+    /**
+     * 키움은 취소가 끝난 주문을 미체결·체결 조회 어디에도 남기지 않는 경우가 있다. 그러면 취소 요청이 영원히 확인되지 않아 손절 전환이 멈추므로, 유예 시간이 지난 뒤
+     * 미체결 목록에서 연속으로 사라진 것을 확인하면 취소로 확정한다. 조회 한 번을 놓친 것과 구분하려고 연속 확인을 요구한다. 실제 주문이 아직 살아 있었더라도 키움
+     * 잔고의 매도가능수량이 0이라 청산 주문은 나가지 않으므로 이중 매도로 이어지지 않는다.
+     */
+    private boolean isGoneFromUnfilledOrders(
+            KiwoomTradeProposal proposal, Set<String> unfilledOrderNumbers) {
+        String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
+        if (orderNo == null) return false;
+        LocalDateTime requestedAt = proposal.getCancelRequestedAt();
+        if (requestedAt == null
+                || Duration.between(requestedAt, LocalDateTime.now())
+                                .compareTo(CANCEL_DISAPPEARANCE_GRACE)
+                        < 0) return false;
+        if (unfilledOrderNumbers.contains(orderNo)) {
+            cancelDisappearanceCounts.remove(orderNo);
+            return false;
+        }
+        return cancelDisappearanceCounts.merge(orderNo, 1, Integer::sum)
+                >= CANCEL_DISAPPEARANCE_CONFIRMATIONS;
+    }
+
+    private void forgetCancelDisappearance(KiwoomTradeProposal proposal) {
+        String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
+        if (orderNo != null) cancelDisappearanceCounts.remove(orderNo);
+    }
+
+    private Set<String> orderNumbers(List<JsonNode> records) {
+        Set<String> result = ConcurrentHashMap.newKeySet();
+        for (JsonNode record : records) {
+            String orderNo = normalizeOrderNo(text(record, "ord_no", "order_no"));
+            if (orderNo != null) result.add(orderNo);
+        }
+        return result;
     }
 
     private String normalizeOrderNo(String value) {
