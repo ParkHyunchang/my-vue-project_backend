@@ -9,7 +9,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 
-/** 한국 주식 정규장 시간 판정. 공휴일(휴장일)은 걸러내지 못한다 — 주말·시간대만 확인한다. */
+/** 한국 주식 정규장 시간 판정. 주말과 등록된 KRX 휴장일을 모두 제외한다. */
 public final class KiwoomMarketHours {
     public static final ZoneId KST = ZoneId.of("Asia/Seoul");
 
@@ -37,7 +37,7 @@ public final class KiwoomMarketHours {
         Set<LocalDate> dates = new HashSet<>();
         String configured =
                 "2026-01-01,2026-02-16,2026-02-17,2026-02-18,2026-03-02,"
-                        + "2026-05-01,2026-05-05,2026-05-25,2026-08-17,"
+                        + "2026-05-01,2026-05-05,2026-05-25,2026-06-03,2026-08-17,"
                         + "2026-09-24,2026-09-25,2026-09-28,2026-10-05,"
                         + "2026-10-09,2026-12-25,2026-12-31";
         String overrides = System.getenv("KIWOOM_CLOSED_DATES");
