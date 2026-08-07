@@ -31,6 +31,8 @@ public class KiwoomProperties {
         private double maxBuyDepositPercent = 10.0;
         private double swingStopLossPercent = 3.0;
         private double swingTakeProfitPercent = 6.0;
+        private double swingTakeProfitPercent2 = 0;
+        private double swingTakeProfitSplitPercent = 50.0;
         private int swingMaxHoldingDays = 5;
         private double maxOrderPriceDeviationPercent = 2.0;
         private double defaultDailyLossPercent = 3.0;
@@ -105,6 +107,22 @@ public class KiwoomProperties {
 
         public void setSwingTakeProfitPercent(double value) {
             swingTakeProfitPercent = Math.max(0, Math.min(100, value));
+        }
+
+        public double getSwingTakeProfitPercent2() {
+            return swingTakeProfitPercent2;
+        }
+
+        public void setSwingTakeProfitPercent2(double value) {
+            swingTakeProfitPercent2 = Math.max(0, Math.min(100, value));
+        }
+
+        public double getSwingTakeProfitSplitPercent() {
+            return swingTakeProfitSplitPercent;
+        }
+
+        public void setSwingTakeProfitSplitPercent(double value) {
+            swingTakeProfitSplitPercent = Math.max(1, Math.min(99, value));
         }
 
         public int getSwingMaxHoldingDays() {

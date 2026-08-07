@@ -330,6 +330,141 @@ class KiwoomPositionExitServiceTest {
         verify(orders).cancel(eq(pendingBuy.getId()), eq(2), anyString());
     }
 
+    @Test
+    void singleShareHoldingUsesOneTierOneOrderEvenWithTier2Configured() {
+        current.setSwingTakeProfitPercent2(20);
+        current.setSwingTakeProfitSplitPercent(50);
+        stubHolding(1, 1, 1000, 1000);
+        stubAutoExecuteSuccess();
+
+        service.refreshPositions("TEST", true);
+
+        assertEquals(1, openOrders.size());
+        KiwoomTradeProposal order = openOrders.get(0);
+        assertEquals(1, order.getQuantity());
+        assertEquals(1100L, order.getLimitPrice());
+        verify(orders, times(1)).autoExecute(anyLong());
+    }
+
+    @Test
+    void tierTwoDisabledFallsBackToSingleOrderForFullQuantity() {
+        stubHolding(6, 6, 1000, 1000);
+        stubAutoExecuteSuccess();
+
+        service.refreshPositions("TEST", true);
+
+        assertEquals(1, openOrders.size());
+        assertEquals(6, openOrders.get(0).getQuantity());
+        verify(orders, times(1)).autoExecute(anyLong());
+    }
+
+    @Test
+    void sevenShareHoldingSplitsIntoTwoTiersWithFiftyFiftyRounding() {
+        current.setSwingTakeProfitPercent2(20);
+        current.setSwingTakeProfitSplitPercent(50);
+        stubHolding(7, 7, 1000, 1000);
+        stubAutoExecuteSuccess();
+
+        service.refreshPositions("TEST", true);
+
+        assertEquals(1, openOrders.size());
+        KiwoomTradeProposal tier1 = openOrders.get(0);
+        assertEquals(4, tier1.getQuantity());
+        assertEquals(1100L, tier1.getLimitPrice());
+        verify(orders, times(1)).autoExecute(anyLong());
+
+        // 1차 주문이 매도가능수량을 4주만큼 줄였다고 가정 — 2차는 다음 주기에야 생성된다.
+        stubHolding(7, 3, 1000, 1000);
+
+        service.refreshPositions("TEST", true);
+
+        assertEquals(2, openOrders.size());
+        KiwoomTradeProposal tier2 =
+                openOrders.stream()
+                        .filter(o -> o.getReason().startsWith("[EXIT:TAKE_PROFIT-2]"))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(3, tier2.getQuantity());
+        assertEquals(1200L, tier2.getLimitPrice());
+        verify(orders, times(2)).autoExecute(anyLong());
+    }
+
+    @Test
+    void tierMismatchCancelsOnlyThatTierAndRecreatesNextCycle() throws Exception {
+        current.setSwingTakeProfitPercent2(20);
+        current.setSwingTakeProfitSplitPercent(50);
+        KiwoomTradeProposal staleTier1 = takeProfitTierOrder(1, 6, 1050, "0093000");
+        openOrders.add(staleTier1);
+        stubHolding(7, 0, 1000, 1000);
+        when(orders.cancel(eq(staleTier1.getId()), eq(6), anyString()))
+                .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", staleTier1));
+
+        service.refreshPositions("TEST", true);
+
+        verify(orders).cancel(eq(staleTier1.getId()), eq(6), anyString());
+        verify(orders, never()).autoExecute(anyLong());
+
+        staleTier1.cancelled();
+        stubHolding(7, 7, 1000, 1000);
+        stubAutoExecuteSuccess();
+
+        service.refreshPositions("TEST", true);
+
+        KiwoomTradeProposal recreated =
+                openOrders.stream()
+                        .filter(
+                                o ->
+                                        o.getStatus() != KiwoomTradeProposal.Status.CANCELED
+                                                && o.getReason() != null
+                                                && o.getReason().startsWith("[EXIT:TAKE_PROFIT-1]"))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(4, recreated.getQuantity());
+        assertEquals(1100L, recreated.getLimitPrice());
+        verify(orders, times(1)).autoExecute(anyLong());
+    }
+
+    @Test
+    void tierTwoPriceNotAboveTierOneFallsBackToSingleTranche() {
+        current.setSwingTakeProfitPercent(9.9);
+        current.setSwingTakeProfitPercent2(10.0);
+        current.setSwingTakeProfitSplitPercent(50);
+        stubHolding(6, 6, 1000, 1000);
+        stubAutoExecuteSuccess();
+
+        service.refreshPositions("TEST", true);
+
+        assertEquals(1, openOrders.size());
+        assertEquals(6, openOrders.get(0).getQuantity());
+        assertEquals(1100L, openOrders.get(0).getLimitPrice());
+        verify(orders, times(1)).autoExecute(anyLong());
+    }
+
+    /**
+     * autoExecute가 불릴 때마다 그 시점에 아직 브로커에 전송 전인(PROPOSED) 주문을 찾아 체결 이전
+     * 상태로 표시한다. 한 번의 ensureTakeProfitOrder 호출은 tranche 하나만 만들므로 항상 PROPOSED
+     * 주문이 최대 1건이라 모호함이 없다. 같은 mock 메서드를 여러 번 stub하면 Mockito가 새 stub을
+     * 등록하면서 기존 stub의 answer를 한 번 더 실행시키는 부작용이 있어(재현: 이 헬퍼를 tier별로
+     * 다시 호출했다가 재현됨), 테스트당 한 번만 stub하고 여러 refreshPositions 호출에 재사용한다.
+     */
+    private void stubAutoExecuteSuccess() {
+        when(orders.autoExecute(anyLong()))
+                .thenAnswer(
+                        invocation -> {
+                            KiwoomTradeProposal order =
+                                    openOrders.stream()
+                                            .filter(
+                                                    o ->
+                                                            o.getStatus()
+                                                                    == KiwoomTradeProposal.Status
+                                                                            .PROPOSED)
+                                            .findFirst()
+                                            .orElseThrow();
+                            order.ordered("{}", "0" + order.getId());
+                            return new KiwoomProposalOrderService.Result(true, "주문 전송", order);
+                        });
+    }
+
     private void stubHolding(int quantity, int sellable, long averagePrice, long currentPrice) {
         JsonNode balance = objectMapper.createObjectNode();
         when(trade.getBalance()).thenReturn(Mono.just(balance));
@@ -357,6 +492,21 @@ class KiwoomPositionExitServiceTest {
         proposal.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
         proposal.setLimitPrice(price);
         proposal.setReason("[EXIT:TAKE_PROFIT] 익절 지정가 주문");
+        proposal.ordered("{}", orderNo);
+        return proposal;
+    }
+
+    private KiwoomTradeProposal takeProfitTierOrder(int tier, int quantity, long price, String orderNo)
+            throws Exception {
+        KiwoomTradeProposal proposal = new KiwoomTradeProposal();
+        setId(proposal, ids.incrementAndGet());
+        proposal.setAction(KiwoomTradeProposal.Action.SELL);
+        proposal.setStockCode(CODE);
+        proposal.setStockName("SM Life Design");
+        proposal.setQuantity(quantity);
+        proposal.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
+        proposal.setLimitPrice(price);
+        proposal.setReason("[EXIT:TAKE_PROFIT-" + tier + "] " + tier + "차 익절 지정가 주문");
         proposal.ordered("{}", orderNo);
         return proposal;
     }

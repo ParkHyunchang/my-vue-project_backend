@@ -16,6 +16,8 @@ public class KiwoomStrategySettings {
     private double swingMinVolumeRatio = 2.0;
     private double swingStopLossPercent;
     private double swingTakeProfitPercent;
+    private double swingTakeProfitPercent2;
+    private double swingTakeProfitSplitPercent = 50.0;
     private int swingMaxHoldingDays;
     private boolean riskLoopEnabled;
     private long dailyLossLimitAmount;
@@ -102,6 +104,22 @@ public class KiwoomStrategySettings {
 
     public void setSwingTakeProfitPercent(double v) {
         swingTakeProfitPercent = v;
+    }
+
+    public double getSwingTakeProfitPercent2() {
+        return swingTakeProfitPercent2;
+    }
+
+    public void setSwingTakeProfitPercent2(double v) {
+        swingTakeProfitPercent2 = v;
+    }
+
+    public double getSwingTakeProfitSplitPercent() {
+        return swingTakeProfitSplitPercent;
+    }
+
+    public void setSwingTakeProfitSplitPercent(double v) {
+        swingTakeProfitSplitPercent = v;
     }
 
     public int getSwingMaxHoldingDays() {

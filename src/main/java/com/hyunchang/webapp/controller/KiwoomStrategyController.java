@@ -171,6 +171,8 @@ public class KiwoomStrategyController {
         result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
+        result.put("swingTakeProfitPercent2", s.getSwingTakeProfitPercent2());
+        result.put("swingTakeProfitSplitPercent", s.getSwingTakeProfitSplitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
         result.put(
                 "maxOrderPriceDeviationPercent",
@@ -199,6 +201,8 @@ public class KiwoomStrategyController {
                                 request.swingMinVolumeRatio(),
                                 request.swingStopLossPercent(),
                                 request.swingTakeProfitPercent(),
+                                request.swingTakeProfitPercent2(),
+                                request.swingTakeProfitSplitPercent(),
                                 request.swingMaxHoldingDays(),
                                 request.riskLoopEnabled(),
                                 request.dailyLossLimitAmount(),
@@ -239,6 +243,8 @@ public class KiwoomStrategyController {
         result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
+        result.put("swingTakeProfitPercent2", s.getSwingTakeProfitPercent2());
+        result.put("swingTakeProfitSplitPercent", s.getSwingTakeProfitSplitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
         result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
@@ -320,6 +326,8 @@ public class KiwoomStrategyController {
             double swingMinVolumeRatio,
             double swingStopLossPercent,
             double swingTakeProfitPercent,
+            double swingTakeProfitPercent2,
+            double swingTakeProfitSplitPercent,
             int swingMaxHoldingDays,
             boolean riskLoopEnabled,
             long dailyLossLimitAmount,

@@ -58,6 +58,12 @@ public class KiwoomStrategySettingsService {
                 existing.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
                 changed = true;
             }
+            // swingTakeProfitPercent2는 0이 "미설정"이 아니라 "2차 익절 사용 안 함"이라는 의도적인 값이라
+            // 손절/익절 비율처럼 여기서 백필하지 않는다 — 관리자가 화면에서 켜기 전까진 계속 꺼진 채로 둔다.
+            if (existing.getSwingTakeProfitSplitPercent() <= 0) {
+                existing.setSwingTakeProfitSplitPercent(50.0);
+                changed = true;
+            }
             if (changed) repo.save(existing);
             return;
         }
@@ -72,6 +78,8 @@ public class KiwoomStrategySettingsService {
         s.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
         s.setSwingStopLossPercent(p.getSwingStopLossPercent());
         s.setSwingTakeProfitPercent(p.getSwingTakeProfitPercent());
+        s.setSwingTakeProfitPercent2(p.getSwingTakeProfitPercent2());
+        s.setSwingTakeProfitSplitPercent(p.getSwingTakeProfitSplitPercent());
         s.setSwingMaxHoldingDays(p.getSwingMaxHoldingDays());
         // 리스크 루프와 일일 손실 한도도 관리자 opt-in 전용 — env 시드 없이 항상 꺼진 상태로 시작한다.
         s.setRiskLoopEnabled(false);
@@ -108,6 +116,13 @@ public class KiwoomStrategySettingsService {
         s.setSwingMinVolumeRatio(clamp(u.swingMinVolumeRatio, 1, 20));
         s.setSwingStopLossPercent(clamp(u.swingStopLossPercent, 0, 100));
         s.setSwingTakeProfitPercent(clamp(u.swingTakeProfitPercent, 0, 100));
+        s.setSwingTakeProfitPercent2(
+                u.swingTakeProfitPercent2 <= 0
+                        ? 0
+                        : Math.max(
+                                s.getSwingTakeProfitPercent() + 0.1,
+                                clamp(u.swingTakeProfitPercent2, 0, 100)));
+        s.setSwingTakeProfitSplitPercent(clamp(u.swingTakeProfitSplitPercent, 1, 99));
         s.setSwingMaxHoldingDays(clamp(u.swingMaxHoldingDays, 1, 30));
         s.setRiskLoopEnabled(u.riskLoopEnabled);
         s.setDailyLossLimitAmount(Math.max(0, u.dailyLossLimitAmount));
@@ -139,7 +154,15 @@ public class KiwoomStrategySettingsService {
                 + s.getSwingStopLossPercent()
                 + "%/+"
                 + s.getSwingTakeProfitPercent()
-                + "%, 보유="
+                + "%"
+                + (s.getSwingTakeProfitPercent2() > 0
+                        ? String.format(
+                                ", 2차 익절=+%s%%(분할 %s%%/%s%%)",
+                                s.getSwingTakeProfitPercent2(),
+                                s.getSwingTakeProfitSplitPercent(),
+                                100 - s.getSwingTakeProfitSplitPercent())
+                        : "")
+                + ", 보유="
                 + s.getSwingMaxHoldingDays()
                 + "거래일, 일일 신규 매수 체결 건수 한도="
                 + s.getDailyMaxProposals()
@@ -164,6 +187,8 @@ public class KiwoomStrategySettingsService {
             double swingMinVolumeRatio,
             double swingStopLossPercent,
             double swingTakeProfitPercent,
+            double swingTakeProfitPercent2,
+            double swingTakeProfitSplitPercent,
             int swingMaxHoldingDays,
             boolean riskLoopEnabled,
             long dailyLossLimitAmount,

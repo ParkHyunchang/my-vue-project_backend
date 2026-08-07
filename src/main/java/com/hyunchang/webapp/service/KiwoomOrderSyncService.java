@@ -587,7 +587,7 @@ public class KiwoomOrderSyncService {
     }
 
     private boolean isTakeProfit(KiwoomTradeProposal proposal) {
-        return hasExitReason(proposal, "[EXIT:TAKE_PROFIT]");
+        return hasExitReason(proposal, "[EXIT:TAKE_PROFIT");
     }
 
     private boolean hasExitReason(KiwoomTradeProposal proposal, String prefix) {

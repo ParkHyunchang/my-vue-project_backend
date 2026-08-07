@@ -30,9 +30,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Maintains one broker-side take-profit limit order per automated position and watches stop-loss
- * levels from 0B real-time ticks. Tick comparisons are intentionally memory-only: balance is read
- * only at startup, after an order state change, or while WebSocket fallback protection is active.
+ * Maintains one or two (2단계 분할 익절 시) broker-side take-profit limit orders per automated
+ * position and watches stop-loss levels from 0B real-time ticks. Tick comparisons are
+ * intentionally memory-only: balance is read only at startup, after an order state change, or
+ * while WebSocket fallback protection is active.
  */
 @Service
 public class KiwoomPositionExitService {
@@ -651,53 +652,77 @@ public class KiwoomPositionExitService {
         }
     }
 
+    /**
+     * 계획된 tranche(1개 또는 2개)를 현재 열려 있는 익절 주문과 비교해 한 번 호출에 한 가지 조치만
+     * 수행한다: 이미 맞는 tranche는 건너뛰고, 어긋난 tranche는 취소만 하고 반환(재생성은 다음 주기),
+     * 아직 없는 tranche는 매도가능수량이 허용할 때만 새로 건다. 2차 tranche는 1차 주문이 실제로
+     * 매도가능수량을 줄인 게 다음 refreshPositions 주기에 반영된 뒤에야 생성된다.
+     */
     private boolean ensureTakeProfitOrder(Position position) {
+        List<TakeProfitTranche> plan = position.takeProfitTranches();
         List<KiwoomTradeProposal> current = openTakeProfitOrders(position.stockCode());
-        if (position.takeProfitPrice() <= 0) {
+        if (plan.isEmpty()) {
             if (current.isEmpty()) return true;
             cancelTakeProfitForSettingsChange(position, current, 0);
             return false;
         }
-        if (current.size() == 1
-                && current.get(0).getLimitPrice() != null
-                && current.get(0).getLimitPrice() == position.takeProfitPrice()
-                && current.get(0).getRemainingQuantity() == position.holdingQuantity()) return true;
+        for (TakeProfitTranche tranche : plan) {
+            List<KiwoomTradeProposal> forTier = ordersForTier(current, tranche.tier());
+            if (forTier.size() == 1
+                    && forTier.get(0).getLimitPrice() != null
+                    && forTier.get(0).getLimitPrice() == tranche.price()
+                    && forTier.get(0).getRemainingQuantity() == tranche.quantity()) continue;
 
-        if (!current.isEmpty()) {
-            cancelTakeProfitForSettingsChange(position, current, position.takeProfitPrice());
-            return false;
+            if (!forTier.isEmpty()) {
+                cancelTakeProfitForSettingsChange(position, forTier, tranche.price());
+                return false;
+            }
+            if (position.sellableQuantity() < tranche.quantity()) return false;
+            return createTakeProfitTranche(position, tranche);
         }
-        if (position.sellableQuantity() <= 0) return false;
+        return true;
+    }
 
+    private boolean createTakeProfitTranche(Position position, TakeProfitTranche tranche) {
+        String tierLabel = tranche.tier() == 1 ? "1차" : "2차";
         KiwoomTradeProposal order = newExitProposal(position, KiwoomTradeProposal.OrderType.LIMIT);
-        order.setLimitPrice(position.takeProfitPrice());
+        order.setQuantity(tranche.quantity());
+        order.setLimitPrice(tranche.price());
+        order.setTakeProfitPrice(tranche.price());
         order.setReason(
-                "[EXIT:TAKE_PROFIT] 평단 "
+                "[EXIT:TAKE_PROFIT-"
+                        + tranche.tier()
+                        + "] 평단 "
                         + String.format("%,d", position.averagePrice())
                         + " 기준 +"
-                        + settings.current().getSwingTakeProfitPercent()
-                        + "% 익절 주문");
+                        + tranche.percent()
+                        + "% "
+                        + tierLabel
+                        + " 익절 주문");
         proposals.save(order);
         audit.log(
                 "TAKE_PROFIT_ORDER_CREATED",
                 order.getId(),
                 position.stockCode()
+                        + " "
+                        + tierLabel
                         + " 익절 지정가 "
-                        + String.format("%,d", position.takeProfitPrice())
+                        + String.format("%,d", tranche.price())
                         + " / "
-                        + position.sellableQuantity()
+                        + tranche.quantity()
                         + "주");
         KiwoomProposalOrderService.Result result = orders.autoExecute(order.getId());
         if (result.success()) {
             KiwoomTradeProposal submitted = result.proposal();
             log.info(
-                    "[자동매매][익절 지정가 주문 전송] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 수량={}주, 주문번호={}, 상태=미체결(체결 확인 대기)",
+                    "[자동매매][{} 익절 지정가 주문 전송] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 수량={}주, 주문번호={}, 상태=미체결(체결 확인 대기)",
+                    tierLabel,
                     position.stockName(),
                     position.stockCode(),
                     String.format("%,d", position.averagePrice()),
-                    settings.current().getSwingTakeProfitPercent(),
-                    String.format("%,d", position.takeProfitPrice()),
-                    position.sellableQuantity(),
+                    tranche.percent(),
+                    String.format("%,d", tranche.price()),
+                    tranche.quantity(),
                     submitted == null || submitted.getBrokerOrderNo() == null
                             ? "미확인"
                             : submitted.getBrokerOrderNo());
@@ -709,12 +734,13 @@ public class KiwoomPositionExitService {
                 proposals.save(failed);
             }
             log.warn(
-                    "[자동매매][익절 지정가 주문 전송 실패] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 사유={}",
+                    "[자동매매][{} 익절 지정가 주문 전송 실패] {}({}), 평단={}원, 익절 기준=+{}%, 주문가={}원, 사유={}",
+                    tierLabel,
                     position.stockName(),
                     position.stockCode(),
                     String.format("%,d", position.averagePrice()),
-                    settings.current().getSwingTakeProfitPercent(),
-                    String.format("%,d", position.takeProfitPrice()),
+                    tranche.percent(),
+                    String.format("%,d", tranche.price()),
                     result.message());
             return false;
         }
@@ -887,14 +913,31 @@ public class KiwoomPositionExitService {
                                 proposal.getAction() == KiwoomTradeProposal.Action.SELL
                                         && stockCode.equals(proposal.getStockCode())
                                         && proposal.getReason() != null
-                                        && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]"))
+                                        && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT"))
+                .toList();
+    }
+
+    /**
+     * 1차/2차 분할 익절 주문 중 해당 tier에 태깅된 것만 골라낸다. 태깅 방식 도입 전(예: "[EXIT:TAKE_PROFIT]")에
+     * 이미 떠 있던 구버전 주문은 태그가 없어도 1차로 취급해야 설정 변경 시 정상적으로 재조정된다.
+     */
+    private List<KiwoomTradeProposal> ordersForTier(List<KiwoomTradeProposal> current, int tier) {
+        String tag = "[EXIT:TAKE_PROFIT-" + tier + "]";
+        return current.stream()
+                .filter(
+                        proposal ->
+                                proposal.getReason() != null
+                                        && (proposal.getReason().startsWith(tag)
+                                                || (tier == 1
+                                                        && proposal.getReason()
+                                                                .startsWith("[EXIT:TAKE_PROFIT]"))))
                 .toList();
     }
 
     private boolean isTakeProfit(KiwoomTradeProposal proposal) {
         return proposal.getAction() == KiwoomTradeProposal.Action.SELL
                 && proposal.getReason() != null
-                && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
+                && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT");
     }
 
     private boolean hasOtherOpenSell(String stockCode) {
@@ -905,7 +948,7 @@ public class KiwoomPositionExitService {
                                         && stockCode.equals(proposal.getStockCode())
                                         && (proposal.getReason() == null
                                                 || !proposal.getReason()
-                                                        .startsWith("[EXIT:TAKE_PROFIT]")));
+                                                        .startsWith("[EXIT:TAKE_PROFIT")));
     }
 
     private boolean hasOpenForcedExit(String stockCode) {
@@ -931,6 +974,9 @@ public class KiwoomPositionExitService {
                 takeProfitPercent <= 0
                         ? 0
                         : roundUp(holding.avgPrice() * (100 + takeProfitPercent) / 100.0);
+        List<TakeProfitTranche> tranches =
+                planTakeProfitTranches(
+                        holding.avgPrice(), takeProfitPercent, holding.quantity(), takeProfit);
         return new Position(
                 holding.code(),
                 holding.name(),
@@ -939,7 +985,37 @@ public class KiwoomPositionExitService {
                 holding.avgPrice(),
                 holding.curPrice(),
                 stop,
-                takeProfit);
+                takeProfit,
+                tranches);
+    }
+
+    /**
+     * 보유수량이 1주뿐이거나 2차 익절률이 꺼져 있으면(0) 지금까지처럼 1차 가격에 전량을 배정한 단일
+     * tranche를 돌려준다. 2차 익절가가 반올림 tick 때문에 1차 이하로 겹치면 분할 자체가 무의미하므로
+     * 같은 방식으로 단일 tranche로 안전하게 폴백한다.
+     */
+    private List<TakeProfitTranche> planTakeProfitTranches(
+            long avgPrice, double tier1Percent, int holdingQuantity, long tier1Price) {
+        if (tier1Price <= 0) return List.of();
+        double tier2Percent = settings.current().getSwingTakeProfitPercent2();
+        if (holdingQuantity <= 1 || tier2Percent <= 0)
+            return List.of(new TakeProfitTranche(1, tier1Price, holdingQuantity, tier1Percent));
+
+        long tier2Price = roundUp(avgPrice * (100 + tier2Percent) / 100.0);
+        if (tier2Price <= tier1Price)
+            return List.of(new TakeProfitTranche(1, tier1Price, holdingQuantity, tier1Percent));
+
+        double splitPercent = settings.current().getSwingTakeProfitSplitPercent();
+        int tier1Qty =
+                Math.max(
+                        1,
+                        Math.min(
+                                holdingQuantity - 1,
+                                (int) Math.round(holdingQuantity * splitPercent / 100.0)));
+        int tier2Qty = holdingQuantity - tier1Qty;
+        return List.of(
+                new TakeProfitTranche(1, tier1Price, tier1Qty, tier1Percent),
+                new TakeProfitTranche(2, tier2Price, tier2Qty, tier2Percent));
     }
 
     private long roundUp(double raw) {
@@ -999,7 +1075,8 @@ public class KiwoomPositionExitService {
             long averagePrice,
             long currentPrice,
             long stopLossPrice,
-            long takeProfitPrice) {
+            long takeProfitPrice,
+            List<TakeProfitTranche> takeProfitTranches) {
         Position withCurrentPrice(long price) {
             return new Position(
                     stockCode,
@@ -1009,9 +1086,13 @@ public class KiwoomPositionExitService {
                     averagePrice,
                     price,
                     stopLossPrice,
-                    takeProfitPrice);
+                    takeProfitPrice,
+                    takeProfitTranches);
         }
     }
+
+    /** 분할 익절 한 단계(1차 또는 2차)의 목표가·목표수량·근거 퍼센트. */
+    private record TakeProfitTranche(int tier, long price, int quantity, double percent) {}
 
     public record SettingsApplyResult(
             boolean balanceRefreshed, boolean completed, String message) {}
