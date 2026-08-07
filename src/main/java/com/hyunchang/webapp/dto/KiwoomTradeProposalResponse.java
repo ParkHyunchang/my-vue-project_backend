@@ -29,6 +29,7 @@ public class KiwoomTradeProposalResponse {
     private String status;
     private String rejectionReason;
     private String errorMessage;
+    private String cancelReason;
     private String brokerOrderNo;
     private int filledQuantity;
     private int remainingQuantity;
@@ -50,6 +51,7 @@ public class KiwoomTradeProposalResponse {
                 .status(name(proposal.getStatus()))
                 .rejectionReason(proposal.getRejectionReason())
                 .errorMessage(proposal.getErrorMessage())
+                .cancelReason(proposal.getCancelReason())
                 .brokerOrderNo(proposal.getBrokerOrderNo())
                 .filledQuantity(proposal.getFilledQuantity())
                 .remainingQuantity(proposal.getRemainingQuantity())

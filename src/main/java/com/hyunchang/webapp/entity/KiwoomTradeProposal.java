@@ -92,6 +92,9 @@ public class KiwoomTradeProposal {
     @Column(columnDefinition = "TEXT")
     private String brokerResponse;
 
+    @Column(length = 300)
+    private String cancelReason;
+
     private LocalDateTime createdAt;
 
     @PrePersist
@@ -267,6 +270,10 @@ public class KiwoomTradeProposal {
         return brokerResponse;
     }
 
+    public String getCancelReason() {
+        return cancelReason;
+    }
+
     public void approve() {
         status = Status.APPROVED;
         approvedAt = LocalDateTime.now();
@@ -301,7 +308,8 @@ public class KiwoomTradeProposal {
         status = filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED;
     }
 
-    public void cancelRequested(String response) {
+    public void cancelRequested(String reason, String response) {
+        cancelReason = reason;
         brokerResponse = response;
         cancelRequestedAt = LocalDateTime.now();
         status = Status.CANCEL_REQUESTED;
@@ -317,7 +325,7 @@ public class KiwoomTradeProposal {
     public void expired(String reason) {
         remainingQuantity = 0;
         lastSyncedAt = LocalDateTime.now();
-        brokerResponse = reason;
+        cancelReason = reason;
         status = Status.CANCELED;
     }
 

@@ -124,7 +124,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void disappearanceFromUnfilledOrdersDoesNotConfirmCancellation() {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
         stubResponses(objectMapper.createArrayNode());
 
         service.sync();
@@ -135,7 +135,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void cancelRequestStaysPendingWhileBrokerStillListsTheOrderAsUnfilled() throws Exception {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
         JsonNode stillUnfilled =
                 objectMapper.readTree(
                         "{\"ord_no\":\"0357151\",\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"6\"}");
@@ -150,7 +150,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void repeatedDisappearanceAfterTheGracePeriodConfirmsCancellation() throws Exception {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
         setCancelRequestedAt(LocalDateTime.now().minusSeconds(30));
         stubResponses(objectMapper.createArrayNode());
 
@@ -165,7 +165,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void aSingleMissedInquiryDoesNotConfirmCancellationAfterTheOrderReappears() throws Exception {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
         setCancelRequestedAt(LocalDateTime.now().minusSeconds(30));
         JsonNode stillUnfilled =
                 objectMapper.readTree(
@@ -183,7 +183,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void explicitBrokerCancellationRecordConfirmsCancellation() throws Exception {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
         JsonNode cancelled =
                 objectMapper.readTree(
                         "{\"ord_no\":\"0357999\",\"orig_ord_no\":\"0357151\","
@@ -200,7 +200,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void stopTransitionPollsImmediatelyAndConfirmsTakeProfitCancellation() throws Exception {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
         when(exits.isStopTransitionPending("063440")).thenReturn(true);
         JsonNode cancelled =
                 objectMapper.readTree(
@@ -219,7 +219,7 @@ class KiwoomOrderSyncServiceTest {
 
     @Test
     void ordinaryTakeProfitCancellationDoesNotUseUrgentPolling() {
-        proposal.cancelRequested("{}");
+        proposal.cancelRequested("테스트 취소", "{}");
 
         service.urgentStopCancellationSync();
 

@@ -143,7 +143,10 @@ public class KiwoomPositionExitService {
                     || order.getBrokerOrderNo() == null
                     || order.getBrokerOrderNo().isBlank()) continue;
             KiwoomProposalOrderService.Result result =
-                    orders.cancel(order.getId(), order.getRemainingQuantity());
+                    orders.cancel(
+                            order.getId(),
+                            order.getRemainingQuantity(),
+                            "자동주문 완전 중지로 미체결 주문을 취소합니다.");
             if (result.success()) requested++;
             else failed++;
         }
@@ -300,7 +303,10 @@ public class KiwoomPositionExitService {
             if (order.getStatus() != KiwoomTradeProposal.Status.ORDERED
                     && order.getStatus() != KiwoomTradeProposal.Status.PARTIALLY_FILLED) continue;
             KiwoomProposalOrderService.Result result =
-                    orders.cancel(order.getId(), order.getRemainingQuantity());
+                    orders.cancel(
+                            order.getId(),
+                            order.getRemainingQuantity(),
+                            "수동 시장가 청산을 위해 기존 매도 주문을 취소합니다.");
             if (result.success()) {
                 canceled++;
                 log.info(
@@ -619,7 +625,10 @@ public class KiwoomPositionExitService {
             if (order.getStatus() == KiwoomTradeProposal.Status.CANCEL_REQUESTED) continue;
             if (order.getRemainingQuantity() <= 0) continue;
             KiwoomProposalOrderService.Result result =
-                    orders.cancel(order.getId(), order.getRemainingQuantity());
+                    orders.cancel(
+                            order.getId(),
+                            order.getRemainingQuantity(),
+                            trigger.label() + " 조건 도달로 기존 익절 주문을 취소합니다.");
             if (result.success()) {
                 log.warn(
                         "[자동매매][청산 전환] {}({}), 청산 사유={}, 익절 주문번호={}, 취소 수량={}주, 상태=취소 확인 대기",
@@ -717,7 +726,10 @@ public class KiwoomPositionExitService {
             if (order.getRemainingQuantity() <= 0
                     || order.getStatus() == KiwoomTradeProposal.Status.CANCEL_REQUESTED) continue;
             KiwoomProposalOrderService.Result result =
-                    orders.cancel(order.getId(), order.getRemainingQuantity());
+                    orders.cancel(
+                            order.getId(),
+                            order.getRemainingQuantity(),
+                            "익절 기준 설정이 변경되어 기존 익절 주문을 취소합니다.");
             String newPriceLabel =
                     newTakeProfitPrice > 0 ? String.format("%,d원", newTakeProfitPrice) : "사용 안 함";
             if (result.success()) {

@@ -275,7 +275,7 @@ public class KiwoomProposalOrderService {
     }
 
     /** 안전 자동중지 중에도 취소는 허용한다 — 노출(포지션)을 줄이는 방향의 조작은 항상 가능해야 한다. */
-    public synchronized Result cancel(long id, int quantity) {
+    public synchronized Result cancel(long id, int quantity, String reason) {
         KiwoomTradeProposal p = find(id);
         if (!isOpenOrder(p)) return fail("미체결·부분체결 상태의 주문만 취소할 수 있습니다.");
         if (p.getBrokerOrderNo() == null || p.getBrokerOrderNo().isBlank())
@@ -288,7 +288,7 @@ public class KiwoomProposalOrderService {
                                     new KiwoomTradeService.CancelOrderRequest(
                                             p.getBrokerOrderNo(), p.getStockCode(), quantity))
                             .block(Duration.ofSeconds(20));
-            p.cancelRequested(response == null ? "" : response.toString());
+            p.cancelRequested(reason, response == null ? "" : response.toString());
             proposals.save(p);
             audit.log("ORDER_CANCEL_REQUESTED", p.getId(), "키움이 주문 취소 요청을 접수했습니다.");
             events.publishEvent("order", "주문 취소 요청: " + p.getStockCode());

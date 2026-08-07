@@ -4,6 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -117,14 +119,14 @@ class KiwoomPositionExitServiceTest {
         KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
         openOrders.add(takeProfit);
         stubHolding(6, 0, 1119, 1100);
-        when(orders.cancel(takeProfit.getId(), 6))
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
                 .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit));
 
         service.refreshPositions("TEST", true);
         service.handlePriceTick(CODE, 1000);
 
         verify(websocket).connectAndSubscribe(List.of(CODE));
-        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders).cancel(eq(takeProfit.getId()), eq(6), anyString());
         verify(orders, never()).autoExecute(anyLong());
     }
 
@@ -133,10 +135,10 @@ class KiwoomPositionExitServiceTest {
         KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
         openOrders.add(takeProfit);
         stubHolding(6, 0, 1119, 1100);
-        when(orders.cancel(takeProfit.getId(), 6))
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
                 .thenAnswer(
                         invocation -> {
-                            takeProfit.cancelRequested("{}");
+                            takeProfit.cancelRequested("테스트 취소", "{}");
                             return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
                         });
 
@@ -192,16 +194,16 @@ class KiwoomPositionExitServiceTest {
         // 자동매수 제안 이력이 없는 수동 보유종목도 기존 계좌 보유 테이블의 시작일로 계산한다.
         when(accountHoldings.positionOpenedAt(CODE))
                 .thenReturn(Optional.of(LocalDateTime.now().minusDays(10)));
-        when(orders.cancel(takeProfit.getId(), 6))
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
                 .thenAnswer(
                         invocation -> {
-                            takeProfit.cancelRequested("{}");
+                            takeProfit.cancelRequested("테스트 취소", "{}");
                             return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
                         });
 
         service.refreshPositions("TEST", true);
 
-        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders).cancel(eq(takeProfit.getId()), eq(6), anyString());
         verify(orders, never()).autoExecute(anyLong());
 
         takeProfit.cancelled();
@@ -248,7 +250,7 @@ class KiwoomPositionExitServiceTest {
         assertEquals(true, prepared);
         verify(websocket).connectAndSubscribe(List.of(CODE));
         verify(orders, never()).autoExecute(anyLong());
-        verify(orders, never()).cancel(anyLong(), anyInt());
+        verify(orders, never()).cancel(anyLong(), anyInt(), anyString());
     }
 
     @Test
@@ -261,7 +263,7 @@ class KiwoomPositionExitServiceTest {
         service.handlePriceTick(CODE, 400);
 
         verify(orders, never()).autoExecute(anyLong());
-        verify(orders, never()).cancel(anyLong(), anyInt());
+        verify(orders, never()).cancel(anyLong(), anyInt(), anyString());
     }
 
     @Test
@@ -270,16 +272,16 @@ class KiwoomPositionExitServiceTest {
         openOrders.add(takeProfit);
         current.setSwingTakeProfitPercent(5);
         stubHolding(6, 0, 1119, 1100);
-        when(orders.cancel(takeProfit.getId(), 6))
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
                 .thenAnswer(
                         invocation -> {
-                            takeProfit.cancelRequested("{}");
+                            takeProfit.cancelRequested("테스트 취소", "{}");
                             return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
                         });
 
         service.refreshPositions("SETTINGS_CHANGED", true);
 
-        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders).cancel(eq(takeProfit.getId()), eq(6), anyString());
         verify(orders, never()).autoExecute(anyLong());
     }
 
@@ -289,16 +291,16 @@ class KiwoomPositionExitServiceTest {
         openOrders.add(takeProfit);
         current.setSwingTakeProfitPercent(0);
         stubHolding(6, 0, 1119, 1100);
-        when(orders.cancel(takeProfit.getId(), 6))
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
                 .thenAnswer(
                         invocation -> {
-                            takeProfit.cancelRequested("{}");
+                            takeProfit.cancelRequested("테스트 취소", "{}");
                             return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
                         });
 
         service.refreshPositions("SETTINGS_CHANGED", true);
 
-        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders).cancel(eq(takeProfit.getId()), eq(6), anyString());
         verify(orders, never()).autoExecute(anyLong());
     }
 
@@ -315,17 +317,17 @@ class KiwoomPositionExitServiceTest {
         pendingBuy.ordered("{}", "0067225");
         openOrders.add(takeProfit);
         openOrders.add(pendingBuy);
-        when(orders.cancel(takeProfit.getId(), 6))
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
                 .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit));
-        when(orders.cancel(pendingBuy.getId(), 2))
+        when(orders.cancel(eq(pendingBuy.getId()), eq(2), anyString()))
                 .thenReturn(new KiwoomProposalOrderService.Result(true, "취소 요청", pendingBuy));
 
         KiwoomPositionExitService.PauseResult result = service.pauseExitManagement();
 
         assertEquals(2, result.cancellationRequested());
         assertEquals(0, result.cancellationFailed());
-        verify(orders).cancel(takeProfit.getId(), 6);
-        verify(orders).cancel(pendingBuy.getId(), 2);
+        verify(orders).cancel(eq(takeProfit.getId()), eq(6), anyString());
+        verify(orders).cancel(eq(pendingBuy.getId()), eq(2), anyString());
     }
 
     private void stubHolding(int quantity, int sellable, long averagePrice, long currentPrice) {

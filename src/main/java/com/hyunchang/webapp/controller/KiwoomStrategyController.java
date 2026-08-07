@@ -149,7 +149,8 @@ public class KiwoomStrategyController {
     @PostMapping("/proposals/{id}/cancel")
     public ResponseEntity<?> cancelOrder(
             @PathVariable long id, @RequestBody CancelRequest request) {
-        return response(orders.cancel(id, request.quantity()));
+        return response(
+                orders.cancel(id, request.quantity(), "사용자가 화면에서 수동으로 주문 취소를 요청했습니다."));
     }
 
     @PostMapping("/orders/sync")
