@@ -3,6 +3,7 @@ package com.hyunchang.webapp.controller;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.dto.KiwoomStrategyRunResponse;
 import com.hyunchang.webapp.service.KiwoomOrderSyncService;
+import com.hyunchang.webapp.service.KiwoomPositionExitService;
 import com.hyunchang.webapp.service.KiwoomProposalOrderService;
 import com.hyunchang.webapp.service.KiwoomRiskManagerService;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
@@ -40,6 +41,7 @@ public class KiwoomStrategyController {
     private final KiwoomStrategySettingsService settings;
     private final AiPromptService promptService;
     private final KiwoomRiskManagerService risk;
+    private final KiwoomPositionExitService positionExits;
 
     public KiwoomStrategyController(
             KiwoomStrategyService strategy,
@@ -51,7 +53,8 @@ public class KiwoomStrategyController {
             KiwoomOrderSyncService orderSync,
             KiwoomStrategySettingsService settings,
             AiPromptService promptService,
-            KiwoomRiskManagerService risk) {
+            KiwoomRiskManagerService risk,
+            KiwoomPositionExitService positionExits) {
         this.strategy = strategy;
         this.orders = orders;
         this.props = props;
@@ -62,6 +65,7 @@ public class KiwoomStrategyController {
         this.settings = settings;
         this.promptService = promptService;
         this.risk = risk;
+        this.positionExits = positionExits;
     }
 
     /** 지금 유니버스에 편입된 KRX 자동 스캔 매매 후보 — 읽기 전용. 사람이 등록하는 관심종목은 없다. */
@@ -181,6 +185,7 @@ public class KiwoomStrategyController {
 
     @PatchMapping("/settings")
     public Map<String, Object> updateSettings(@RequestBody StrategySettingsRequest request) {
+        long previousDailyLossLimit = settings.current().getDailyLossLimitAmount();
         var s =
                 settings.save(
                         new KiwoomStrategySettingsService.Update(
@@ -200,7 +205,17 @@ public class KiwoomStrategyController {
                                 request.prompt()),
                         "admin");
         audit.log("STRATEGY_SETTINGS_UPDATED", null, "Runtime strategy settings were updated.");
-        return Map.of("success", true, "updatedAt", s.getUpdatedAt().toString());
+        var applied = positionExits.applyChangedSettings();
+        Map<String, Object> result = new HashMap<>();
+        result.put("success", true);
+        result.put("updatedAt", s.getUpdatedAt().toString());
+        result.put("exitSettingsApplied", applied.completed());
+        result.put("applyMessage", applied.message());
+        if (previousDailyLossLimit != s.getDailyLossLimitAmount())
+            result.put(
+                    "dailyLossApplyMessage",
+                    risk.applyChangedDailyLossLimit(s.getDailyLossLimitAmount()));
+        return result;
     }
 
     @GetMapping("/config")

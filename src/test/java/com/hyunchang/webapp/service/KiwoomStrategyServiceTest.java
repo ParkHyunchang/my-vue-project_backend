@@ -31,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
 
 @ExtendWith(MockitoExtension.class)
@@ -66,6 +67,10 @@ class KiwoomStrategyServiceTest {
         settings.setSwingStopLossPercent(3);
         settings.setSwingTakeProfitPercent(6);
         settings.setSwingMaxHoldingDays(5);
+        settings.setSwingMinChangePercent(2);
+        settings.setSwingMaxChangePercent(8);
+        settings.setSwingMinVolumeRatio(2);
+        settings.setAutoExecuteMinConfidence(70);
         settings.setDailyMaxProposals(50);
 
         service =
@@ -98,7 +103,15 @@ class KiwoomStrategyServiceTest {
         lenient().when(trade.parseHoldings(any())).thenReturn(List.of());
         lenient().when(prompts.render(anyString(), any())).thenReturn("prompt");
         lenient().when(runs.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        lenient().when(proposals.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        lenient()
+                .when(proposals.save(any()))
+                .thenAnswer(
+                        inv -> {
+                            KiwoomTradeProposal proposal = inv.getArgument(0);
+                            if (proposal.getId() == null)
+                                ReflectionTestUtils.setField(proposal, "id", 1L);
+                            return proposal;
+                        });
     }
 
     private com.fasterxml.jackson.databind.JsonNode depositNode(long amount) {
@@ -161,6 +174,53 @@ class KiwoomStrategyServiceTest {
         verify(proposals).save(captor.capture());
         assertEquals("005930", captor.getValue().getStockCode());
         assertEquals(KiwoomTradeProposal.Action.BUY, captor.getValue().getAction());
+    }
+
+    @Test
+    void buyOutsideCurrentPopupRulesIsRejectedByServer() {
+        settings.setSwingMinChangePercent(5);
+        // 후보 서비스가 잘못 포함해 반환하더라도 서버가 현재 팝업 기준으로 한 번 더 차단해야 한다.
+        when(catalystService.getKrCandidatesWithCatalysts(30, 5, 2, 8))
+                .thenReturn(List.of(catalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+
+        service.runDecision("MANUAL");
+
+        verify(proposals, never()).save(any());
+    }
+
+    @Test
+    void aiSellIsConvertedToHoldAndNeverSubmitted() {
+        KiwoomTradeService.Holding held =
+                new KiwoomTradeService.Holding("005930", "삼성전자", 5, 5, 70_000, 69_000, -1.4);
+        when(trade.parseHoldings(any())).thenReturn(List.of(held));
+        when(catalystService.getKrCandidatesWithCatalysts(30)).thenReturn(List.of());
+        when(ai.analyze(anyString(), anyString(), eq(true)))
+                .thenReturn(decisionJson("SELL", "005930", 5, 69000, "90"));
+        settings.setAutoExecute(true);
+
+        service.runDecision("MANUAL");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertTrue(captor.getValue().getReason().contains("자동 관리"));
+        verify(orders, never()).autoExecute(anyLong());
+    }
+
+    @Test
+    void qualifyingBuyIsAutomaticallySubmittedWhenPopupAutoOrderIsEnabled() {
+        settings.setAutoExecute(true);
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(catalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+        when(orders.autoExecute(anyLong()))
+                .thenReturn(new KiwoomProposalOrderService.Result(true, "주문 전송", null));
+
+        service.runDecision("SCHEDULE");
+
+        verify(orders).autoExecute(anyLong());
     }
 
     @Test

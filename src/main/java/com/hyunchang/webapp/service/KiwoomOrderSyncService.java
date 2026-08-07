@@ -398,14 +398,28 @@ public class KiwoomOrderSyncService {
     }
 
     private String orderSyncLabel(KiwoomTradeProposal proposal) {
-        boolean takeProfit = isTakeProfit(proposal);
-        if (!takeProfit) return statusLabel(proposal.getStatus());
-        return switch (proposal.getStatus()) {
-            case FILLED -> "익절 지정가 주문 체결 완료";
-            case PARTIALLY_FILLED -> "익절 지정가 주문 일부 체결";
-            case ORDERED -> "익절 지정가 주문 미체결";
-            default -> "익절 지정가 주문 상태 변경";
-        };
+        if (isTakeProfit(proposal))
+            return switch (proposal.getStatus()) {
+                case FILLED -> "익절 지정가 주문 체결 완료";
+                case PARTIALLY_FILLED -> "익절 지정가 주문 일부 체결";
+                case ORDERED -> "익절 지정가 주문 미체결";
+                default -> "익절 지정가 주문 상태 변경";
+            };
+        if (hasExitReason(proposal, "[EXIT:STOP_LOSS]"))
+            return switch (proposal.getStatus()) {
+                case FILLED -> "손절 시장가 주문 체결 완료";
+                case PARTIALLY_FILLED -> "손절 시장가 주문 일부 체결";
+                case ORDERED -> "손절 시장가 주문 접수";
+                default -> "손절 시장가 주문 상태 변경";
+            };
+        if (hasExitReason(proposal, "[EXIT:TIME_EXIT]"))
+            return switch (proposal.getStatus()) {
+                case FILLED -> "보유기간 청산 주문 체결 완료";
+                case PARTIALLY_FILLED -> "보유기간 청산 주문 일부 체결";
+                case ORDERED -> "보유기간 청산 주문 접수";
+                default -> "보유기간 청산 주문 상태 변경";
+            };
+        return statusLabel(proposal.getStatus());
     }
 
     private String actionLabel(KiwoomTradeProposal.Action action) {
@@ -433,8 +447,11 @@ public class KiwoomOrderSyncService {
     }
 
     private boolean isTakeProfit(KiwoomTradeProposal proposal) {
-        return proposal.getReason() != null
-                && proposal.getReason().startsWith("[EXIT:TAKE_PROFIT]");
+        return hasExitReason(proposal, "[EXIT:TAKE_PROFIT]");
+    }
+
+    private boolean hasExitReason(KiwoomTradeProposal proposal, String prefix) {
+        return proposal.getReason() != null && proposal.getReason().startsWith(prefix);
     }
 
     private boolean isFromPreviousDate(KiwoomTradeProposal proposal, LocalDate today) {

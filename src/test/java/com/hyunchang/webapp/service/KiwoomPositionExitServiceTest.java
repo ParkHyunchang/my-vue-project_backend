@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -19,8 +20,10 @@ import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import java.lang.reflect.Field;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +70,7 @@ class KiwoomPositionExitServiceTest {
         current.setRiskLoopEnabled(true);
         current.setSwingStopLossPercent(10);
         current.setSwingTakeProfitPercent(10);
+        current.setSwingMaxHoldingDays(5);
         when(settings.current()).thenReturn(current);
 
         when(proposals.existsByStockCodeAndActionAndStatusIn(any(), any(), any())).thenReturn(true);
@@ -162,6 +166,8 @@ class KiwoomPositionExitServiceTest {
                         });
 
         service.retryPendingStopTransitionNow();
+        priceListener.accept(new KiwoomWebsocketClient.PriceTick(CODE, 990));
+        service.retryPendingStopTransitionNow();
 
         ArgumentCaptor<KiwoomTradeProposal> proposalCaptor =
                 ArgumentCaptor.forClass(KiwoomTradeProposal.class);
@@ -176,7 +182,63 @@ class KiwoomPositionExitServiceTest {
                         .orElseThrow();
         assertEquals(KiwoomTradeProposal.OrderType.MARKET, stopOrder.getOrderType());
         assertEquals(6, stopOrder.getQuantity());
-        verify(orders).autoExecute(stopOrder.getId());
+        verify(orders, times(1)).autoExecute(stopOrder.getId());
+    }
+
+    @Test
+    void maximumHoldingPeriodUsesSameCancelThenMarketExitFlow() throws Exception {
+        KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
+        openOrders.add(takeProfit);
+        stubHolding(6, 0, 1119, 1100);
+        KiwoomTradeProposal filledBuy = new KiwoomTradeProposal();
+        setCreatedAt(filledBuy, LocalDateTime.now().minusDays(10));
+        when(proposals.findFirstByStockCodeAndActionAndStatusOrderByCreatedAtDesc(
+                        CODE, KiwoomTradeProposal.Action.BUY, KiwoomTradeProposal.Status.FILLED))
+                .thenReturn(Optional.of(filledBuy));
+        when(orders.cancel(takeProfit.getId(), 6))
+                .thenAnswer(
+                        invocation -> {
+                            takeProfit.cancelRequested("{}");
+                            return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
+                        });
+
+        service.refreshPositions("TEST", true);
+
+        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders, never()).autoExecute(anyLong());
+
+        takeProfit.cancelled();
+        stubHolding(6, 6, 1119, 1100);
+        when(orders.autoExecute(anyLong()))
+                .thenAnswer(
+                        invocation -> {
+                            KiwoomTradeProposal timeExit =
+                                    openOrders.stream()
+                                            .filter(
+                                                    order ->
+                                                            order.getReason() != null
+                                                                    && order.getReason()
+                                                                            .startsWith(
+                                                                                    "[EXIT:TIME_EXIT]"))
+                                            .findFirst()
+                                            .orElseThrow();
+                            timeExit.ordered("{}", "0072000");
+                            return new KiwoomProposalOrderService.Result(true, "주문 전송", timeExit);
+                        });
+
+        service.retryPendingStopTransitionNow();
+
+        KiwoomTradeProposal timeExit =
+                openOrders.stream()
+                        .filter(
+                                order ->
+                                        order.getReason() != null
+                                                && order.getReason().startsWith("[EXIT:TIME_EXIT]"))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(KiwoomTradeProposal.OrderType.MARKET, timeExit.getOrderType());
+        assertEquals(6, timeExit.getQuantity());
+        verify(orders, times(1)).autoExecute(timeExit.getId());
     }
 
     @Test
@@ -189,6 +251,57 @@ class KiwoomPositionExitServiceTest {
         verify(websocket).connectAndSubscribe(List.of(CODE));
         verify(orders, never()).autoExecute(anyLong());
         verify(orders, never()).cancel(anyLong(), anyInt());
+    }
+
+    @Test
+    void zeroPercentDisablesTakeProfitAndStopLossOrders() {
+        current.setSwingStopLossPercent(0);
+        current.setSwingTakeProfitPercent(0);
+        stubHolding(6, 6, 1119, 500);
+
+        service.refreshPositions("TEST", true);
+        service.handlePriceTick(CODE, 400);
+
+        verify(orders, never()).autoExecute(anyLong());
+        verify(orders, never()).cancel(anyLong(), anyInt());
+    }
+
+    @Test
+    void changedTakeProfitCancelsExistingOrderBeforeRepricing() throws Exception {
+        KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
+        openOrders.add(takeProfit);
+        current.setSwingTakeProfitPercent(5);
+        stubHolding(6, 0, 1119, 1100);
+        when(orders.cancel(takeProfit.getId(), 6))
+                .thenAnswer(
+                        invocation -> {
+                            takeProfit.cancelRequested("{}");
+                            return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
+                        });
+
+        service.refreshPositions("SETTINGS_CHANGED", true);
+
+        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders, never()).autoExecute(anyLong());
+    }
+
+    @Test
+    void disablingTakeProfitCancelsExistingOrder() throws Exception {
+        KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
+        openOrders.add(takeProfit);
+        current.setSwingTakeProfitPercent(0);
+        stubHolding(6, 0, 1119, 1100);
+        when(orders.cancel(takeProfit.getId(), 6))
+                .thenAnswer(
+                        invocation -> {
+                            takeProfit.cancelRequested("{}");
+                            return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
+                        });
+
+        service.refreshPositions("SETTINGS_CHANGED", true);
+
+        verify(orders).cancel(takeProfit.getId(), 6);
+        verify(orders, never()).autoExecute(anyLong());
     }
 
     private void stubHolding(int quantity, int sellable, long averagePrice, long currentPrice) {
@@ -226,5 +339,12 @@ class KiwoomPositionExitServiceTest {
         Field field = KiwoomTradeProposal.class.getDeclaredField("id");
         field.setAccessible(true);
         field.set(proposal, id);
+    }
+
+    private void setCreatedAt(KiwoomTradeProposal proposal, LocalDateTime createdAt)
+            throws Exception {
+        Field field = KiwoomTradeProposal.class.getDeclaredField("createdAt");
+        field.setAccessible(true);
+        field.set(proposal, createdAt);
     }
 }

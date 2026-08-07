@@ -180,6 +180,27 @@ public class KiwoomAutoTradeState {
         return next;
     }
 
+    /**
+     * 관리자가 일일 손실 한도 금액 자체를 변경했을 때 오늘 스냅샷에 새 한도를 즉시 적용한다. 일반 손실 점검은 한 번 발동한 상태를 유지하지만, 관리자가 한도를 0으로
+     * 끄거나 상향한 경우에는 명시적인 설정 변경으로 보고 차단 상태도 새 한도에 맞춰 다시 계산한다.
+     */
+    public synchronized DailyLossStatus applyChangedDailyLossLimit(long limitAmount) {
+        DailyLossStatus previous = dailyLoss;
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        if (previous == null || !today.equals(previous.snapshotDate())) return previous;
+        boolean triggered = limitAmount > 0 && previous.drawdown() >= limitAmount;
+        DailyLossStatus next =
+                new DailyLossStatus(
+                        previous.snapshotDate(),
+                        previous.baseAsset(),
+                        previous.lastAsset(),
+                        triggered,
+                        LocalDateTime.now());
+        dailyLoss = next;
+        persistDailyLoss(next);
+        return next;
+    }
+
     /** 오늘 발동 여부. 스냅샷 날짜가 지난 상태면 쓰기 없이 자동으로 해제된 것으로 본다. */
     public boolean isDailyLossTriggered() {
         DailyLossStatus s = dailyLoss;

@@ -246,14 +246,7 @@ public class KiwoomStrategyService {
             Set<String> unique = new HashSet<>();
             for (JsonNode d : root.path("decisions")) {
                 KiwoomTradeProposal p =
-                        validated(
-                                d,
-                                universe,
-                                sellableQty,
-                                currentPrices,
-                                swingCandidates,
-                                deposit,
-                                unique);
+                        validated(d, universe, currentPrices, swingCandidates, deposit, unique);
                 if (p == null) continue;
                 applyGuardFlags(p, deposit);
                 p.setRun(run);
@@ -499,7 +492,6 @@ public class KiwoomStrategyService {
     private KiwoomTradeProposal validated(
             JsonNode d,
             Map<String, String> universe,
-            Map<String, Integer> sellableQty,
             Map<String, Long> currentPrices,
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
             long deposit,
@@ -511,8 +503,23 @@ public class KiwoomStrategyService {
             int confidence = parseConfidence(d.path("confidence"));
             if (!code.matches("\\d{6}") || !universe.containsKey(code) || !unique.add(code))
                 return null;
-            if (action == KiwoomTradeProposal.Action.BUY && !swingCandidates.containsKey(code))
-                return null;
+            String aiReason = d.path("reason").asText("");
+            if (action == KiwoomTradeProposal.Action.SELL) {
+                log.warn(
+                        "[자동매매][AI 임의 매도 차단] {}({}), AI 사유={}, 처리=팝업의 익절·손절·최대 보유기간 규칙에 따른 서버 청산만 허용",
+                        universe.get(code),
+                        code,
+                        trim(aiReason));
+                action = KiwoomTradeProposal.Action.HOLD;
+                aiReason =
+                        "AI 매도 제안은 실행하지 않습니다. 매도는 전략 설정의 익절·손절·최대 보유기간 조건으로 자동 관리합니다. AI 원문: "
+                                + trim(aiReason);
+            }
+            if (action == KiwoomTradeProposal.Action.BUY) {
+                KrxOpenApiService.KrSwingCandidate candidate = swingCandidates.get(code);
+                if (candidate == null || !matchesCurrentBuyRules(candidate, settings.current()))
+                    return null;
+            }
             int qty = d.path("quantity").asInt();
             if (action != KiwoomTradeProposal.Action.HOLD && qty <= 0) return null;
             Long price = null;
@@ -532,11 +539,7 @@ public class KiwoomStrategyService {
                 price = p0;
             }
             var s = settings.current();
-            if (action == KiwoomTradeProposal.Action.SELL) {
-                Integer held = sellableQty.get(code);
-                if (held == null || held <= 0) return null;
-                qty = Math.min(qty, held);
-            } else if (action == KiwoomTradeProposal.Action.BUY) {
+            if (action == KiwoomTradeProposal.Action.BUY) {
                 // AI가 예산보다 큰 수량을 제안해도 전체를 버리지 않고 1회 주문 한도·예수금 비율 안으로
                 // 수량을 깎아서 살린다 — 매번 통째로 거부되면 좋은 후보를 놓치게 된다.
                 long cap =
@@ -553,7 +556,7 @@ public class KiwoomStrategyService {
             p.setStockName(d.path("stockName").asText(universe.get(code)));
             p.setQuantity(Math.max(qty, 0));
             p.setConfidence(confidence);
-            p.setReason(d.path("reason").asText(""));
+            p.setReason(aiReason);
             p.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
             if (price != null) {
                 p.setLimitPrice(price);
@@ -569,6 +572,14 @@ public class KiwoomStrategyService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private boolean matchesCurrentBuyRules(
+            KrxOpenApiService.KrSwingCandidate candidate,
+            com.hyunchang.webapp.entity.KiwoomStrategySettings current) {
+        return candidate.changePercent() >= current.getSwingMinChangePercent()
+                && candidate.changePercent() <= current.getSwingMaxChangePercent()
+                && candidate.volumeRatio() >= current.getSwingMinVolumeRatio();
     }
 
     /** 일부 모델이 0~100 정수 대신 0.0~1.0 비율로 응답하는 경우를 보정한다 (예: 0.82 → 82). */
@@ -700,6 +711,7 @@ public class KiwoomStrategyService {
                 + "% / "
                 + s.getSwingMaxHoldingDays()
                 + "거래일\n"
+                + "- 보유 종목 매도: 위 손절·익절·최대 보유기간 조건을 서버가 자동 집행하며 AI 임의 SELL은 실행하지 않음\n"
                 + "이 규칙과 서버 검증을 통과한 제안만 실제 주문 전송 대상이 됩니다.";
     }
 
@@ -722,7 +734,7 @@ public class KiwoomStrategyService {
                 + "동일 종목 재제안 쿨다운: "
                 + st.getCooldownMinutes()
                 + "분\n"
-                + "SELL 수량은 보유 수량 이내";
+                + "보유 종목 매도는 전략 설정의 손절·익절·최대 보유기간 조건만 서버가 자동 집행";
     }
 
     private String joinCapped(List<String> lines, int maxLines, String emptyText) {
