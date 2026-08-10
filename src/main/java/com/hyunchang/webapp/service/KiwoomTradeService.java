@@ -127,7 +127,7 @@ public class KiwoomTradeService {
     public Mono<List<IntradayRankStock>> getTopRisingStocks() {
         return readRequest(
                         "ka10027",
-                        "/api/dostk/frgnistt",
+                        "/api/dostk/rkinfo",
                         Map.of(
                                 "mrkt_tp", "000",
                                 "sort_tp", "1",
