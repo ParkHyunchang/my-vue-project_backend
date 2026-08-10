@@ -270,6 +270,7 @@ public class KiwoomStrategyController {
         result.put("runCount", history.runCount());
         result.put("proposalCount", history.proposalCount());
         result.put("risk", riskStatus());
+        result.put("orderSync", orderSync.syncHealth());
         result.put("recentAudit", audit.recent());
         return result;
     }

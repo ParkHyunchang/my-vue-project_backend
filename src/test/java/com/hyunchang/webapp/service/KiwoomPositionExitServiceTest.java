@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -190,6 +191,34 @@ class KiwoomPositionExitServiceTest {
         assertEquals(KiwoomTradeProposal.OrderType.MARKET, stopOrder.getOrderType());
         assertEquals(6, stopOrder.getQuantity());
         verify(orders, times(1)).autoExecute(stopOrder.getId());
+    }
+
+    @Test
+    void stopTransitionDelayAlertsEvenWhileTakeProfitCancellationIsPending() throws Exception {
+        KiwoomTradeProposal takeProfit = takeProfitOrder(6, 1235, "0067224");
+        openOrders.add(takeProfit);
+        stubHolding(6, 0, 1119, 1100);
+        when(orders.cancel(eq(takeProfit.getId()), eq(6), anyString()))
+                .thenAnswer(
+                        invocation -> {
+                            takeProfit.cancelRequested("테스트 취소", "{}");
+                            return new KiwoomProposalOrderService.Result(
+                                    true, "취소 요청", takeProfit);
+                        });
+
+        service.refreshPositions("TEST", true);
+        service.handlePriceTick(CODE, 1000);
+        Field field = KiwoomPositionExitService.class.getDeclaredField("exitTriggeredAt");
+        field.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        var triggeredAt = (java.util.Map<String, LocalDateTime>) field.get(service);
+        triggeredAt.put(CODE, LocalDateTime.now().minusSeconds(61));
+
+        service.retryPendingStopTransitionNow();
+        service.retryPendingStopTransitionNow();
+
+        verify(websocket).publishEvent(eq("error"), contains("청산 전환 지연"));
+        verify(orders, never()).autoExecute(anyLong());
     }
 
     @Test

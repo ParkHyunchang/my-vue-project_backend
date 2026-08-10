@@ -543,22 +543,22 @@ public class KiwoomPositionExitService {
         LocalDateTime now = LocalDateTime.now();
         boolean needsRefresh = false;
         for (String code : List.copyOf(pendingExits.keySet())) {
-            if (exitSubmitted.contains(code) || !openTakeProfitOrders(code).isEmpty()) continue;
+            if (exitSubmitted.contains(code)) continue;
             LocalDateTime triggeredAt = exitTriggeredAt.get(code);
             boolean insideFastWindow =
                     triggeredAt == null
                             || Duration.between(triggeredAt, now).compareTo(Duration.ofSeconds(60))
                                     <= 0;
-            if (insideFastWindow) {
-                needsRefresh = true;
-            } else if (exitTransitionDelayLogged.add(code)) {
+            if (!insideFastWindow && exitTransitionDelayLogged.add(code)) {
                 ExitTrigger trigger = pendingExits.get(code);
                 log.error(
-                        "[자동매매][청산 전환 지연] 종목={}, 청산 사유={}, 60초 동안 매도 가능 수량이 복구되지 않아 일반 안전 점검으로 계속 확인합니다. 키움 주문·잔고를 수동 확인해 주세요.",
+                        "[자동매매][청산 전환 지연] 종목={}, 청산 사유={}, 60초 동안 시장가 청산 주문으로 전환되지 않았습니다. 키움 주문·잔고를 수동 확인해 주세요.",
                         code,
                         trigger == null ? "미확인" : trigger.label());
                 websocket.publishEvent("error", "청산 전환 지연: " + code + " (수동 확인 필요)");
             }
+            if (!openTakeProfitOrders(code).isEmpty()) continue;
+            if (insideFastWindow) needsRefresh = true;
         }
         if (needsRefresh) refreshPositions("STOP_TRANSITION_RECHECK", true);
     }
@@ -576,6 +576,10 @@ public class KiwoomPositionExitService {
         if (stockCode == null || exitSubmitted.contains(stockCode)) return false;
         ExitTrigger trigger = pendingExits.get(stockCode);
         return trigger == ExitTrigger.STOP_LOSS || trigger == ExitTrigger.MANUAL_EXIT;
+    }
+
+    boolean hasPendingStopTransitions() {
+        return pendingExits.keySet().stream().anyMatch(this::isStopTransitionPending);
     }
 
     private void onPriceTick(String stockCode, long currentPrice) {

@@ -260,7 +260,35 @@ class KiwoomStrategyServiceTest {
 
         service.runDecision("MANUAL");
 
-        verify(proposals, never()).save(any());
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals("005930", captor.getValue().getStockCode());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertTrue(captor.getValue().getReason().contains("판단이 누락"));
+    }
+
+    @Test
+    void missingAiDecisionIsPersistedAsSafeHold() {
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(catalystOf("005930"), catalystOf("000660")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+
+        KiwoomStrategyService.DecisionResult result = service.runDecision("MANUAL");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals, org.mockito.Mockito.times(2)).save(captor.capture());
+        KiwoomTradeProposal omitted =
+                captor.getAllValues().stream()
+                        .filter(p -> "000660".equals(p.getStockCode()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(KiwoomTradeProposal.Action.HOLD, omitted.getAction());
+        assertEquals(0, omitted.getConfidence());
+        assertTrue(omitted.getReason().contains("판단이 누락"));
+        assertEquals(2, result.proposalCount());
+        verify(orders, never()).autoExecute(omitted.getId());
     }
 
     @Test

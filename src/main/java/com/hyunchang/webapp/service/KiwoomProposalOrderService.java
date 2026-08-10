@@ -132,13 +132,17 @@ public class KiwoomProposalOrderService {
                     p.getId(),
                     "키움 주문 전송 요청을 완료했습니다. 주문번호=" + (orderNo == null ? "미확인" : orderNo));
             events.publishEvent("order", "승인된 주문을 키움에 전송했습니다: " + p.getStockCode());
+            String submittedPrice =
+                    p.getOrderType() == KiwoomTradeProposal.OrderType.MARKET
+                            ? "시장가"
+                            : "지정가=" + String.format("%,d", p.getLimitPrice()) + "원";
             log.info(
-                    "[자동매매][주문 전송] {} {}({}), {}주, 지정가={}원, 주문번호={}, 주문 근거={}",
+                    "[자동매매][주문 전송] {} {}({}), {}주, 주문유형={}, 주문번호={}, 주문 근거={}",
                     actionLabel(p.getAction()),
                     p.getStockName(),
                     p.getStockCode(),
                     p.getQuantity(),
-                    p.getLimitPrice(),
+                    submittedPrice,
                     orderNo,
                     orderConditionSummary(p));
             return ok(p, "주문 전송 요청이 완료되었습니다.");

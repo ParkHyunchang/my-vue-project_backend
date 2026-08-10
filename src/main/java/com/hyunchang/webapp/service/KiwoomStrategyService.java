@@ -278,6 +278,29 @@ public class KiwoomStrategyService {
                 // PROPOSED 상태로 멈추지 않도록 자동 경로를 일관되게 적용한다.
                 autoSubmit(p);
             }
+            List<String> omittedCodes = new ArrayList<>();
+            for (Map.Entry<String, String> entry : universe.entrySet()) {
+                if (unique.contains(entry.getKey())) continue;
+                KiwoomTradeProposal p = omittedDecisionHold(entry.getKey(), entry.getValue(), run);
+                proposals.save(p);
+                audit.log(
+                        "AI_DECISION_OMITTED",
+                        p.getId(),
+                        "AI 응답에서 판단이 누락되어 서버가 안전 관망으로 보정했습니다: "
+                                + entry.getKey());
+                holdProposals.add(p);
+                omittedCodes.add(entry.getKey());
+                saved++;
+            }
+            if (!omittedCodes.isEmpty()) {
+                log.warn(
+                        "[자동매매][AI 판단 누락 보정] 누락={}종목, 처리=안전 관망, 목록={}",
+                        omittedCodes.size(),
+                        String.join(", ", omittedCodes));
+                events.publishEvent(
+                        "strategy",
+                        "AI가 판단을 누락한 " + omittedCodes.size() + "종목을 안전 관망으로 보정했습니다.");
+            }
             if (!holdProposals.isEmpty())
                 log.info(
                         "[자동매매][AI 관망 요약] {}종목, 목록={}",
@@ -413,6 +436,20 @@ public class KiwoomStrategyService {
             case SELL -> "매도";
             case HOLD -> "관망";
         };
+    }
+
+    private KiwoomTradeProposal omittedDecisionHold(
+            String stockCode, String stockName, KiwoomStrategyRun run) {
+        KiwoomTradeProposal proposal = new KiwoomTradeProposal();
+        proposal.setAction(KiwoomTradeProposal.Action.HOLD);
+        proposal.setStockCode(stockCode);
+        proposal.setStockName(stockName);
+        proposal.setQuantity(0);
+        proposal.setConfidence(0);
+        proposal.setReason("AI 응답에서 해당 종목 판단이 누락되어 서버가 안전 관망 처리했습니다.");
+        proposal.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
+        proposal.setRun(run);
+        return proposal;
     }
 
     private int estimateTokens(String text) {

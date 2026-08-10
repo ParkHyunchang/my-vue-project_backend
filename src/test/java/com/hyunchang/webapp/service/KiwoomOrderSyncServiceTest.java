@@ -1,8 +1,11 @@
 package com.hyunchang.webapp.service;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -14,6 +17,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
+import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -35,6 +39,7 @@ class KiwoomOrderSyncServiceTest {
     @Mock private KiwoomTradeProposalRepository proposals;
     @Mock private KiwoomStrategyAuditService audit;
     @Mock private KiwoomPositionExitService exits;
+    @Mock private KiwoomWebsocketClient events;
 
     private KiwoomOrderSyncService service;
     private KiwoomTradeProposal proposal;
@@ -45,7 +50,7 @@ class KiwoomOrderSyncServiceTest {
         properties.setAppKey("test-app-key");
         properties.setSecretKey("test-secret-key");
         properties.setAccountNo("12345678");
-        service = new KiwoomOrderSyncService(trade, proposals, audit, properties, exits);
+        service = new KiwoomOrderSyncService(trade, proposals, audit, properties, exits, events);
 
         proposal = new KiwoomTradeProposal();
         proposal.setAction(KiwoomTradeProposal.Action.SELL);
@@ -54,7 +59,7 @@ class KiwoomOrderSyncServiceTest {
         proposal.setQuantity(6);
         proposal.setReason("[EXIT:TAKE_PROFIT] 익절 지정가 주문");
         proposal.ordered("{}", "0357151");
-        when(proposals.findByStatusIn(any()))
+        lenient().when(proposals.findByStatusIn(any()))
                 .thenAnswer(
                         invocation -> {
                             List<KiwoomTradeProposal.Status> statuses = invocation.getArgument(0);
@@ -215,6 +220,80 @@ class KiwoomOrderSyncServiceTest {
         verify(trade).getUnfilledOrders();
         verify(trade).getFilledOrders();
         verify(exits).onOrderStateChanged();
+    }
+
+    @Test
+    void stalePartiallyFilledBuyCancelsOnlyItsRemainingQuantity() throws Exception {
+        proposal.setAction(KiwoomTradeProposal.Action.BUY);
+        proposal.setReason("AI 매수 주문");
+        setOrderedAt(LocalDateTime.now().minusMinutes(16));
+        JsonNode stillUnfilled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"ord_qty\":\"6\",\"cntr_qty\":\"2\",\"oso_qty\":\"4\"}");
+        stubOrderInquiries(stillUnfilled, objectMapper.createArrayNode());
+        when(trade.cancelOrder(any())).thenReturn(Mono.just(objectMapper.createObjectNode()));
+
+        service.sync();
+
+        assertEquals(KiwoomTradeProposal.Status.CANCEL_REQUESTED, proposal.getStatus());
+        assertEquals(2, proposal.getFilledQuantity());
+        assertEquals(4, proposal.getRemainingQuantity());
+        assertTrue(proposal.getCancelReason().contains("15분"));
+        var requestCaptor =
+                org.mockito.ArgumentCaptor.forClass(KiwoomTradeService.CancelOrderRequest.class);
+        verify(trade).cancelOrder(requestCaptor.capture());
+        assertEquals(4, requestCaptor.getValue().quantity());
+        assertEquals("0357151", requestCaptor.getValue().originalOrderNo());
+    }
+
+    @Test
+    void freshUnfilledBuyIsNotCancelled() throws Exception {
+        proposal.setAction(KiwoomTradeProposal.Action.BUY);
+        proposal.setReason("AI 매수 주문");
+        setOrderedAt(LocalDateTime.now().minusMinutes(14));
+        JsonNode stillUnfilled =
+                objectMapper.readTree(
+                        "{\"ord_no\":\"0357151\",\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"6\"}");
+        stubOrderInquiries(stillUnfilled, objectMapper.createArrayNode());
+
+        service.sync();
+
+        assertEquals(KiwoomTradeProposal.Status.ORDERED, proposal.getStatus());
+        verify(trade, never()).cancelOrder(any());
+    }
+
+    @Test
+    void ordinarySyncYieldsWhileStopTransitionIsPending() {
+        when(exits.hasPendingStopTransitions()).thenReturn(true);
+
+        service.fastPendingBuySync();
+        service.scheduledSync();
+
+        verify(trade, never()).getUnfilledOrders();
+        verify(trade, never()).getFilledOrders();
+    }
+
+    @Test
+    void longRunningSyncIsExposedAndAlertsOnlyOnce() throws Exception {
+        Class<?> operationType =
+                Class.forName(KiwoomOrderSyncService.class.getName() + "$SyncOperation");
+        var constructor =
+                operationType.getDeclaredConstructor(String.class, LocalDateTime.class);
+        constructor.setAccessible(true);
+        Object operation =
+                constructor.newInstance(
+                        "서버 재시작 주문 복구", LocalDateTime.now().minusSeconds(31));
+        Field activeSync = KiwoomOrderSyncService.class.getDeclaredField("activeSync");
+        activeSync.setAccessible(true);
+        activeSync.set(service, operation);
+
+        service.warnLongRunningSync();
+        service.warnLongRunningSync();
+
+        assertTrue(service.syncHealth().running());
+        assertEquals("서버 재시작 주문 복구", service.syncHealth().operation());
+        verify(audit).log(eq("ORDER_SYNC_DELAYED"), eq(null), contains("초 동안"));
+        verify(events).publishEvent(eq("error"), contains("서버 재시작 주문 복구"));
     }
 
     @Test
