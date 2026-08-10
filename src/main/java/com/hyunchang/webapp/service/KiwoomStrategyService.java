@@ -139,9 +139,12 @@ public class KiwoomStrategyService {
             long totalAsset = accountAsset.amount();
             // 주문 가능 금액은 주문 수량·예수금 안전검사에만 사용한다. 총자산 계산에는 사용하지 않는다.
             long deposit = number(depositNode, "ord_alow_amt", "entr");
-            long configuredDailyLossLimit = settings.current().getDailyLossLimitAmount();
-            long dailyLossLimit = Math.max(0, configuredDailyLossLimit);
-            if (state.recordDailyLossCheck(totalAsset, dailyLossLimit)) {
+            double dailyLossLimit = settings.current().getDailyLossLimitPercent();
+            long netCashFlow =
+                    dailyLossLimit > 0
+                            ? trade.getTodayCashFlow().block(Duration.ofSeconds(10)).netAmount()
+                            : 0;
+            if (state.recordDailyLossCheck(totalAsset, netCashFlow, dailyLossLimit)) {
                 KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
                 String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
                 log.warn("[자동매매][일일 손실 한도 발동] {}", detail);
@@ -595,11 +598,18 @@ public class KiwoomStrategyService {
     }
 
     private String dailyLossTriggerDetail(
-            KiwoomAutoTradeState.DailyLossStatus loss, long limitAmount, String assetSource) {
-        if (loss == null) return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
+            KiwoomAutoTradeState.DailyLossStatus loss, double limitPercent, String assetSource) {
+        if (loss == null) return String.format("한도=%.2f%%, 자산 계산=%s", limitPercent, assetSource);
         return String.format(
-                "기준자산=%,d원, 현재자산=%,d원, 손실=%,d원, 한도=%,d원, 자산 계산=%s",
-                loss.baseAsset(), loss.lastAsset(), loss.drawdown(), limitAmount, assetSource);
+                "기준자산=%,d원, 순입출금=%+,d원, 보정기준=%,d원, 현재자산=%,d원, 손실=%,d원(%.2f%%), 한도=%.2f%%, 자산 계산=%s",
+                loss.baseAsset(),
+                loss.netCashFlow() - loss.baseNetCashFlow(),
+                loss.adjustedBaseAsset(),
+                loss.lastAsset(),
+                loss.drawdown(),
+                loss.drawdownPercent(),
+                limitPercent,
+                assetSource);
     }
 
     private void applyGuardFlags(KiwoomTradeProposal p, long deposit) {

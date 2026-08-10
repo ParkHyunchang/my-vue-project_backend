@@ -33,7 +33,7 @@ class KiwoomAutoTradeStateTest {
 
     @Test
     void firstCheckCreatesSnapshotWithoutTriggering() {
-        boolean newlyTriggered = state.recordDailyLossCheck(1_000_000, 50_000);
+        boolean newlyTriggered = state.recordDailyLossCheck(1_000_000, 0, 5);
 
         assertFalse(newlyTriggered);
         assertFalse(state.isDailyLossTriggered());
@@ -43,41 +43,57 @@ class KiwoomAutoTradeStateTest {
 
     @Test
     void triggersOnceWhenDrawdownReachesLimit() {
-        state.recordDailyLossCheck(1_000_000, 50_000);
+        state.recordDailyLossCheck(1_000_000, 0, 5);
 
         // 스냅샷 대비 5만원 하락 → 발동. 발동 알림은 최초 1회만 반환된다.
-        assertTrue(state.recordDailyLossCheck(950_000, 50_000));
+        assertTrue(state.recordDailyLossCheck(950_000, 0, 5));
         assertTrue(state.isDailyLossTriggered());
-        assertFalse(state.recordDailyLossCheck(940_000, 50_000));
+        assertFalse(state.recordDailyLossCheck(940_000, 0, 5));
         assertTrue(state.isDailyLossTriggered());
         assertEquals(60_000, state.dailyLossStatus().drawdown());
     }
 
     @Test
     void staysTriggeredEvenIfAssetRecovers() {
-        state.recordDailyLossCheck(1_000_000, 50_000);
-        state.recordDailyLossCheck(950_000, 50_000);
+        state.recordDailyLossCheck(1_000_000, 0, 5);
+        state.recordDailyLossCheck(950_000, 0, 5);
 
         // 자산이 회복돼도 당일 발동 상태는 유지된다 (다음 거래일에만 리셋).
-        assertFalse(state.recordDailyLossCheck(1_000_000, 50_000));
+        assertFalse(state.recordDailyLossCheck(1_000_000, 0, 5));
         assertTrue(state.isDailyLossTriggered());
     }
 
     @Test
     void zeroLimitNeverTriggers() {
-        state.recordDailyLossCheck(1_000_000, 0);
+        state.recordDailyLossCheck(1_000_000, 0, 0);
 
-        assertFalse(state.recordDailyLossCheck(1, 0));
+        assertFalse(state.recordDailyLossCheck(1, 0, 0));
         assertFalse(state.isDailyLossTriggered());
     }
 
     @Test
+    void adjustsDailyLossBaselineForDepositsAndWithdrawals() {
+        state.recordDailyLossCheck(1_000_000, 0, 3);
+
+        // A 500,000 won deposit must raise the baseline, not look like investment profit.
+        assertFalse(state.recordDailyLossCheck(1_500_000, 500_000, 3));
+        assertTrue(state.recordDailyLossCheck(1_455_000, 500_000, 3));
+        assertEquals(1_500_000, state.dailyLossStatus().adjustedBaseAsset());
+        assertEquals(3, state.dailyLossStatus().drawdownPercent(), 0.001);
+
+        state.resetDailyLossCheck(1_000_000, 0);
+        // A withdrawal lowers the baseline by the same amount, so it cannot trigger the guard.
+        assertFalse(state.recordDailyLossCheck(700_000, -300_000, 3));
+        assertTrue(state.recordDailyLossCheck(679_000, -300_000, 3));
+    }
+
+    @Test
     void resetUsesCurrentAssetAsNewDailyBaseline() {
-        state.recordDailyLossCheck(1_000_000, 5_000);
-        state.recordDailyLossCheck(995_000, 5_000);
+        state.recordDailyLossCheck(1_000_000, 0, 0.5);
+        state.recordDailyLossCheck(995_000, 0, 0.5);
         assertTrue(state.isDailyLossTriggered());
 
-        state.resetDailyLossCheck(997_000);
+        state.resetDailyLossCheck(997_000, 0);
 
         assertFalse(state.isDailyLossTriggered());
         assertEquals(997_000, state.dailyLossStatus().baseAsset());
@@ -87,14 +103,14 @@ class KiwoomAutoTradeStateTest {
 
     @Test
     void changedDailyLossLimitImmediatelyRecalculatesTriggeredState() {
-        state.recordDailyLossCheck(1_000_000, 5_000);
-        state.recordDailyLossCheck(995_000, 5_000);
+        state.recordDailyLossCheck(1_000_000, 0, 0.5);
+        state.recordDailyLossCheck(995_000, 0, 0.5);
         assertTrue(state.isDailyLossTriggered());
 
-        state.applyChangedDailyLossLimit(10_000);
+        state.applyChangedDailyLossLimit(1);
         assertFalse(state.isDailyLossTriggered());
 
-        state.applyChangedDailyLossLimit(4_000);
+        state.applyChangedDailyLossLimit(0.4);
         assertTrue(state.isDailyLossTriggered());
 
         state.applyChangedDailyLossLimit(0);
@@ -116,7 +132,7 @@ class KiwoomAutoTradeStateTest {
         assertFalse(state.isDailyLossTriggered());
 
         // 오늘 첫 체크는 새 스냅샷을 잡는다 — 어제 기준자산과 무관하게 리셋.
-        assertFalse(state.recordDailyLossCheck(900_000, 50_000));
+        assertFalse(state.recordDailyLossCheck(900_000, 0, 5));
         assertFalse(state.isDailyLossTriggered());
         assertEquals(900_000, state.dailyLossStatus().baseAsset());
     }

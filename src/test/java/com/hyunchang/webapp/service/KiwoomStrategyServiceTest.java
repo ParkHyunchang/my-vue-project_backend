@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -92,7 +93,7 @@ class KiwoomStrategyServiceTest {
 
         lenient().when(state.isEmergencyStopped()).thenReturn(false);
         lenient().when(state.tryStartDecision()).thenReturn(true);
-        lenient().when(state.recordDailyLossCheck(anyLong(), anyLong())).thenReturn(false);
+        lenient().when(state.recordDailyLossCheck(anyLong(), anyLong(), anyDouble())).thenReturn(false);
         lenient().when(state.isDailyLossTriggered()).thenReturn(false);
         lenient().when(settingsService.current()).thenReturn(settings);
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000_000)));

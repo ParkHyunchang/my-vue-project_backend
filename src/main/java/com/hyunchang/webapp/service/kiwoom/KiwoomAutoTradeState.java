@@ -42,6 +42,8 @@ public class KiwoomAutoTradeState {
                     new DailyLossStatus(
                             saved.getDailyLossSnapshotDate(),
                             saved.getDailyLossBaseAsset(),
+                            saved.getDailyLossBaseNetCashFlow(),
+                            saved.getDailyLossNetCashFlow(),
                             saved.getDailyLossLastAsset(),
                             saved.isDailyLossTriggered(),
                             saved.getDailyLossLastCheckedAt());
@@ -158,15 +160,27 @@ public class KiwoomAutoTradeState {
      *
      * @return 이번 체크로 한도가 새로 발동됐는지 (이미 발동 중이면 false)
      */
-    public synchronized boolean recordDailyLossCheck(long totalAsset, long limitAmount) {
+    public synchronized boolean recordDailyLossCheck(
+            long totalAsset, long netCashFlow, double limitPercent) {
         LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
         DailyLossStatus prev = dailyLoss;
         boolean sameDay = prev != null && today.equals(prev.snapshotDate());
         long base = sameDay ? prev.baseAsset() : totalAsset;
+        long baseNetCashFlow = sameDay ? prev.baseNetCashFlow() : netCashFlow;
         boolean wasTriggered = sameDay && prev.triggered();
-        boolean triggered = wasTriggered || (limitAmount > 0 && base - totalAsset >= limitAmount);
+        long adjustedBase = base + netCashFlow - baseNetCashFlow;
+        long drawdown = Math.max(0, adjustedBase - totalAsset);
+        double drawdownPercent = adjustedBase > 0 ? drawdown * 100.0 / adjustedBase : 0;
+        boolean triggered = wasTriggered || (limitPercent > 0 && drawdownPercent >= limitPercent);
         DailyLossStatus next =
-                new DailyLossStatus(today, base, totalAsset, triggered, LocalDateTime.now());
+                new DailyLossStatus(
+                        today,
+                        base,
+                        baseNetCashFlow,
+                        netCashFlow,
+                        totalAsset,
+                        triggered,
+                        LocalDateTime.now());
         dailyLoss = next;
         persistDailyLoss(next);
         return triggered && !wasTriggered;
@@ -176,11 +190,13 @@ public class KiwoomAutoTradeState {
      * 관리자가 당일 일일 손실 차단을 해제할 때 현재 총자산을 새 기준점으로 저장한다. 이전 기준점만 유지한 채 플래그를 끄면 다음 점검에서 즉시 다시 발동할 수 있으므로,
      * 반드시 기준자산과 현재자산을 함께 초기화한다.
      */
-    public synchronized DailyLossStatus resetDailyLossCheck(long totalAsset) {
+    public synchronized DailyLossStatus resetDailyLossCheck(long totalAsset, long netCashFlow) {
         DailyLossStatus next =
                 new DailyLossStatus(
                         LocalDate.now(KiwoomMarketHours.KST),
                         totalAsset,
+                        netCashFlow,
+                        netCashFlow,
                         totalAsset,
                         false,
                         LocalDateTime.now());
@@ -193,15 +209,17 @@ public class KiwoomAutoTradeState {
      * 관리자가 일일 손실 한도 금액 자체를 변경했을 때 오늘 스냅샷에 새 한도를 즉시 적용한다. 일반 손실 점검은 한 번 발동한 상태를 유지하지만, 관리자가 한도를 0으로
      * 끄거나 상향한 경우에는 명시적인 설정 변경으로 보고 차단 상태도 새 한도에 맞춰 다시 계산한다.
      */
-    public synchronized DailyLossStatus applyChangedDailyLossLimit(long limitAmount) {
+    public synchronized DailyLossStatus applyChangedDailyLossLimit(double limitPercent) {
         DailyLossStatus previous = dailyLoss;
         LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
         if (previous == null || !today.equals(previous.snapshotDate())) return previous;
-        boolean triggered = limitAmount > 0 && previous.drawdown() >= limitAmount;
+        boolean triggered = limitPercent > 0 && previous.drawdownPercent() >= limitPercent;
         DailyLossStatus next =
                 new DailyLossStatus(
                         previous.snapshotDate(),
                         previous.baseAsset(),
+                        previous.baseNetCashFlow(),
+                        previous.netCashFlow(),
                         previous.lastAsset(),
                         triggered,
                         LocalDateTime.now());
@@ -257,6 +275,8 @@ public class KiwoomAutoTradeState {
         KiwoomStrategyControlState entity = control();
         entity.setDailyLossSnapshotDate(s.snapshotDate());
         entity.setDailyLossBaseAsset(s.baseAsset());
+        entity.setDailyLossBaseNetCashFlow(s.baseNetCashFlow());
+        entity.setDailyLossNetCashFlow(s.netCashFlow());
         entity.setDailyLossLastAsset(s.lastAsset());
         entity.setDailyLossTriggered(s.triggered());
         entity.setDailyLossLastCheckedAt(s.lastCheckedAt());
@@ -270,11 +290,22 @@ public class KiwoomAutoTradeState {
     public record DailyLossStatus(
             LocalDate snapshotDate,
             long baseAsset,
+            long baseNetCashFlow,
+            long netCashFlow,
             long lastAsset,
             boolean triggered,
             LocalDateTime lastCheckedAt) {
+        public long adjustedBaseAsset() {
+            return Math.max(0, baseAsset + netCashFlow - baseNetCashFlow);
+        }
+
         public long drawdown() {
-            return Math.max(0, baseAsset - lastAsset);
+            return Math.max(0, adjustedBaseAsset() - lastAsset);
+        }
+
+        public double drawdownPercent() {
+            long adjustedBase = adjustedBaseAsset();
+            return adjustedBase > 0 ? drawdown() * 100.0 / adjustedBase : 0;
         }
     }
 

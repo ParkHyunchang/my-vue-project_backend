@@ -179,7 +179,7 @@ public class KiwoomStrategyController {
                 props.getStrategy().getMaxOrderPriceDeviationPercent());
         result.put("defaultDailyLossPercent", props.getStrategy().getDefaultDailyLossPercent());
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
-        result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
         result.put("defaultDailyLossPercent", props.getStrategy().getDefaultDailyLossPercent());
         result.put("dailyMaxProposals", s.getDailyMaxProposals());
         result.put("prompt", promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
@@ -188,7 +188,7 @@ public class KiwoomStrategyController {
 
     @PatchMapping("/settings")
     public Map<String, Object> updateSettings(@RequestBody StrategySettingsRequest request) {
-        long previousDailyLossLimit = settings.current().getDailyLossLimitAmount();
+        double previousDailyLossLimit = settings.current().getDailyLossLimitPercent();
         var s =
                 settings.save(
                         new KiwoomStrategySettingsService.Update(
@@ -205,7 +205,7 @@ public class KiwoomStrategyController {
                                 request.swingTakeProfitSplitPercent(),
                                 request.swingMaxHoldingDays(),
                                 request.riskLoopEnabled(),
-                                request.dailyLossLimitAmount(),
+                                request.dailyLossLimitPercent(),
                                 request.dailyMaxProposals(),
                                 request.prompt()),
                         "admin");
@@ -216,10 +216,10 @@ public class KiwoomStrategyController {
         result.put("updatedAt", s.getUpdatedAt().toString());
         result.put("exitSettingsApplied", applied.completed());
         result.put("applyMessage", applied.message());
-        if (previousDailyLossLimit != s.getDailyLossLimitAmount())
+        if (Double.compare(previousDailyLossLimit, s.getDailyLossLimitPercent()) != 0)
             result.put(
                     "dailyLossApplyMessage",
-                    risk.applyChangedDailyLossLimit(s.getDailyLossLimitAmount()));
+                    risk.applyChangedDailyLossLimit(s.getDailyLossLimitPercent()));
         return result;
     }
 
@@ -247,7 +247,7 @@ public class KiwoomStrategyController {
         result.put("swingTakeProfitSplitPercent", s.getSwingTakeProfitSplitPercent());
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
-        result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
         result.put("orderEnabled", props.isTradeEnabled());
         return result;
     }
@@ -278,15 +278,18 @@ public class KiwoomStrategyController {
         var s = settings.current();
         Map<String, Object> result = new HashMap<>();
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
-        result.put("dailyLossLimitAmount", s.getDailyLossLimitAmount());
+        result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
         result.put(
                 "lastScanAt", risk.getLastScanAt() == null ? "" : risk.getLastScanAt().toString());
         KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
         result.put("triggered", state.isDailyLossTriggered());
         result.put("snapshotDate", loss == null ? "" : loss.snapshotDate().toString());
         result.put("baseAsset", loss == null ? 0 : loss.baseAsset());
+        result.put("adjustedBaseAsset", loss == null ? 0 : loss.adjustedBaseAsset());
+        result.put("netCashFlow", loss == null ? 0 : loss.netCashFlow() - loss.baseNetCashFlow());
         result.put("lastAsset", loss == null ? 0 : loss.lastAsset());
         result.put("drawdown", loss == null ? 0 : loss.drawdown());
+        result.put("drawdownPercent", loss == null ? 0 : loss.drawdownPercent());
         result.put(
                 "lastCheckedAt",
                 loss == null || loss.lastCheckedAt() == null
@@ -330,7 +333,7 @@ public class KiwoomStrategyController {
             double swingTakeProfitSplitPercent,
             int swingMaxHoldingDays,
             boolean riskLoopEnabled,
-            long dailyLossLimitAmount,
+            double dailyLossLimitPercent,
             int dailyMaxProposals,
             String prompt) {}
 }

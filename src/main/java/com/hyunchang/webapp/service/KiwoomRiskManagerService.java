@@ -70,10 +70,14 @@ public class KiwoomRiskManagerService {
 
             KiwoomTradeService.AccountAsset accountAsset = trade.accountAsset(depositNode, balance);
             long totalAsset = accountAsset.amount();
-            long dailyLossLimit = dailyLossLimit(current.getDailyLossLimitAmount());
-            if (state.recordDailyLossCheck(totalAsset, dailyLossLimit)) {
-                KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
-                String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
+            double dailyLossLimit = dailyLossLimit(current.getDailyLossLimitPercent());
+            long netCashFlow =
+                    dailyLossLimit > 0
+                            ? trade.getTodayCashFlow().block(Duration.ofSeconds(10)).netAmount()
+                            : 0;
+            if (state.recordDailyLossCheck(totalAsset, netCashFlow, dailyLossLimit)) {
+            KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
+            String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
                 log.warn("[자동매매][일일 손실 한도 발동] {}", detail);
                 audit.log("DAILY_LOSS_TRIGGERED", null, detail);
                 events.publishEvent("strategy", "일일 손실 한도 발동 — " + detail);
@@ -106,8 +110,13 @@ public class KiwoomRiskManagerService {
             JsonNode depositNode = trade.getDeposit().block(Duration.ofSeconds(10));
             JsonNode balance = trade.getBalance().block(Duration.ofSeconds(10));
             KiwoomTradeService.AccountAsset accountAsset = trade.accountAsset(depositNode, balance);
+            double dailyLossLimit = dailyLossLimit(settings.current().getDailyLossLimitPercent());
+            long netCashFlow =
+                    dailyLossLimit > 0
+                            ? trade.getTodayCashFlow().block(Duration.ofSeconds(10)).netAmount()
+                            : 0;
             KiwoomAutoTradeState.DailyLossStatus reset =
-                    state.resetDailyLossCheck(accountAsset.amount());
+                    state.resetDailyLossCheck(accountAsset.amount(), netCashFlow);
             String detail =
                     String.format(
                             "관리자 해제: 새 기준자산=%,d원, 자산 계산=%s",
@@ -123,13 +132,13 @@ public class KiwoomRiskManagerService {
     }
 
     /** 저장된 일일 손실 한도가 바뀐 경우 현재 당일 스냅샷에 즉시 다시 적용한다. */
-    public String applyChangedDailyLossLimit(long limitAmount) {
+    public String applyChangedDailyLossLimit(double limitPercent) {
         KiwoomAutoTradeState.DailyLossStatus applied =
-                state.applyChangedDailyLossLimit(Math.max(0, limitAmount));
+                state.applyChangedDailyLossLimit(dailyLossLimit(limitPercent));
         if (applied == null
                 || !java.time.LocalDate.now(KiwoomMarketHours.KST).equals(applied.snapshotDate())) {
             String message = "당일 자산 기준점이 없어 다음 계좌 점검부터 새 한도를 적용합니다.";
-            log.info("[자동매매][일일 손실 한도 설정 적용] 한도={}원, 처리={}", limitAmount, message);
+            log.info("[자동매매][일일 손실 한도 설정 적용] 한도={}%, 처리={}", limitPercent, message);
             return message;
         }
         String message =
@@ -138,23 +147,30 @@ public class KiwoomRiskManagerService {
                         applied.baseAsset(),
                         applied.lastAsset(),
                         applied.drawdown(),
-                        Math.max(0, limitAmount),
+                        Math.round(dailyLossLimit(limitPercent)),
                         applied.triggered() ? "유지 또는 발동" : "해제");
         log.info("[자동매매][일일 손실 한도 설정 적용] {}", message);
         audit.log("DAILY_LOSS_LIMIT_UPDATED", null, message);
         return message;
     }
 
-    public long dailyLossLimit(long configuredAmount) {
-        return Math.max(0, configuredAmount);
+    public double dailyLossLimit(double configuredPercent) {
+        return Math.max(0, Math.min(30, configuredPercent));
     }
 
     private String dailyLossTriggerDetail(
-            KiwoomAutoTradeState.DailyLossStatus loss, long limitAmount, String assetSource) {
-        if (loss == null) return String.format("한도=%,d원, 자산 계산=%s", limitAmount, assetSource);
+            KiwoomAutoTradeState.DailyLossStatus loss, double limitAmount, String assetSource) {
+        if (loss == null) return String.format("한도=%.2f%%, 자산 계산=%s", limitAmount, assetSource);
         return String.format(
-                "기준자산=%,d원, 현재자산=%,d원, 손실=%,d원, 한도=%,d원, 자산 계산=%s",
-                loss.baseAsset(), loss.lastAsset(), loss.drawdown(), limitAmount, assetSource);
+                "기준자산=%,d원, 순입출금=%+,d원, 보정기준=%,d원, 현재자산=%,d원, 손실=%,d원(%.2f%%), 한도=%.2f%%, 자산 계산=%s",
+                loss.baseAsset(),
+                loss.netCashFlow() - loss.baseNetCashFlow(),
+                loss.adjustedBaseAsset(),
+                loss.lastAsset(),
+                loss.drawdown(),
+                loss.drawdownPercent(),
+                limitAmount,
+                assetSource);
     }
 
     public record RiskScanResult(

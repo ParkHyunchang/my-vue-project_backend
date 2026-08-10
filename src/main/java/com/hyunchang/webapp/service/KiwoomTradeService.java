@@ -3,7 +3,10 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -53,6 +56,42 @@ public class KiwoomTradeService {
         return readRequest(
                         "kt00018", "/api/dostk/acnt", Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"))
                 .doOnNext(this::logEmptyBalanceResponse);
+    }
+
+    /**
+     * 당일 입출금 내역(kt00015)을 합산합니다. 매수·매도·환전은 제외하고 실제 현금 입출금만
+     * 반환하므로 일일 손실률 기준자산을 보정할 때 사용합니다.
+     */
+    public Mono<CashFlow> getTodayCashFlow() {
+        String today = LocalDate.now(KiwoomMarketHours.KST).format(DateTimeFormatter.BASIC_ISO_DATE);
+        return readRequest(
+                        "kt00015",
+                        "/api/dostk/acnt",
+                        Map.of(
+                                "strt_dt", today,
+                                "end_dt", today,
+                                "tp", "1",
+                                "stk_cd", "",
+                                "crnc_cd", "KRW",
+                                "gds_tp", "1",
+                                "frgn_stex_code", "",
+                                "dmst_stex_tp", "KRX",
+                                "qry_sort_tp", "1"))
+                .map(this::parseTodayCashFlow);
+    }
+
+    CashFlow parseTodayCashFlow(JsonNode response) {
+        if (response == null) return new CashFlow(0, 0);
+        JsonNode rows = response.path("trst_ovrl_trde_prps_array");
+        if (!rows.isArray()) return new CashFlow(0, 0);
+        long netAmount = 0;
+        int count = 0;
+        for (JsonNode row : rows) {
+            if (!"1".equals(row.path("trde_ocr_tp").asText(""))) continue;
+            netAmount += number(row, "trde_amt");
+            count++;
+        }
+        return new CashFlow(netAmount, count);
     }
 
     /** 미체결(ka10075) 조회 — 전송한 주문의 상태 동기화용. */
@@ -481,6 +520,9 @@ public class KiwoomTradeService {
     }
 
     public record AccountAsset(long amount, String source) {}
+
+    /** Signed KRW cash flow for today: deposits are positive and withdrawals negative. */
+    public record CashFlow(long netAmount, int transactionCount) {}
 
     public record Holding(
             String code,

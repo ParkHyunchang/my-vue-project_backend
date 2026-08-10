@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -43,7 +44,7 @@ class KiwoomRiskManagerServiceTest {
     void setUp() {
         settings = new KiwoomStrategySettings();
         settings.setRiskLoopEnabled(true);
-        settings.setDailyLossLimitAmount(0);
+        settings.setDailyLossLimitPercent(0);
 
         service =
                 new KiwoomRiskManagerService(
@@ -51,7 +52,7 @@ class KiwoomRiskManagerServiceTest {
 
         lenient().when(state.isEmergencyStopped()).thenReturn(false);
         lenient().when(state.tryStartDecision()).thenReturn(true);
-        lenient().when(state.recordDailyLossCheck(anyLong(), anyLong())).thenReturn(false);
+        lenient().when(state.recordDailyLossCheck(anyLong(), anyLong(), anyDouble())).thenReturn(false);
         lenient().when(state.isDailyLossTriggered()).thenReturn(false);
         lenient().when(settingsService.current()).thenReturn(settings);
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(emptyNode));
@@ -64,8 +65,9 @@ class KiwoomRiskManagerServiceTest {
 
     @Test
     void zeroDailyLossLimitDisablesTheGuardInsteadOfFallingBackToPercent() {
-        assertEquals(0L, service.dailyLossLimit(0));
-        assertEquals(5_000L, service.dailyLossLimit(5_000));
+        assertEquals(0, service.dailyLossLimit(0));
+        assertEquals(3, service.dailyLossLimit(3));
+        assertEquals(30, service.dailyLossLimit(50));
     }
 
     @Test
@@ -74,12 +76,14 @@ class KiwoomRiskManagerServiceTest {
                 new KiwoomAutoTradeState.DailyLossStatus(
                         java.time.LocalDate.now(),
                         1_250_000,
+                        0,
+                        0,
                         1_250_000,
                         false,
                         LocalDateTime.now());
         when(trade.accountAsset(any(), any()))
                 .thenReturn(new KiwoomTradeService.AccountAsset(1_250_000, "추정예탁자산"));
-        when(state.resetDailyLossCheck(1_250_000)).thenReturn(reset);
+        when(state.resetDailyLossCheck(1_250_000, 0)).thenReturn(reset);
 
         KiwoomRiskManagerService.DailyLossResetResult result = service.resetDailyLossGuard();
 
@@ -102,7 +106,7 @@ class KiwoomRiskManagerServiceTest {
         assertEquals(0, result.proposalCount());
         assertEquals(1, result.holdingCount());
         assertTrue(result.message().contains("단일 청산 관리자"));
-        verify(state).recordDailyLossCheck(anyLong(), anyLong());
+        verify(state).recordDailyLossCheck(anyLong(), anyLong(), anyDouble());
     }
 
     @Test
@@ -112,7 +116,7 @@ class KiwoomRiskManagerServiceTest {
         KiwoomRiskManagerService.RiskScanResult result = service.runRiskScan("MANUAL");
 
         assertEquals(0, result.proposalCount());
-        verify(state).recordDailyLossCheck(anyLong(), anyLong());
+        verify(state).recordDailyLossCheck(anyLong(), anyLong(), anyDouble());
         verify(trade, never()).parseHoldings(any());
     }
 }

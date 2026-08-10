@@ -21,6 +21,8 @@ public class KiwoomStrategyControlState {
     // 일일 손실 한도 — 거래일 최초 체크 시 총자산(예수금+평가금액)을 스냅샷으로 잡고, 이후 하락폭을 비교한다.
     private LocalDate dailyLossSnapshotDate;
     private long dailyLossBaseAsset;
+    private long dailyLossBaseNetCashFlow;
+    private long dailyLossNetCashFlow;
     private long dailyLossLastAsset;
     private LocalDateTime dailyLossLastCheckedAt;
     private boolean dailyLossTriggered;
@@ -92,6 +94,22 @@ public class KiwoomStrategyControlState {
 
     public void setDailyLossBaseAsset(long v) {
         dailyLossBaseAsset = v;
+    }
+
+    public long getDailyLossBaseNetCashFlow() {
+        return dailyLossBaseNetCashFlow;
+    }
+
+    public void setDailyLossBaseNetCashFlow(long v) {
+        dailyLossBaseNetCashFlow = v;
+    }
+
+    public long getDailyLossNetCashFlow() {
+        return dailyLossNetCashFlow;
+    }
+
+    public void setDailyLossNetCashFlow(long v) {
+        dailyLossNetCashFlow = v;
     }
 
     public long getDailyLossLastAsset() {
