@@ -90,15 +90,23 @@ public class DartFinancialService {
      * 않습니다.
      */
     public List<PositiveDisclosure> recentPositiveDisclosures(String symbol, int limit) {
-        if (!enabled() || limit <= 0) return List.of();
+        return recentPositiveDisclosureLookup(symbol, limit).disclosures();
+    }
+
+    /** 촉매 판단용 조회 결과. 빈 목록과 API 미설정·장애를 구분한다. */
+    public PositiveDisclosureLookup recentPositiveDisclosureLookup(String symbol, int limit) {
+        if (!enabled() || limit <= 0)
+            return new PositiveDisclosureLookup(false, List.of());
         LocalDate cutoff = LocalDate.now().minusDays(14);
-        return recentDisclosures(symbol, 40).stream()
+        DisclosureLookup lookup = recentDisclosuresLookup(symbol, 40);
+        List<PositiveDisclosure> result = lookup.disclosures().stream()
                 .filter(this::isPositiveDisclosure)
                 .filter(d -> !d.name().contains("정정"))
                 .filter(d -> parseDisclosureDate(d.date()).isAfter(cutoff.minusDays(1)))
                 .limit(limit)
                 .map(d -> new PositiveDisclosure(d.date(), d.name(), d.receiptNo()))
                 .toList();
+        return new PositiveDisclosureLookup(lookup.available(), result);
     }
 
     /** 국내 종목 재무 요약. symbol 은 "005930.KS" 또는 "005930". 미설정/실패 시 null. */
@@ -340,10 +348,15 @@ public class DartFinancialService {
     }
 
     private List<DartDisclosure> recentDisclosures(String symbol, int count) {
+        return recentDisclosuresLookup(symbol, count).disclosures();
+    }
+
+    private DisclosureLookup recentDisclosuresLookup(String symbol, int count) {
+        if (!enabled()) return new DisclosureLookup(false, List.of());
         String code = stockCode(symbol);
-        if (code == null) return List.of();
+        if (code == null) return new DisclosureLookup(false, List.of());
         String corp = corpCode(code);
-        if (corp == null) return List.of();
+        if (corp == null) return new DisclosureLookup(false, List.of());
 
         try {
             LocalDate end = LocalDate.now();
@@ -361,9 +374,12 @@ public class DartFinancialService {
                             + "&page_no=1&page_count="
                             + Math.max(1, Math.min(100, count));
             String body = restTemplate.getForObject(url, String.class);
-            if (body == null || body.isBlank()) return List.of();
+            if (body == null || body.isBlank()) return new DisclosureLookup(false, List.of());
             JsonNode root = objectMapper.readTree(body);
-            if (!"000".equals(root.path("status").asText())) return List.of();
+            String status = root.path("status").asText();
+            // 013은 정상 조회됐지만 공시가 없는 경우다. 나머지 오류 코드는 조회 불가로 구분한다.
+            if ("013".equals(status)) return new DisclosureLookup(true, List.of());
+            if (!"000".equals(status)) return new DisclosureLookup(false, List.of());
 
             List<DartDisclosure> out = new ArrayList<>();
             for (JsonNode item : root.path("list")) {
@@ -373,10 +389,10 @@ public class DartFinancialService {
                 if (!name.isBlank()) out.add(new DartDisclosure(date, name, receiptNo));
                 if (out.size() >= count) break;
             }
-            return out;
+            return new DisclosureLookup(true, out);
         } catch (Exception e) {
             log.warn("[DART] 최근 공시 조회 실패 [{}]: {}", symbol, e.getMessage());
-            return List.of();
+            return new DisclosureLookup(false, List.of());
         }
     }
 
@@ -400,7 +416,12 @@ public class DartFinancialService {
 
     private record DartDisclosure(String date, String name, String receiptNo) {}
 
+    private record DisclosureLookup(boolean available, List<DartDisclosure> disclosures) {}
+
     public record PositiveDisclosure(String date, String title, String receiptNo) {}
+
+    public record PositiveDisclosureLookup(
+            boolean available, List<PositiveDisclosure> disclosures) {}
 
     /** "1,234,567" → long. 음수 괄호 "(1,234)" 처리. 실패 시 Long.MIN_VALUE. */
     private long parseAmount(String s) {

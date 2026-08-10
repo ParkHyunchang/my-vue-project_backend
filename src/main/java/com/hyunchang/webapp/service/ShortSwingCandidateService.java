@@ -93,10 +93,13 @@ public class ShortSwingCandidateService {
                         filter.minChangePercent(),
                         filter.minVolumeRatio(),
                         filter.maxChangePercent());
-        List<CompletableFuture<KrCandidateCatalyst>> futures = new ArrayList<>();
+        List<CandidateLookupTask> futures = new ArrayList<>();
         for (KrxOpenApiService.KrSwingCandidate candidate : screened) {
             futures.add(
-                    CompletableFuture.supplyAsync(() -> buildCatalyst(candidate), CATALYST_POOL));
+                    new CandidateLookupTask(
+                            candidate,
+                            CompletableFuture.supplyAsync(
+                                    () -> buildCatalyst(candidate), CATALYST_POOL)));
         }
 
         // 스크리닝 순서(거래량 배율 내림차순)를 유지한 채 전부 수집한다. 촉매(DART 공시·뉴스)가 확인된
@@ -105,17 +108,27 @@ public class ShortSwingCandidateService {
         List<KrCandidateCatalyst> confirmed = new ArrayList<>();
         List<KrCandidateCatalyst> unconfirmed = new ArrayList<>();
         long deadline = System.currentTimeMillis() + CATALYST_BUDGET_MS;
-        for (CompletableFuture<KrCandidateCatalyst> future : futures) {
+        for (CandidateLookupTask task : futures) {
             try {
                 long remaining = Math.max(1, deadline - System.currentTimeMillis());
-                KrCandidateCatalyst catalyst = future.get(remaining, TimeUnit.MILLISECONDS);
+                KrCandidateCatalyst catalyst =
+                        task.future().get(remaining, TimeUnit.MILLISECONDS);
                 (catalyst.hasCatalyst() ? confirmed : unconfirmed).add(catalyst);
             } catch (TimeoutException e) {
-                future.cancel(true);
-                log.warn("[SwingCandidate] KR 촉매 수집 시간 예산 초과 — 해당 후보 생략");
+                task.future().cancel(true);
+                unconfirmed.add(KrCandidateCatalyst.unavailable(task.candidate()));
+                log.warn(
+                        "[SwingCandidate] KR 촉매 수집 시간 예산 초과 — {}({})를 조회 불가 상태로 유지",
+                        task.candidate().name(),
+                        task.candidate().bareCode());
             } catch (Exception e) {
                 if (e instanceof InterruptedException) Thread.currentThread().interrupt();
-                log.warn("[SwingCandidate] KR 촉매 수집 실패: {}", e.getMessage());
+                unconfirmed.add(KrCandidateCatalyst.unavailable(task.candidate()));
+                log.warn(
+                        "[SwingCandidate] KR 촉매 수집 실패 — {}({}), 사유={}",
+                        task.candidate().name(),
+                        task.candidate().bareCode(),
+                        e.getMessage());
             }
         }
         List<KrCandidateCatalyst> result = new ArrayList<>(confirmed);
@@ -127,10 +140,21 @@ public class ShortSwingCandidateService {
     }
 
     private KrCandidateCatalyst buildCatalyst(KrxOpenApiService.KrSwingCandidate candidate) {
+        DartFinancialService.PositiveDisclosureLookup disclosureLookup =
+                dartFinancialService.recentPositiveDisclosureLookup(candidate.symbol(), 3);
+        StockSymbolNewsService.SymbolNewsLookup newsLookup =
+                stockSymbolNewsService.fetchForSymbolLookup(
+                        candidate.symbol(), "KR", candidate.name(), null);
         List<DartFinancialService.PositiveDisclosure> disclosures =
-                dartFinancialService.recentPositiveDisclosures(candidate.symbol(), 3);
-        List<CatalystNews> news = extractCatalystNews(candidate);
-        return new KrCandidateCatalyst(candidate, disclosures, news);
+                disclosureLookup.disclosures();
+        List<CatalystNews> news = extractCatalystNews(newsLookup.news());
+        CatalystStatus status =
+                !disclosures.isEmpty() || !news.isEmpty()
+                        ? CatalystStatus.VERIFIED
+                        : disclosureLookup.available() && newsLookup.available()
+                                ? CatalystStatus.NOT_FOUND
+                                : CatalystStatus.UNAVAILABLE;
+        return new KrCandidateCatalyst(candidate, disclosures, news, status);
     }
 
     @PreDestroy
@@ -138,10 +162,7 @@ public class ShortSwingCandidateService {
         CATALYST_POOL.shutdown();
     }
 
-    private List<CatalystNews> extractCatalystNews(KrxOpenApiService.KrSwingCandidate candidate) {
-        List<StockNewsDto> fetched =
-                stockSymbolNewsService.fetchForSymbol(
-                        candidate.symbol(), "KR", candidate.name(), null);
+    private List<CatalystNews> extractCatalystNews(List<StockNewsDto> fetched) {
         return fetched.stream()
                 .filter(this::isConcretePositiveCatalyst)
                 .sorted(
@@ -267,14 +288,44 @@ public class ShortSwingCandidateService {
 
     public record CatalystNews(String title, String publishedAt, String source, String link) {}
 
+    public enum CatalystStatus {
+        VERIFIED,
+        NOT_FOUND,
+        UNAVAILABLE
+    }
+
     public record KrCandidateCatalyst(
             KrxOpenApiService.KrSwingCandidate candidate,
             List<DartFinancialService.PositiveDisclosure> disclosures,
-            List<CatalystNews> news) {
+            List<CatalystNews> news,
+            CatalystStatus status) {
+        public KrCandidateCatalyst(
+                KrxOpenApiService.KrSwingCandidate candidate,
+                List<DartFinancialService.PositiveDisclosure> disclosures,
+                List<CatalystNews> news) {
+            this(
+                    candidate,
+                    disclosures,
+                    news,
+                    !disclosures.isEmpty() || !news.isEmpty()
+                            ? CatalystStatus.VERIFIED
+                            : CatalystStatus.NOT_FOUND);
+        }
+
+        static KrCandidateCatalyst unavailable(
+                KrxOpenApiService.KrSwingCandidate candidate) {
+            return new KrCandidateCatalyst(
+                    candidate, List.of(), List.of(), CatalystStatus.UNAVAILABLE);
+        }
+
         public boolean hasCatalyst() {
-            return !disclosures.isEmpty() || !news.isEmpty();
+            return status == CatalystStatus.VERIFIED;
         }
     }
+
+    private record CandidateLookupTask(
+            KrxOpenApiService.KrSwingCandidate candidate,
+            CompletableFuture<KrCandidateCatalyst> future) {}
 
     private record CandidateFilter(
             double minChangePercent, double minVolumeRatio, double maxChangePercent) {}

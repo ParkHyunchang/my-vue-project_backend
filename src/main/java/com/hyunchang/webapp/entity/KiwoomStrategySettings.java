@@ -22,6 +22,8 @@ public class KiwoomStrategySettings {
     private boolean riskLoopEnabled;
     private double dailyLossLimitPercent;
     private int dailyMaxProposals;
+    /** null은 기능 추가 전 기존 행이다. 서비스 초기화에서 안전 기본값 true로 백필한다. */
+    private Boolean requireCatalystForAutoBuy = true;
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -152,6 +154,18 @@ public class KiwoomStrategySettings {
 
     public void setDailyMaxProposals(int v) {
         dailyMaxProposals = v;
+    }
+
+    public Boolean getRequireCatalystForAutoBuy() {
+        return requireCatalystForAutoBuy;
+    }
+
+    public boolean isRequireCatalystForAutoBuy() {
+        return requireCatalystForAutoBuy == null || requireCatalystForAutoBuy;
+    }
+
+    public void setRequireCatalystForAutoBuy(boolean v) {
+        requireCatalystForAutoBuy = v;
     }
 
     public LocalDateTime getUpdatedAt() {

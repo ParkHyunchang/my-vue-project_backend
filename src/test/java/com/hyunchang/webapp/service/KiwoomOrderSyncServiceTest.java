@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,7 @@ import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.lang.reflect.Field;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -28,6 +30,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Mono;
 
@@ -214,7 +217,10 @@ class KiwoomOrderSyncServiceTest {
                                 + "\"ord_qty\":\"6\",\"cntr_qty\":\"0\",\"oso_qty\":\"0\"}");
         stubResponses(cancelled);
 
-        service.urgentStopCancellationSync();
+        try (MockedStatic<KiwoomMarketHours> marketHours = mockStatic(KiwoomMarketHours.class)) {
+            marketHours.when(KiwoomMarketHours::isOpen).thenReturn(true);
+            service.urgentStopCancellationSync();
+        }
 
         assertEquals(KiwoomTradeProposal.Status.CANCELED, proposal.getStatus());
         verify(trade).getUnfilledOrders();
@@ -266,8 +272,11 @@ class KiwoomOrderSyncServiceTest {
     void ordinarySyncYieldsWhileStopTransitionIsPending() {
         when(exits.hasPendingStopTransitions()).thenReturn(true);
 
-        service.fastPendingBuySync();
-        service.scheduledSync();
+        try (MockedStatic<KiwoomMarketHours> marketHours = mockStatic(KiwoomMarketHours.class)) {
+            marketHours.when(KiwoomMarketHours::isOpen).thenReturn(true);
+            service.fastPendingBuySync();
+            service.scheduledSync();
+        }
 
         verify(trade, never()).getUnfilledOrders();
         verify(trade, never()).getFilledOrders();

@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -175,9 +176,12 @@ public class KiwoomStrategyService {
                             catalystCandidates.stream()
                                     .map(ShortSwingCandidateService.KrCandidateCatalyst::candidate)
                                     .toList());
+            Map<String, ShortSwingCandidateService.CatalystStatus> catalystStatuses =
+                    new HashMap<>();
             List<String> candidateLines = new ArrayList<>();
             for (ShortSwingCandidateService.KrCandidateCatalyst cc : catalystCandidates) {
                 KrxOpenApiService.KrSwingCandidate c = cc.candidate();
+                catalystStatuses.put(c.bareCode(), cc.status());
                 universe.putIfAbsent(c.bareCode(), c.name());
                 if (!sellableQty.containsKey(c.bareCode())) {
                     candidateLines.add(candidateLine(c, describeCatalyst(cc)));
@@ -246,11 +250,52 @@ public class KiwoomStrategyService {
             int buyCount = 0;
             int sellCount = 0;
             List<KiwoomTradeProposal> holdProposals = new ArrayList<>();
-            Set<String> unique = new HashSet<>();
+            Set<String> respondedCodes = new HashSet<>();
+            Set<String> acceptedCodes = new HashSet<>();
+            Map<String, List<ValidationFailure>> rejectedByCode = new LinkedHashMap<>();
+            Map<ValidationFailure, Integer> rejectionCounts =
+                    new EnumMap<>(ValidationFailure.class);
+            int responseDecisionCount =
+                    root.path("decisions").isArray() ? root.path("decisions").size() : 0;
+            int rejectedResponseCount = 0;
             for (JsonNode d : root.path("decisions")) {
-                KiwoomTradeProposal p =
-                        validated(d, universe, currentPrices, swingCandidates, deposit, unique);
-                if (p == null) continue;
+                DecisionValidation validation =
+                        validated(
+                                d,
+                                universe,
+                                currentPrices,
+                                swingCandidates,
+                                catalystStatuses,
+                                deposit);
+                String code = validation.stockCode();
+                if (code != null && universe.containsKey(code)) respondedCodes.add(code);
+                if (!validation.accepted()) {
+                    rejectedResponseCount++;
+                    rejectionCounts.merge(validation.failure(), 1, Integer::sum);
+                    if (code != null && universe.containsKey(code)) {
+                        rejectedByCode
+                                .computeIfAbsent(code, ignored -> new ArrayList<>())
+                                .add(validation.failure());
+                    } else {
+                        audit.log(
+                                "AI_DECISION_REJECTED",
+                                null,
+                                "AI 판단을 서버 검증에서 제외했습니다: "
+                                        + validation.failure().description()
+                                        + (code == null ? "" : " (" + code + ")"));
+                    }
+                    continue;
+                }
+                if (!acceptedCodes.add(code)) {
+                    rejectedResponseCount++;
+                    rejectionCounts.merge(ValidationFailure.DUPLICATE_DECISION, 1, Integer::sum);
+                    audit.log(
+                            "AI_DECISION_REJECTED",
+                            null,
+                            "동일 종목의 중복 AI 판단을 제외했습니다: " + code);
+                    continue;
+                }
+                KiwoomTradeProposal p = validation.proposal();
                 applyGuardFlags(p, deposit);
                 p.setRun(run);
                 proposals.save(p);
@@ -279,18 +324,60 @@ public class KiwoomStrategyService {
                 autoSubmit(p);
             }
             List<String> omittedCodes = new ArrayList<>();
+            List<String> rejectedCodes = new ArrayList<>();
             for (Map.Entry<String, String> entry : universe.entrySet()) {
-                if (unique.contains(entry.getKey())) continue;
-                KiwoomTradeProposal p = omittedDecisionHold(entry.getKey(), entry.getValue(), run);
+                if (acceptedCodes.contains(entry.getKey())) continue;
+                List<ValidationFailure> failures = rejectedByCode.get(entry.getKey());
+                boolean rejected = respondedCodes.contains(entry.getKey());
+                KiwoomTradeProposal p =
+                        rejected
+                                ? rejectedDecisionHold(
+                                        entry.getKey(), entry.getValue(), run, failures)
+                                : omittedDecisionHold(entry.getKey(), entry.getValue(), run);
                 proposals.save(p);
-                audit.log(
-                        "AI_DECISION_OMITTED",
-                        p.getId(),
-                        "AI 응답에서 판단이 누락되어 서버가 안전 관망으로 보정했습니다: "
-                                + entry.getKey());
+                if (rejected) {
+                    String detail = validationFailureSummary(failures);
+                    audit.log(
+                            "AI_DECISION_REJECTED",
+                            p.getId(),
+                            "AI 응답을 서버 안전 검증에서 탈락시켜 관망으로 보정했습니다: "
+                                    + entry.getKey()
+                                    + " — "
+                                    + detail);
+                    if (failures != null
+                            && failures.contains(ValidationFailure.CATALYST_NOT_FOUND))
+                        audit.log(
+                                "BUY_BLOCKED_CATALYST_MISSING",
+                                p.getId(),
+                                entry.getKey() + " 자동매수 차단: 확인된 촉매 없음");
+                    if (failures != null
+                            && failures.contains(ValidationFailure.CATALYST_UNAVAILABLE))
+                        audit.log(
+                                "CATALYST_LOOKUP_UNAVAILABLE",
+                                p.getId(),
+                                entry.getKey() + " 자동매수 차단: 촉매 조회 불가");
+                    rejectedCodes.add(entry.getKey() + "(" + detail + ")");
+                } else {
+                    audit.log(
+                            "AI_DECISION_OMITTED",
+                            p.getId(),
+                            "AI 응답에서 판단이 누락되어 서버가 안전 관망으로 보정했습니다: "
+                                    + entry.getKey());
+                    omittedCodes.add(entry.getKey());
+                }
                 holdProposals.add(p);
-                omittedCodes.add(entry.getKey());
                 saved++;
+            }
+            if (!rejectedCodes.isEmpty()) {
+                log.warn(
+                        "[자동매매][AI 검증 탈락 보정] 탈락={}종목, 처리=안전 관망, 목록={}",
+                        rejectedCodes.size(),
+                        String.join(", ", rejectedCodes));
+                events.publishEvent(
+                        "strategy",
+                        "AI 판단 중 서버 검증에서 탈락한 "
+                                + rejectedCodes.size()
+                                + "종목을 안전 관망으로 보정했습니다.");
             }
             if (!omittedCodes.isEmpty()) {
                 log.warn(
@@ -311,11 +398,17 @@ public class KiwoomStrategyService {
             lastCandidateDecisionAt = LocalDateTime.now(KST);
             events.publishEvent("strategy", "AI 전략 제안 " + saved + "건을 생성했습니다.");
             log.info(
-                    "[자동매매][후보 검토 완료] AI 제안={}건 (매수={}건, 매도={}건, 관망={}건), 매수 후보={}종목",
+                    "[자동매매][후보 검토 완료] 유니버스={}종목, AI 응답={}건, 저장={}건 (매수={}건, 매도={}건, 관망={}건), 검증 탈락 응답={}건, 검증 탈락 종목={}종목, 응답 누락={}종목, 탈락 사유=[{}], 매수 후보={}종목",
+                    universe.size(),
+                    responseDecisionCount,
                     saved,
                     buyCount,
                     sellCount,
                     holdProposals.size(),
+                    rejectedResponseCount,
+                    rejectedCodes.size(),
+                    omittedCodes.size(),
+                    rejectionSummary(rejectionCounts),
                     candidateLines.size());
             return new DecisionResult(run.getId(), run.getStatus().name(), saved);
         } catch (Exception e) {
@@ -383,7 +476,8 @@ public class KiwoomStrategyService {
                 + s.getCandidateReevaluationMinutes()
                 + "분, 자동 주문 신뢰도 "
                 + s.getAutoExecuteMinConfidence()
-                + "% 이상";
+                + "% 이상, 자동매수 촉매 "
+                + (s.isRequireCatalystForAutoBuy() ? "필수" : "선택");
     }
 
     private String candidateSummary(
@@ -450,6 +544,40 @@ public class KiwoomStrategyService {
         proposal.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
         proposal.setRun(run);
         return proposal;
+    }
+
+    private KiwoomTradeProposal rejectedDecisionHold(
+            String stockCode,
+            String stockName,
+            KiwoomStrategyRun run,
+            List<ValidationFailure> failures) {
+        KiwoomTradeProposal proposal = new KiwoomTradeProposal();
+        proposal.setAction(KiwoomTradeProposal.Action.HOLD);
+        proposal.setStockCode(stockCode);
+        proposal.setStockName(stockName);
+        proposal.setQuantity(0);
+        proposal.setConfidence(0);
+        proposal.setReason(
+                "AI 응답이 서버 안전 검증을 통과하지 못해 관망 처리했습니다. 사유="
+                        + validationFailureSummary(failures));
+        proposal.setOrderType(KiwoomTradeProposal.OrderType.LIMIT);
+        proposal.setRun(run);
+        return proposal;
+    }
+
+    private String validationFailureSummary(List<ValidationFailure> failures) {
+        if (failures == null || failures.isEmpty()) return ValidationFailure.MALFORMED.description();
+        return failures.stream()
+                .distinct()
+                .map(ValidationFailure::description)
+                .collect(java.util.stream.Collectors.joining(" / "));
+    }
+
+    private String rejectionSummary(Map<ValidationFailure, Integer> counts) {
+        if (counts.isEmpty()) return "없음";
+        return counts.entrySet().stream()
+                .map(entry -> entry.getKey().description() + " " + entry.getValue() + "건")
+                .collect(java.util.stream.Collectors.joining(", "));
     }
 
     private int estimateTokens(String text) {
@@ -526,23 +654,32 @@ public class KiwoomStrategyService {
             var n = cc.news().get(0);
             parts.add("뉴스: " + n.title() + " (" + n.source() + ")");
         }
-        return parts.isEmpty() ? "촉매 미확인(가격·거래량 신호만)" : String.join(" / ", parts);
+        if (!parts.isEmpty()) return String.join(" / ", parts);
+        return cc.status() == ShortSwingCandidateService.CatalystStatus.UNAVAILABLE
+                ? "촉매 조회 불가(API 제한·장애, 자동매수 차단 대상)"
+                : "확인된 촉매 없음(자동매수 차단 대상)";
     }
 
-    private KiwoomTradeProposal validated(
+    private DecisionValidation validated(
             JsonNode d,
             Map<String, String> universe,
             Map<String, Long> currentPrices,
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
-            long deposit,
-            Set<String> unique) {
+            Map<String, ShortSwingCandidateService.CatalystStatus> catalystStatuses,
+            long deposit) {
+        String code = d == null ? null : d.path("stockCode").asText(null);
         try {
-            String code = d.path("stockCode").asText();
-            KiwoomTradeProposal.Action action =
-                    KiwoomTradeProposal.Action.valueOf(d.path("action").asText());
+            if (code == null || !code.matches("\\d{6}"))
+                return DecisionValidation.rejected(code, ValidationFailure.INVALID_STOCK_CODE);
+            if (!universe.containsKey(code))
+                return DecisionValidation.rejected(code, ValidationFailure.OUTSIDE_UNIVERSE);
+            KiwoomTradeProposal.Action action;
+            try {
+                action = KiwoomTradeProposal.Action.valueOf(d.path("action").asText());
+            } catch (Exception e) {
+                return DecisionValidation.rejected(code, ValidationFailure.INVALID_ACTION);
+            }
             int confidence = parseConfidence(d.path("confidence"));
-            if (!code.matches("\\d{6}") || !universe.containsKey(code) || !unique.add(code))
-                return null;
             String aiReason = d.path("reason").asText("");
             if (action == KiwoomTradeProposal.Action.SELL) {
                 log.warn(
@@ -558,24 +695,44 @@ public class KiwoomStrategyService {
             if (action == KiwoomTradeProposal.Action.BUY) {
                 KrxOpenApiService.KrSwingCandidate candidate = swingCandidates.get(code);
                 if (candidate == null || !matchesCurrentBuyRules(candidate, settings.current()))
-                    return null;
+                    return DecisionValidation.rejected(
+                            code, ValidationFailure.BUY_RULE_MISMATCH);
+                if (settings.current().isRequireCatalystForAutoBuy()) {
+                    ShortSwingCandidateService.CatalystStatus catalystStatus =
+                            catalystStatuses.getOrDefault(
+                                    code,
+                                    ShortSwingCandidateService.CatalystStatus.UNAVAILABLE);
+                    if (catalystStatus == ShortSwingCandidateService.CatalystStatus.NOT_FOUND)
+                        return DecisionValidation.rejected(
+                                code, ValidationFailure.CATALYST_NOT_FOUND);
+                    if (catalystStatus == ShortSwingCandidateService.CatalystStatus.UNAVAILABLE)
+                        return DecisionValidation.rejected(
+                                code, ValidationFailure.CATALYST_UNAVAILABLE);
+                }
             }
             int qty = d.path("quantity").asInt();
-            if (action != KiwoomTradeProposal.Action.HOLD && qty <= 0) return null;
+            if (action != KiwoomTradeProposal.Action.HOLD && qty <= 0)
+                return DecisionValidation.rejected(code, ValidationFailure.INVALID_QUANTITY);
             Long price = null;
             if (action != KiwoomTradeProposal.Action.HOLD) {
                 long p0 = d.path("limitPrice").asLong();
-                if (p0 <= 0) return null;
+                if (p0 <= 0)
+                    return DecisionValidation.rejected(code, ValidationFailure.INVALID_PRICE);
                 String market =
                         swingCandidates.containsKey(code)
                                 ? swingCandidates.get(code).market()
                                 : "KOSPI";
-                if (!KiwoomPriceRules.isValidLimitPrice(p0, market)) return null;
+                if (!KiwoomPriceRules.isValidLimitPrice(p0, market))
+                    return DecisionValidation.rejected(code, ValidationFailure.INVALID_TICK_SIZE);
                 long reference =
                         swingCandidates.containsKey(code)
                                 ? Math.round(swingCandidates.get(code).closePrice())
                                 : currentPrices.getOrDefault(code, 0L);
-                if (reference <= 0 || exceedsPriceDeviation(p0, reference)) return null;
+                if (reference <= 0)
+                    return DecisionValidation.rejected(
+                            code, ValidationFailure.PRICE_REFERENCE_MISSING);
+                if (exceedsPriceDeviation(p0, reference))
+                    return DecisionValidation.rejected(code, ValidationFailure.PRICE_DEVIATION);
                 price = p0;
             }
             var s = settings.current();
@@ -587,7 +744,9 @@ public class KiwoomStrategyService {
                                 props.getStrategy().getMaxOrderAmount(),
                                 Math.round(deposit * s.getMaxBuyDepositPercent() / 100.0));
                 long maxQtyByCap = price > 0 ? cap / price : 0;
-                if (maxQtyByCap <= 0) return null;
+                if (maxQtyByCap <= 0)
+                    return DecisionValidation.rejected(
+                            code, ValidationFailure.INSUFFICIENT_BUDGET);
                 qty = (int) Math.min(qty, maxQtyByCap);
             }
             KiwoomTradeProposal p = new KiwoomTradeProposal();
@@ -608,9 +767,9 @@ public class KiwoomStrategyService {
                                 Math.round(price * (100 + s.getSwingTakeProfitPercent()) / 100)));
                 p.setMaxHoldingDays(s.getSwingMaxHoldingDays());
             }
-            return p;
+            return DecisionValidation.accepted(code, p);
         } catch (Exception e) {
-            return null;
+            return DecisionValidation.rejected(code, ValidationFailure.MALFORMED);
         }
     }
 
@@ -781,6 +940,11 @@ public class KiwoomStrategyService {
                 + "동일 종목 재제안 쿨다운: "
                 + st.getCooldownMinutes()
                 + "분\n"
+                + "자동매수 촉매 확인: "
+                + (s.isRequireCatalystForAutoBuy()
+                        ? "필수(확인된 공시·뉴스가 없거나 조회 불가면 HOLD)"
+                        : "선택")
+                + "\n"
                 + "보유 종목 매도는 전략 설정의 손절·익절·최대 보유기간 조건만 서버가 자동 집행";
     }
 
@@ -860,6 +1024,47 @@ public class KiwoomStrategyService {
 
     private String trim(String s) {
         return s == null ? "unknown" : s.substring(0, Math.min(s.length(), 500));
+    }
+
+    private enum ValidationFailure {
+        INVALID_STOCK_CODE("종목코드 형식 오류"),
+        OUTSIDE_UNIVERSE("현재 유니버스 외 종목"),
+        INVALID_ACTION("매매 행동 형식 오류"),
+        DUPLICATE_DECISION("동일 종목 중복 판단"),
+        BUY_RULE_MISMATCH("현재 매수 후보 규칙 불일치"),
+        CATALYST_NOT_FOUND("확인된 촉매 없음"),
+        CATALYST_UNAVAILABLE("촉매 조회 불가"),
+        INVALID_QUANTITY("주문 수량 오류"),
+        INVALID_PRICE("지정가 누락 또는 오류"),
+        INVALID_TICK_SIZE("호가 단위 불일치"),
+        PRICE_REFERENCE_MISSING("기준 시세 없음"),
+        PRICE_DEVIATION("현재가 대비 지정가 편차 초과"),
+        INSUFFICIENT_BUDGET("1주 매수 예산 부족"),
+        MALFORMED("AI 응답 형식 오류");
+
+        private final String description;
+
+        ValidationFailure(String description) {
+            this.description = description;
+        }
+
+        String description() {
+            return description;
+        }
+    }
+
+    private record DecisionValidation(
+            String stockCode,
+            KiwoomTradeProposal proposal,
+            ValidationFailure failure,
+            boolean accepted) {
+        static DecisionValidation accepted(String stockCode, KiwoomTradeProposal proposal) {
+            return new DecisionValidation(stockCode, proposal, null, true);
+        }
+
+        static DecisionValidation rejected(String stockCode, ValidationFailure failure) {
+            return new DecisionValidation(stockCode, null, failure, false);
+        }
     }
 
     public record DecisionResult(Long runId, String status, int proposalCount) {}

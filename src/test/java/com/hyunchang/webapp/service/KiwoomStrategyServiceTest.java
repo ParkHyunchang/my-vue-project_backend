@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -73,6 +74,8 @@ class KiwoomStrategyServiceTest {
         settings.setSwingMinVolumeRatio(2);
         settings.setAutoExecuteMinConfidence(70);
         settings.setDailyMaxProposals(50);
+        // 기존 검증 단위 테스트는 촉매 정책과 독립적으로 유지하고, 촉매 필수 동작은 전용 테스트에서 켠다.
+        settings.setRequireCatalystForAutoBuy(false);
 
         service =
                 new KiwoomStrategyService(
@@ -140,6 +143,22 @@ class KiwoomStrategyServiceTest {
                 candidate(code), List.of(), List.of());
     }
 
+    private ShortSwingCandidateService.KrCandidateCatalyst verifiedCatalystOf(String code) {
+        var disclosure =
+                new DartFinancialService.PositiveDisclosure(
+                        "2026-08-10", "단일판매 공급계약 체결", "R001");
+        return new ShortSwingCandidateService.KrCandidateCatalyst(
+                candidate(code), List.of(disclosure), List.of());
+    }
+
+    private ShortSwingCandidateService.KrCandidateCatalyst unavailableCatalystOf(String code) {
+        return new ShortSwingCandidateService.KrCandidateCatalyst(
+                candidate(code),
+                List.of(),
+                List.of(),
+                ShortSwingCandidateService.CatalystStatus.UNAVAILABLE);
+    }
+
     private AiProviderChain.ChainResult buyDecision(String code) {
         return decisionJson("BUY", code, 1, 70000, "80");
     }
@@ -187,7 +206,11 @@ class KiwoomStrategyServiceTest {
 
         service.runDecision("MANUAL");
 
-        verify(proposals, never()).save(any());
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertTrue(captor.getValue().getReason().contains("현재 매수 후보 규칙 불일치"));
     }
 
     @Test
@@ -262,10 +285,20 @@ class KiwoomStrategyServiceTest {
 
         ArgumentCaptor<KiwoomTradeProposal> captor =
                 ArgumentCaptor.forClass(KiwoomTradeProposal.class);
-        verify(proposals).save(captor.capture());
-        assertEquals("005930", captor.getValue().getStockCode());
-        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
-        assertTrue(captor.getValue().getReason().contains("판단이 누락"));
+        verify(proposals, org.mockito.Mockito.times(2)).save(captor.capture());
+        KiwoomTradeProposal rejected =
+                captor.getAllValues().stream()
+                        .filter(p -> "003550".equals(p.getStockCode()))
+                        .findFirst()
+                        .orElseThrow();
+        KiwoomTradeProposal omitted =
+                captor.getAllValues().stream()
+                        .filter(p -> "005930".equals(p.getStockCode()))
+                        .findFirst()
+                        .orElseThrow();
+        assertEquals(KiwoomTradeProposal.Action.HOLD, rejected.getAction());
+        assertTrue(rejected.getReason().contains("현재 매수 후보 규칙 불일치"));
+        assertTrue(omitted.getReason().contains("판단이 누락"));
     }
 
     @Test
@@ -341,7 +374,7 @@ class KiwoomStrategyServiceTest {
     }
 
     @Test
-    void buyIsDroppedWhenBudgetCannotAffordEvenOneShare() {
+    void unaffordableBuyIsPersistedAsSafeHold() {
         when(trade.getDeposit()).thenReturn(Mono.just(depositNode(1_000)));
         when(catalystService.getKrCandidatesWithCatalysts(30))
                 .thenReturn(List.of(catalystOf("005930")));
@@ -350,7 +383,88 @@ class KiwoomStrategyServiceTest {
 
         service.runDecision("MANUAL");
 
-        verify(proposals, never()).save(any());
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertEquals(0, captor.getValue().getConfidence());
+        assertTrue(captor.getValue().getReason().contains("1주 매수 예산 부족"));
+        verify(orders, never()).autoExecute(anyLong());
+    }
+
+    @Test
+    void invalidTickSizeIsPersistedAsSafeHoldWithReason() {
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(catalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true)))
+                .thenReturn(decisionJson("BUY", "005930", 1, 70001, "80"));
+
+        service.runDecision("MANUAL");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertTrue(captor.getValue().getReason().contains("호가 단위 불일치"));
+        verify(audit, org.mockito.Mockito.atLeastOnce())
+                .log(eq("AI_DECISION_REJECTED"), anyLong(), contains("호가 단위 불일치"));
+    }
+
+    @Test
+    void catalystNotFoundBlocksAutomaticBuyAsSafeHold() {
+        settings.setRequireCatalystForAutoBuy(true);
+        settings.setAutoExecute(true);
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(catalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+
+        service.runDecision("SCHEDULE");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertTrue(captor.getValue().getReason().contains("확인된 촉매 없음"));
+        verify(audit).log(eq("BUY_BLOCKED_CATALYST_MISSING"), anyLong(), anyString());
+        verify(orders, never()).autoExecute(anyLong());
+    }
+
+    @Test
+    void catalystUnavailableBlocksAutomaticBuyAndRecordsOutage() {
+        settings.setRequireCatalystForAutoBuy(true);
+        settings.setAutoExecute(true);
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(unavailableCatalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+
+        service.runDecision("SCHEDULE");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.HOLD, captor.getValue().getAction());
+        assertTrue(captor.getValue().getReason().contains("촉매 조회 불가"));
+        verify(audit).log(eq("CATALYST_LOOKUP_UNAVAILABLE"), anyLong(), anyString());
+        verify(orders, never()).autoExecute(anyLong());
+    }
+
+    @Test
+    void verifiedCatalystAllowsAutomaticBuyWhenRequired() {
+        settings.setRequireCatalystForAutoBuy(true);
+        settings.setAutoExecute(true);
+        when(catalystService.getKrCandidatesWithCatalysts(30))
+                .thenReturn(List.of(verifiedCatalystOf("005930")));
+        when(ai.analyze(anyString(), anyString(), eq(true))).thenReturn(buyDecision("005930"));
+        when(orders.autoExecute(anyLong()))
+                .thenReturn(new KiwoomProposalOrderService.Result(true, "주문 전송", null));
+
+        service.runDecision("SCHEDULE");
+
+        ArgumentCaptor<KiwoomTradeProposal> captor =
+                ArgumentCaptor.forClass(KiwoomTradeProposal.class);
+        verify(proposals).save(captor.capture());
+        assertEquals(KiwoomTradeProposal.Action.BUY, captor.getValue().getAction());
+        verify(orders).autoExecute(captor.getValue().getId());
     }
 
     @Test

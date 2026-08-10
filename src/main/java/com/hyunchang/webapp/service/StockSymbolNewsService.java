@@ -75,7 +75,7 @@ public class StockSymbolNewsService {
     private final Object alphaVantageLock = new Object();
 
     // 종목별 뉴스 결과 캐시 — negative 캐시는 쓰지 않는다 (전 소스 일시 실패를 10분간 고정하지 않기 위해)
-    private final TtlCache<String, List<StockNewsDto>> symbolNewsCache =
+    private final TtlCache<String, SymbolNewsLookup> symbolNewsCache =
             new TtlCache<>(Duration.ofMinutes(10), Duration.ofMinutes(1));
 
     // AlphaVantage 응답 재사용 — 무료 25회/일 한도를 후보 12종목 갱신에 다 태우지 않도록
@@ -111,17 +111,23 @@ public class StockSymbolNewsService {
      */
     public List<StockNewsDto> fetchForSymbol(
             String symbol, String market, String name, String enName) {
+        return fetchForSymbolLookup(symbol, market, name, enName).news();
+    }
+
+    /** 빈 검색 결과와 모든 뉴스 소스 장애를 구분하는 촉매 판단용 조회다. */
+    public SymbolNewsLookup fetchForSymbolLookup(
+            String symbol, String market, String name, String enName) {
         String mkt = market != null ? market.toUpperCase(Locale.ROOT) : "KR";
         String cacheKey = mkt + "|" + (symbol == null ? "" : symbol.toUpperCase(Locale.ROOT));
-        TtlCache.Hit<List<StockNewsDto>> cached = symbolNewsCache.lookup(cacheKey);
+        TtlCache.Hit<SymbolNewsLookup> cached = symbolNewsCache.lookup(cacheKey);
         if (cached != null && !cached.negative()) return cached.value();
 
-        List<CompletableFuture<List<StockNewsDto>>> tasks = new ArrayList<>();
+        List<CompletableFuture<NewsSourceLookup>> tasks = new ArrayList<>();
 
         if ("KR".equals(mkt)) {
             for (NewsQuery q : buildKrNewsQueries(symbol, name)) {
                 tasks.add(
-                        asyncSafe(
+                        asyncLookup(
                                 () ->
                                         fetchGoogleNews(
                                                 q.query(), "ko", "KR", "ko-KR", q.sourceLabel())));
@@ -129,10 +135,10 @@ public class StockSymbolNewsService {
         } else {
             String ticker = symbol == null ? "" : symbol.split("\\.")[0].toUpperCase(Locale.ROOT);
             if (notBlank(ticker)) {
-                tasks.add(asyncSafe(() -> fetchYahooFinance(ticker)));
-                tasks.add(asyncSafe(() -> fetchAlphaVantage(ticker)));
+                tasks.add(asyncLookup(() -> fetchYahooFinance(ticker)));
+                tasks.add(asyncLookup(() -> fetchAlphaVantage(ticker)));
                 tasks.add(
-                        asyncSafe(
+                        asyncLookup(
                                 () ->
                                         fetchGoogleNews(
                                                 ticker
@@ -144,7 +150,7 @@ public class StockSymbolNewsService {
             }
             if (notBlank(enName)) {
                 tasks.add(
-                        asyncSafe(
+                        asyncLookup(
                                 () ->
                                         fetchGoogleNews(
                                                 enName,
@@ -153,7 +159,7 @@ public class StockSymbolNewsService {
                                                 "en-US",
                                                 "Google News · Company")));
                 tasks.add(
-                        asyncSafe(
+                        asyncLookup(
                                 () ->
                                         fetchGoogleNews(
                                                 enName
@@ -166,9 +172,12 @@ public class StockSymbolNewsService {
         }
 
         List<StockNewsDto> all = new ArrayList<>();
-        for (CompletableFuture<List<StockNewsDto>> f : tasks) {
+        boolean sourceAvailable = false;
+        for (CompletableFuture<NewsSourceLookup> f : tasks) {
             try {
-                all.addAll(f.get(FETCH_TIMEOUT_SEC, TimeUnit.SECONDS));
+                NewsSourceLookup lookup = f.get(FETCH_TIMEOUT_SEC, TimeUnit.SECONDS);
+                all.addAll(lookup.news());
+                sourceAvailable |= lookup.available();
             } catch (TimeoutException e) {
                 log.warn("[SymbolNews] 소스 타임아웃");
                 f.cancel(true);
@@ -185,9 +194,10 @@ public class StockSymbolNewsService {
                                 RssClient.parsePubDateEpoch(b.getPubDate()),
                                 RssClient.parsePubDateEpoch(a.getPubDate())));
         List<StockNewsDto> result = deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
+        SymbolNewsLookup lookup = new SymbolNewsLookup(sourceAvailable, result);
         // 빈 결과는 캐시하지 않는다 — 전 소스 일시 실패였다면 다음 호출에서 바로 재시도
-        if (!result.isEmpty()) symbolNewsCache.put(cacheKey, result);
-        return result;
+        if (!result.isEmpty()) symbolNewsCache.put(cacheKey, lookup);
+        return lookup;
     }
 
     private record NewsQuery(String query, String sourceLabel) {}
@@ -458,8 +468,8 @@ public class StockSymbolNewsService {
             }
             return news;
         } catch (Exception e) {
-            log.warn("[SymbolNews/{}] RSS 파싱 실패: {}", sourceName, summarize(e));
-            return List.of();
+            throw new IllegalStateException(
+                    "[SymbolNews/" + sourceName + "] RSS 파싱 실패: " + summarize(e), e);
         }
     }
 
@@ -477,18 +487,22 @@ public class StockSymbolNewsService {
         return new ArrayList<>(seen.values());
     }
 
-    private CompletableFuture<List<StockNewsDto>> asyncSafe(Supplier<List<StockNewsDto>> task) {
+    private CompletableFuture<NewsSourceLookup> asyncLookup(Supplier<List<StockNewsDto>> task) {
         return CompletableFuture.supplyAsync(
                 () -> {
                     try {
-                        return task.get();
+                        return new NewsSourceLookup(true, task.get());
                     } catch (Exception e) {
                         log.warn("[SymbolNews] task 실패: {}", summarize(e));
-                        return List.of();
+                        return new NewsSourceLookup(false, List.of());
                     }
                 },
                 POOL);
     }
+
+    private record NewsSourceLookup(boolean available, List<StockNewsDto> news) {}
+
+    public record SymbolNewsLookup(boolean available, List<StockNewsDto> news) {}
 
     private boolean notBlank(String s) {
         return s != null && !s.isBlank();

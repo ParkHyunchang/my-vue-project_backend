@@ -182,6 +182,7 @@ public class KiwoomStrategyController {
         result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
         result.put("defaultDailyLossPercent", props.getStrategy().getDefaultDailyLossPercent());
         result.put("dailyMaxProposals", s.getDailyMaxProposals());
+        result.put("requireCatalystForAutoBuy", s.isRequireCatalystForAutoBuy());
         result.put("prompt", promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
         return result;
     }
@@ -207,6 +208,8 @@ public class KiwoomStrategyController {
                                 request.riskLoopEnabled(),
                                 request.dailyLossLimitPercent(),
                                 request.dailyMaxProposals(),
+                                request.requireCatalystForAutoBuy() == null
+                                        || request.requireCatalystForAutoBuy(),
                                 request.prompt()),
                         "admin");
         audit.log("STRATEGY_SETTINGS_UPDATED", null, "Runtime strategy settings were updated.");
@@ -248,6 +251,7 @@ public class KiwoomStrategyController {
         result.put("swingMaxHoldingDays", s.getSwingMaxHoldingDays());
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
         result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
+        result.put("requireCatalystForAutoBuy", s.isRequireCatalystForAutoBuy());
         result.put("orderEnabled", props.isTradeEnabled());
         return result;
     }
@@ -336,5 +340,6 @@ public class KiwoomStrategyController {
             boolean riskLoopEnabled,
             double dailyLossLimitPercent,
             int dailyMaxProposals,
+            Boolean requireCatalystForAutoBuy,
             String prompt) {}
 }
