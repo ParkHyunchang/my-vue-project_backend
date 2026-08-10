@@ -228,7 +228,8 @@ public class KiwoomSellAvailabilityDiagnosticService {
         return switch (source) {
             case "WEBSOCKET_FALLBACK" -> "실시간 시세 연결 끊김 대체 점검";
             case "APPLICATION_RESTART" -> "서버 재시작";
-            case "PRE_MARKET_0850" -> "08:50 장 시작 전 복구";
+            case "PRE_MARKET_0850" -> "08:50 전일 주문 정리";
+            case "MARKET_OPEN_RECHECK" -> "장중 재확인 시 전일 주문 정리";
             case "MARKET_OPEN_0900" -> "09:00 장 시작";
             case "ORDER_STATE_CHANGED" -> "주문 상태 변경";
             case "STOP_TRANSITION_RECHECK" -> "손절·보유기간 청산 전환 재확인";

@@ -90,7 +90,7 @@ public class KiwoomOrderSyncService {
                 result.message());
     }
 
-    /** 08:50부터 사전 복구가 성공할 때까지 매분 재시도한다. 이 단계에서는 실제 주문을 보내지 않는다. */
+    /** 08:50부터 전일 주문 정리·포지션 준비가 성공할 때까지 매분 재시도한다. 이 단계에서는 실제 주문을 보내지 않는다. */
     @Scheduled(cron = "0 50-59 8 * * MON-FRI", zone = "Asia/Seoul")
     public void scheduledPreMarketRecovery() {
         LocalDate today = LocalDate.now(KST);
@@ -99,7 +99,7 @@ public class KiwoomOrderSyncService {
                 || !exits.isExitManagementEnabled()
                 || today.equals(preMarketRecoveryCompletedDate)) return;
         runPreMarketRecovery(
-                today, recoveryTrigger("08:50 정기 사전 복구", "PRE_MARKET_0850"));
+                today, recoveryTrigger("08:50 정기 전일 주문 정리", "PRE_MARKET_0850"));
     }
 
     /** 09:00에 시작하고, 자동매매가 늦게 켜지거나 조회가 실패하면 장중 매분 재시도한다. */
@@ -112,7 +112,7 @@ public class KiwoomOrderSyncService {
                 || !exits.isExitManagementEnabled()
                 || today.equals(marketOpenExitStartedDate)) return;
         RecoveryTrigger recoveryTrigger =
-                recoveryTrigger("장 시작 복구 재확인", "MARKET_OPEN_RECHECK");
+                recoveryTrigger("장중 재확인", "MARKET_OPEN_RECHECK");
         boolean recoveredNow = !today.equals(preMarketRecoveryCompletedDate);
         if (recoveredNow) {
             RecoveryOutcome outcome = runPreMarketRecovery(today, recoveryTrigger);
@@ -120,7 +120,7 @@ public class KiwoomOrderSyncService {
             if (outcome == RecoveryOutcome.BUSY) return;
             if (outcome != RecoveryOutcome.COMPLETED) {
                 log.error(
-                        "[자동매매][장 시작 주문 보류] 사전 복구가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
+                        "[자동매매][장 시작 주문 보류] 전일 주문 정리가 완료되지 않아 익절 주문 시작을 보류합니다. 키움 연결과 주문 상태를 확인해 주세요.");
                 return;
             }
         }
@@ -144,20 +144,20 @@ public class KiwoomOrderSyncService {
         if (result.busy()) {
             // 정상적인 락 양보다. 진짜 실패와 섞이면 로그에서 장애를 가려버린다.
             log.info(
-                    "[자동매매][장 시작 사전 복구 대기] 실행={}, 사유=다른 주문 상태 동기화가 진행 중, 처리=다음 분에 다시 시도",
+                    "[자동매매][전일 주문 정리 대기] 실행={}, 사유=다른 주문 상태 동기화가 진행 중, 처리=다음 분에 다시 시도",
                     trigger.label());
             return RecoveryOutcome.BUSY;
         }
         if (!result.success()) {
             log.warn(
-                    "[자동매매][장 시작 사전 복구 재시도 대기] 실행={}, 사유={}",
+                    "[자동매매][전일 주문 정리 재시도 대기] 실행={}, 사유={}",
                     trigger.label(),
                     result.message());
             return RecoveryOutcome.FAILED;
         }
         if (!exits.preparePositionsBeforeMarketOpen(trigger.label(), trigger.refreshSource())) {
             log.warn(
-                    "[자동매매][장 시작 사전 복구 재시도 대기] 실행={}, 사유=보유 종목 조회 또는 실시간 구독 준비 실패",
+                    "[자동매매][포지션 준비 재시도 대기] 실행={}, 사유=보유 종목 조회 또는 실시간 구독 준비 실패",
                     trigger.label());
             return RecoveryOutcome.FAILED;
         }
@@ -167,14 +167,14 @@ public class KiwoomOrderSyncService {
                         ? "현재 장중 청산 관리 시작 준비"
                         : "09:00 주문 시작 대기";
         log.info(
-                "[자동매매][장 시작 사전 복구 완료] 실행={}, 기준일={}, 키움 주문 응답={}건, 전일 미종결 주문 만료={}건, 처리={}",
+                "[자동매매][전일 주문 정리·포지션 준비 완료] 실행={}, 기준일={}, 키움 주문 응답={}건, 전일 미종결 주문 만료={}건, 처리={}",
                 trigger.label(),
                 today,
                 result.records(),
                 result.expired(),
                 nextAction);
         audit.log(
-                "PRE_MARKET_RECOVERY_COMPLETED",
+                "PREVIOUS_DAY_ORDER_CLEANUP_COMPLETED",
                 null,
                 trigger.label()
                         + ": 전일 미종결 주문 "
@@ -232,10 +232,10 @@ public class KiwoomOrderSyncService {
                 expired++;
             }
             return PreMarketRecoveryResult.completed(
-                    allRecords.size(), expired, "장 시작 사전 주문 복구 완료");
+                    allRecords.size(), expired, "전일 주문 정리 완료");
         } catch (Exception e) {
             return PreMarketRecoveryResult.failed(
-                    "장 시작 사전 주문 복구 실패: " + trim(e.getMessage()));
+                    "전일 주문 정리 실패: " + trim(e.getMessage()));
         } finally {
             syncInProgress.set(false);
         }
