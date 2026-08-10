@@ -50,6 +50,7 @@ public class KiwoomPositionExitService {
     // 길어지지 않는 선에서 재확인하고, 남은 건은 2초 주기 청산 재시도 루프에 넘긴다.
     private static final int LIQUIDATION_ATTEMPTS = 4;
     private static final long LIQUIDATION_RETRY_INTERVAL_MS = 1500;
+    private static final long PRICE_LIMIT_LOOKUP_RETRY_MS = 60_000;
 
     private final KiwoomProperties props;
     private final KiwoomTradeService trade;
@@ -67,6 +68,9 @@ public class KiwoomPositionExitService {
     private final Set<String> exitWaitingForSellableLogged = ConcurrentHashMap.newKeySet();
     private final Map<String, LocalDateTime> exitTriggeredAt = new ConcurrentHashMap<>();
     private final Set<String> exitTransitionDelayLogged = ConcurrentHashMap.newKeySet();
+    private final Map<String, CachedDailyPriceLimit> dailyPriceLimits = new ConcurrentHashMap<>();
+    private final Set<String> priceLimitLookupFailureLogged = ConcurrentHashMap.newKeySet();
+    private final Set<String> takeProfitUpperLimitWaitLogged = ConcurrentHashMap.newKeySet();
     private final AtomicBoolean liquidationInProgress = new AtomicBoolean();
     private volatile LocalDate preMarketPreparedDate;
 
@@ -508,6 +512,22 @@ public class KiwoomPositionExitService {
             onPriceTick(position.stockCode(), position.currentPrice());
     }
 
+    /** 장중 상한가 조회만 실패한 종목은 1분 간격으로 잔고와 가격 제한을 다시 확인한다. */
+    @Scheduled(fixedDelay = PRICE_LIMIT_LOOKUP_RETRY_MS)
+    public void retryFailedPriceLimitLookups() {
+        if (!canManageExits() || !KiwoomMarketHours.isOpen()) return;
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        long now = System.currentTimeMillis();
+        boolean retryDue =
+                dailyPriceLimits.values().stream()
+                        .anyMatch(
+                                cached ->
+                                        today.equals(cached.tradingDate())
+                                                && cached.upperPrice() <= 0
+                                                && now >= cached.retryAfterEpochMs());
+        if (retryDue) refreshPositions("PRICE_LIMIT_RECHECK", true);
+    }
+
     /**
      * 익절 취소는 확인됐지만 키움 잔고의 매도 가능 수량 반영이 늦는 경우, 손절 감지 후 60초 동안 2초 간격으로 잔고를 다시 확인해 복구 즉시 시장가 손절을 전송한다.
      */
@@ -680,6 +700,13 @@ public class KiwoomPositionExitService {
             if (!forTier.isEmpty()) {
                 cancelTakeProfitForSettingsChange(position, forTier, tranche.price());
                 return false;
+            }
+            if (position.dailyUpperPrice() <= 0) return false;
+            if (tranche.price() > position.dailyUpperPrice()) {
+                logTakeProfitUpperLimitWait(position, tranche);
+                // 당일에는 상한가가 바뀌지 않으므로 정상적인 대기 상태로 본다. 다음 거래일
+                // 사전 복구에서 새 상한가를 조회하고 같은 목표가로 다시 판단한다.
+                return true;
             }
             if (position.sellableQuantity() < tranche.quantity()) return false;
             return createTakeProfitTranche(position, tranche);
@@ -981,6 +1008,7 @@ public class KiwoomPositionExitService {
         List<TakeProfitTranche> tranches =
                 planTakeProfitTranches(
                         holding.avgPrice(), takeProfitPercent, holding.quantity(), takeProfit);
+        long dailyUpperPrice = tranches.isEmpty() ? 0 : dailyUpperPrice(holding);
         return new Position(
                 holding.code(),
                 holding.name(),
@@ -990,7 +1018,55 @@ public class KiwoomPositionExitService {
                 holding.curPrice(),
                 stop,
                 takeProfit,
+                dailyUpperPrice,
                 tranches);
+    }
+
+    private long dailyUpperPrice(KiwoomTradeService.Holding holding) {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        long now = System.currentTimeMillis();
+        CachedDailyPriceLimit cached = dailyPriceLimits.get(holding.code());
+        if (cached != null
+                && today.equals(cached.tradingDate())
+                && (cached.upperPrice() > 0 || now < cached.retryAfterEpochMs()))
+            return cached.upperPrice();
+
+        String logKey = today + ":" + holding.code();
+        try {
+            KiwoomTradeService.DailyPriceLimit limit =
+                    trade.getDailyPriceLimit(holding.code()).block(Duration.ofSeconds(10));
+            long upperPrice = limit == null ? 0 : limit.upperPrice();
+            if (upperPrice <= 0)
+                throw new IllegalStateException("키움 종목 기본정보에 상한가가 없습니다.");
+            dailyPriceLimits.put(
+                    holding.code(), new CachedDailyPriceLimit(today, upperPrice, Long.MAX_VALUE));
+            priceLimitLookupFailureLogged.remove(logKey);
+            return upperPrice;
+        } catch (Exception e) {
+            dailyPriceLimits.put(
+                    holding.code(),
+                    new CachedDailyPriceLimit(today, 0, now + PRICE_LIMIT_LOOKUP_RETRY_MS));
+            if (priceLimitLookupFailureLogged.add(logKey))
+                log.warn(
+                        "[자동매매][당일 상한가 조회 실패] {}({}), 처리=익절 지정가 주문 보류 후 1분 뒤 재시도, 사유={}",
+                        holding.name(),
+                        holding.code(),
+                        e.getMessage() == null ? "알 수 없음" : e.getMessage());
+            return 0;
+        }
+    }
+
+    private void logTakeProfitUpperLimitWait(Position position, TakeProfitTranche tranche) {
+        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
+        String logKey = today + ":" + position.stockCode() + ":" + tranche.tier();
+        if (!takeProfitUpperLimitWaitLogged.add(logKey)) return;
+        log.info(
+                "[자동매매][익절 주문 당일 보류] {}({}), {}차 목표가={}원, 당일 상한가={}원, 처리=목표가를 낮추지 않고 다음 거래일 상한가 재조회 후 재시도",
+                position.stockName(),
+                position.stockCode(),
+                tranche.tier(),
+                String.format("%,d", tranche.price()),
+                String.format("%,d", position.dailyUpperPrice()));
     }
 
     /**
@@ -1080,6 +1156,7 @@ public class KiwoomPositionExitService {
             long currentPrice,
             long stopLossPrice,
             long takeProfitPrice,
+            long dailyUpperPrice,
             List<TakeProfitTranche> takeProfitTranches) {
         Position withCurrentPrice(long price) {
             return new Position(
@@ -1091,9 +1168,13 @@ public class KiwoomPositionExitService {
                     price,
                     stopLossPrice,
                     takeProfitPrice,
+                    dailyUpperPrice,
                     takeProfitTranches);
         }
     }
+
+    private record CachedDailyPriceLimit(
+            LocalDate tradingDate, long upperPrice, long retryAfterEpochMs) {}
 
     /** 분할 익절 한 단계(1차 또는 2차)의 목표가·목표수량·근거 퍼센트. */
     private record TakeProfitTranche(int tier, long price, int quantity, double percent) {}

@@ -74,6 +74,12 @@ class KiwoomPositionExitServiceTest {
         current.setSwingTakeProfitPercent(10);
         current.setSwingMaxHoldingDays(5);
         lenient().when(settings.current()).thenReturn(current);
+        lenient()
+                .when(trade.getDailyPriceLimit(anyString()))
+                .thenReturn(
+                        Mono.just(
+                                new KiwoomTradeService.DailyPriceLimit(
+                                        CODE, 1_000_000, 1, 1_000)));
 
         lenient()
                 .when(proposals.findByStatusIn(any()))
@@ -387,6 +393,27 @@ class KiwoomPositionExitServiceTest {
         assertEquals(3, tier2.getQuantity());
         assertEquals(1200L, tier2.getLimitPrice());
         verify(orders, times(2)).autoExecute(anyLong());
+    }
+
+    @Test
+    void tierAboveDailyUpperLimitIsDeferredWithoutLoweringConfiguredTarget() {
+        current.setSwingTakeProfitPercent2(20);
+        current.setSwingTakeProfitSplitPercent(50);
+        stubHolding(4, 4, 6_880, 7_500);
+        when(trade.getDailyPriceLimit(CODE))
+                .thenReturn(
+                        Mono.just(
+                                new KiwoomTradeService.DailyPriceLimit(
+                                        CODE, 8_000, 4_320, 6_160)));
+        stubAutoExecuteSuccess();
+
+        service.refreshPositions("TEST", true);
+        stubHolding(4, 2, 6_880, 7_500);
+        service.refreshPositions("ORDER_STATE_CHANGED", true);
+
+        assertEquals(1, openOrders.size());
+        assertEquals(7_570L, openOrders.get(0).getLimitPrice());
+        verify(orders, times(1)).autoExecute(anyLong());
     }
 
     @Test

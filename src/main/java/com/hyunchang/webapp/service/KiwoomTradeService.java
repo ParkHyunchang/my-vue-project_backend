@@ -58,6 +58,30 @@ public class KiwoomTradeService {
                 .doOnNext(this::logEmptyBalanceResponse);
     }
 
+    /** 종목 기본정보(ka10001)에서 당일 상·하한가와 기준가를 조회합니다. */
+    public Mono<DailyPriceLimit> getDailyPriceLimit(String stockCode) {
+        return readRequest(
+                        "ka10001",
+                        "/api/dostk/stkinfo",
+                        Map.of("stk_cd", normalizedStockCode(stockCode)))
+                .map(response -> parseDailyPriceLimit(stockCode, response));
+    }
+
+    DailyPriceLimit parseDailyPriceLimit(String stockCode, JsonNode response) {
+        return new DailyPriceLimit(
+                normalizedStockCode(stockCode),
+                absoluteNumber(response, "upl_pric"),
+                absoluteNumber(response, "lst_pric"),
+                absoluteNumber(response, "base_pric"));
+    }
+
+    private String normalizedStockCode(String stockCode) {
+        String normalized = stockCode == null ? "" : stockCode.replaceAll("^[A-Za-z]+", "");
+        if (!normalized.matches("\\d{6}"))
+            throw new IllegalArgumentException("종목코드는 6자리 숫자여야 합니다.");
+        return normalized;
+    }
+
     /**
      * 당일 입출금 내역(kt00015)을 합산합니다. 매수·매도·환전은 제외하고 실제 현금 입출금만
      * 반환하므로 일일 손실률 기준자산을 보정할 때 사용합니다.
@@ -523,6 +547,9 @@ public class KiwoomTradeService {
 
     /** Signed KRW cash flow for today: deposits are positive and withdrawals negative. */
     public record CashFlow(long netAmount, int transactionCount) {}
+
+    public record DailyPriceLimit(
+            String stockCode, long upperPrice, long lowerPrice, long basePrice) {}
 
     public record Holding(
             String code,

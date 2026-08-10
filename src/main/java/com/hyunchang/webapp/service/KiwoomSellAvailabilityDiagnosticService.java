@@ -51,14 +51,18 @@ public class KiwoomSellAvailabilityDiagnosticService {
                     matchingOrders.stream().mapToInt(UnfilledSellOrder::remainingQuantity).sum();
 
             if (orderInquiryError == null
-                    && holding.remainingQuantity() > 0
-                    && unfilledQuantity >= holding.remainingQuantity()) {
+                    && isExplainedByUnfilledSellOrders(
+                            holding.remainingQuantity(),
+                            holding.sellableQuantity(),
+                            unfilledQuantity)) {
                 log.info(
-                        "[자동매매][미체결 매도 주문 유지] 확인 시점={}, 종목={}({}), 보유={}주, 주문={}, 판정=미체결 매도 주문이 보유 전량을 예약 중(정상)",
+                        "[자동매매][미체결 매도 주문 유지] 확인 시점={}, 종목={}({}), 보유={}주, 매도 가능={}주, 미체결 매도={}주, 주문={}, 판정=미체결 주문이 매도 불가 수량을 설명함(정상)",
                         sourceLabel(source),
                         holding.stockName(),
                         holding.stockCode(),
                         holding.remainingQuantity(),
+                        holding.sellableQuantity(),
+                        unfilledQuantity,
                         orderSummary(matchingOrders));
                 continue;
             }
@@ -146,9 +150,23 @@ public class KiwoomSellAvailabilityDiagnosticService {
         if (orderInquiryError != null) return "미체결 매도 주문 조회 실패: " + orderInquiryError;
         if (!holding.sellableFieldPresent()) return "키움 응답에 매도 가능 수량 항목이 없음";
         if (!isNumber(holding.sellableRaw())) return "키움 응답의 매도 가능 수량 형식이 올바르지 않음";
-        if (unfilledQuantity > 0) return "일부 미체결 매도 주문만으로는 매도 가능 0주가 설명되지 않음";
+        if (unfilledQuantity > 0) {
+            int unexplained =
+                    Math.max(
+                            0,
+                            holding.remainingQuantity()
+                                    - holding.sellableQuantity()
+                                    - unfilledQuantity);
+            return "미체결 매도 주문 반영 후에도 매도 불가 " + unexplained + "주가 남아 키움 잔고 재확인 필요";
+        }
         if (isNonCashCredit(holding.creditType())) return "신용·대출 구분 종목이라 매도 가능 수량 재확인 필요";
         return "원인을 설명할 미체결 매도 주문이 없어 키움 잔고 재확인 필요";
+    }
+
+    static boolean isExplainedByUnfilledSellOrders(
+            int holdingQuantity, int sellableQuantity, int unfilledQuantity) {
+        int unavailableQuantity = Math.max(0, holdingQuantity - sellableQuantity);
+        return unavailableQuantity > 0 && unfilledQuantity >= unavailableQuantity;
     }
 
     private void collectOrderRows(JsonNode node, List<JsonNode> result) {

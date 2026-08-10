@@ -103,6 +103,20 @@ class KiwoomTradeServiceTest {
     }
 
     @Test
+    void parsesDailyPriceLimitsFromStockInfo() throws Exception {
+        var response =
+                json.readTree(
+                        "{\"stk_cd\":\"314140\",\"upl_pric\":\"8,040\",\"lst_pric\":\"4,340\",\"base_pric\":\"6,190\"}");
+
+        var limit = tradeService().parseDailyPriceLimit("A314140", response);
+
+        assertEquals("314140", limit.stockCode());
+        assertEquals(8_040, limit.upperPrice());
+        assertEquals(4_340, limit.lowerPrice());
+        assertEquals(6_190, limit.basePrice());
+    }
+
+    @Test
     void parsesIntradayRiseAndCurrentVolumeFromRankingResponse() throws Exception {
         var response =
                 json.readTree(
