@@ -15,6 +15,82 @@ public class KiwoomProperties {
     private long minRequestIntervalMs = 250;
     private int maxConsecutiveApiFailures = 3;
     private Strategy strategy = new Strategy();
+    private Us us = new Us();
+
+    public static class Us {
+        private boolean tradeEnabled;
+        private boolean strategyEnabled = true;
+        private double maxOrderUsd = 200.0;
+        private double maxAllocatedUsd = 400.0;
+        private int maxPositions = 2;
+        private int dailyMaxBuys = 1;
+        private double dailyLossLimitPercent = 2.0;
+        private int maxConsecutiveApiFailures = 3;
+
+        public boolean isTradeEnabled() {
+            return tradeEnabled;
+        }
+
+        public void setTradeEnabled(boolean value) {
+            tradeEnabled = value;
+        }
+
+        public boolean isStrategyEnabled() {
+            return strategyEnabled;
+        }
+
+        public void setStrategyEnabled(boolean value) {
+            strategyEnabled = value;
+        }
+
+        public double getMaxOrderUsd() {
+            return maxOrderUsd;
+        }
+
+        public void setMaxOrderUsd(double value) {
+            maxOrderUsd = Math.max(1, value);
+        }
+
+        public double getMaxAllocatedUsd() {
+            return maxAllocatedUsd;
+        }
+
+        public void setMaxAllocatedUsd(double value) {
+            maxAllocatedUsd = Math.max(1, value);
+        }
+
+        public int getMaxPositions() {
+            return maxPositions;
+        }
+
+        public void setMaxPositions(int value) {
+            maxPositions = Math.max(1, Math.min(20, value));
+        }
+
+        public int getDailyMaxBuys() {
+            return dailyMaxBuys;
+        }
+
+        public void setDailyMaxBuys(int value) {
+            dailyMaxBuys = Math.max(1, Math.min(20, value));
+        }
+
+        public double getDailyLossLimitPercent() {
+            return dailyLossLimitPercent;
+        }
+
+        public void setDailyLossLimitPercent(double value) {
+            dailyLossLimitPercent = Math.max(0, Math.min(30, value));
+        }
+
+        public int getMaxConsecutiveApiFailures() {
+            return maxConsecutiveApiFailures;
+        }
+
+        public void setMaxConsecutiveApiFailures(int value) {
+            maxConsecutiveApiFailures = Math.max(1, Math.min(20, value));
+        }
+    }
 
     public static class Strategy {
         private boolean enabled = true;
@@ -158,6 +234,10 @@ public class KiwoomProperties {
         return "wss://api.kiwoom.com:10000/api/dostk/websocket";
     }
 
+    public String getUsWebsocketUrl() {
+        return "wss://api.kiwoom.com:10000/api/us/websocket";
+    }
+
     public boolean isConfigured() {
         return appKey != null
                 && !appKey.isBlank()
@@ -229,5 +309,13 @@ public class KiwoomProperties {
 
     public void setStrategy(Strategy strategy) {
         this.strategy = strategy == null ? new Strategy() : strategy;
+    }
+
+    public Us getUs() {
+        return us;
+    }
+
+    public void setUs(Us value) {
+        us = value == null ? new Us() : value;
     }
 }

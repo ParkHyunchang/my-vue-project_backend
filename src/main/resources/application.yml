@@ -130,6 +130,16 @@ kiwoom:
   refresh-before-seconds: ${KIWOOM_REFRESH_BEFORE_SECONDS:300}
   min-request-interval-ms: ${KIWOOM_MIN_REQUEST_INTERVAL_MS:250}
   max-consecutive-api-failures: ${KIWOOM_MAX_CONSECUTIVE_API_FAILURES:3}
+  us:
+    # 실계좌 미국주식 주문은 별도 스위치로 켭니다. 국내 주문 스위치와 독립적입니다.
+    trade-enabled: ${KIWOOM_US_TRADE_ENABLED:false}
+    strategy-enabled: ${KIWOOM_US_STRATEGY_ENABLED:true}
+    max-order-usd: ${KIWOOM_US_MAX_ORDER_USD:200}
+    max-allocated-usd: ${KIWOOM_US_MAX_ALLOCATED_USD:400}
+    max-positions: ${KIWOOM_US_MAX_POSITIONS:2}
+    daily-max-buys: ${KIWOOM_US_DAILY_MAX_BUYS:1}
+    daily-loss-limit-percent: ${KIWOOM_US_DAILY_LOSS_LIMIT_PERCENT:2}
+    max-consecutive-api-failures: ${KIWOOM_US_MAX_CONSECUTIVE_API_FAILURES:3}
   strategy:
     enabled: ${KIWOOM_STRATEGY_ENABLED:true}
     max-order-amount: ${KIWOOM_STRATEGY_MAX_ORDER_AMOUNT:500000}

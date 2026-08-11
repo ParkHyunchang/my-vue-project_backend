@@ -14,7 +14,8 @@ import org.springframework.stereotype.Service;
 /** Records the regular-session close used only for the dashboard's previous-close comparison. */
 @Service
 public class KiwoomCloseAssetSnapshotService {
-    private static final Logger log = LoggerFactory.getLogger(KiwoomCloseAssetSnapshotService.class);
+    private static final Logger log =
+            LoggerFactory.getLogger(KiwoomCloseAssetSnapshotService.class);
 
     private final KiwoomProperties properties;
     private final KiwoomTradeService trade;

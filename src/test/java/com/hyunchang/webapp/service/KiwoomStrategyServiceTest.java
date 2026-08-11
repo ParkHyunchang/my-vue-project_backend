@@ -96,7 +96,9 @@ class KiwoomStrategyServiceTest {
 
         lenient().when(state.isEmergencyStopped()).thenReturn(false);
         lenient().when(state.tryStartDecision()).thenReturn(true);
-        lenient().when(state.recordDailyLossCheck(anyLong(), anyLong(), anyDouble())).thenReturn(false);
+        lenient()
+                .when(state.recordDailyLossCheck(anyLong(), anyLong(), anyDouble()))
+                .thenReturn(false);
         lenient().when(state.isDailyLossTriggered()).thenReturn(false);
         lenient().when(settingsService.current()).thenReturn(settings);
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000_000)));
@@ -145,8 +147,7 @@ class KiwoomStrategyServiceTest {
 
     private ShortSwingCandidateService.KrCandidateCatalyst verifiedCatalystOf(String code) {
         var disclosure =
-                new DartFinancialService.PositiveDisclosure(
-                        "2026-08-10", "단일판매 공급계약 체결", "R001");
+                new DartFinancialService.PositiveDisclosure("2026-08-10", "단일판매 공급계약 체결", "R001");
         return new ShortSwingCandidateService.KrCandidateCatalyst(
                 candidate(code), List.of(disclosure), List.of());
     }

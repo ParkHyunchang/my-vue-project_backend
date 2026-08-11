@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.dto.StockNewsDto;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import jakarta.annotation.PreDestroy;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -15,7 +16,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
-import com.hyunchang.webapp.util.KiwoomMarketHours;
 
 /** KRX 가격·거래량 1차 후보에 DART 공시와 종목별 뉴스를 붙여 단기 매매 촉매를 확인한다. 후보 선별은 코드가 맡고, 최종 해석만 AI 프롬프트에 전달한다. */
 @Service
@@ -111,8 +111,7 @@ public class ShortSwingCandidateService {
         for (CandidateLookupTask task : futures) {
             try {
                 long remaining = Math.max(1, deadline - System.currentTimeMillis());
-                KrCandidateCatalyst catalyst =
-                        task.future().get(remaining, TimeUnit.MILLISECONDS);
+                KrCandidateCatalyst catalyst = task.future().get(remaining, TimeUnit.MILLISECONDS);
                 (catalyst.hasCatalyst() ? confirmed : unconfirmed).add(catalyst);
             } catch (TimeoutException e) {
                 task.future().cancel(true);
@@ -145,8 +144,7 @@ public class ShortSwingCandidateService {
         StockSymbolNewsService.SymbolNewsLookup newsLookup =
                 stockSymbolNewsService.fetchForSymbolLookup(
                         candidate.symbol(), "KR", candidate.name(), null);
-        List<DartFinancialService.PositiveDisclosure> disclosures =
-                disclosureLookup.disclosures();
+        List<DartFinancialService.PositiveDisclosure> disclosures = disclosureLookup.disclosures();
         List<CatalystNews> news = extractCatalystNews(newsLookup.news());
         CatalystStatus status =
                 !disclosures.isEmpty() || !news.isEmpty()
@@ -312,8 +310,7 @@ public class ShortSwingCandidateService {
                             : CatalystStatus.NOT_FOUND);
         }
 
-        static KrCandidateCatalyst unavailable(
-                KrxOpenApiService.KrSwingCandidate candidate) {
+        static KrCandidateCatalyst unavailable(KrxOpenApiService.KrSwingCandidate candidate) {
             return new KrCandidateCatalyst(
                     candidate, List.of(), List.of(), CatalystStatus.UNAVAILABLE);
         }

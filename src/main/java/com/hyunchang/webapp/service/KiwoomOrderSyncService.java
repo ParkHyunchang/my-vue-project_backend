@@ -99,11 +99,7 @@ public class KiwoomOrderSyncService {
         Duration elapsed = Duration.between(operation.startedAt(), LocalDateTime.now(KST));
         if (elapsed.compareTo(LONG_RUNNING_SYNC_WARNING) < 0
                 || !longRunningSyncWarningSent.compareAndSet(false, true)) return;
-        String message =
-                "주문 동기화가 "
-                        + elapsed.toSeconds()
-                        + "초 동안 진행 중입니다. 작업="
-                        + operation.name();
+        String message = "주문 동기화가 " + elapsed.toSeconds() + "초 동안 진행 중입니다. 작업=" + operation.name();
         log.warn("[자동매매][주문 동기화 지연] {}, 처리=완료 대기 및 후속 작업 양보", message);
         audit.log("ORDER_SYNC_DELAYED", null, message);
         events.publishEvent("error", message);
@@ -131,8 +127,7 @@ public class KiwoomOrderSyncService {
                 || !props.isConfigured()
                 || !exits.isExitManagementEnabled()
                 || today.equals(preMarketRecoveryCompletedDate)) return;
-        runPreMarketRecovery(
-                today, recoveryTrigger("08:50 정기 전일 주문 정리", "PRE_MARKET_0850"));
+        runPreMarketRecovery(today, recoveryTrigger("08:50 정기 전일 주문 정리", "PRE_MARKET_0850"));
     }
 
     /** 09:00에 시작하고, 자동매매가 늦게 켜지거나 조회가 실패하면 장중 매분 재시도한다. */
@@ -144,8 +139,7 @@ public class KiwoomOrderSyncService {
                 || !props.isConfigured()
                 || !exits.isExitManagementEnabled()
                 || today.equals(marketOpenExitStartedDate)) return;
-        RecoveryTrigger recoveryTrigger =
-                recoveryTrigger("장중 재확인", "MARKET_OPEN_RECHECK");
+        RecoveryTrigger recoveryTrigger = recoveryTrigger("장중 재확인", "MARKET_OPEN_RECHECK");
         boolean recoveredNow = !today.equals(preMarketRecoveryCompletedDate);
         if (recoveredNow) {
             RecoveryOutcome outcome = runPreMarketRecovery(today, recoveryTrigger);
@@ -161,9 +155,7 @@ public class KiwoomOrderSyncService {
         String startReason =
                 recentApplicationRestart
                         ? "서버 재기동 후 확인"
-                        : recoveredNow
-                                ? recoveryTrigger.label()
-                                : "09:00 정규장 시작";
+                        : recoveredNow ? recoveryTrigger.label() : "09:00 정규장 시작";
         String refreshSource =
                 recentApplicationRestart
                         ? "APPLICATION_RESTART"
@@ -182,23 +174,15 @@ public class KiwoomOrderSyncService {
             return RecoveryOutcome.BUSY;
         }
         if (!result.success()) {
-            log.warn(
-                    "[자동매매][전일 주문 정리 재시도 대기] 실행={}, 사유={}",
-                    trigger.label(),
-                    result.message());
+            log.warn("[자동매매][전일 주문 정리 재시도 대기] 실행={}, 사유={}", trigger.label(), result.message());
             return RecoveryOutcome.FAILED;
         }
         if (!exits.preparePositionsBeforeMarketOpen(trigger.label(), trigger.refreshSource())) {
-            log.warn(
-                    "[자동매매][포지션 준비 재시도 대기] 실행={}, 사유=보유 종목 조회 또는 실시간 구독 준비 실패",
-                    trigger.label());
+            log.warn("[자동매매][포지션 준비 재시도 대기] 실행={}, 사유=보유 종목 조회 또는 실시간 구독 준비 실패", trigger.label());
             return RecoveryOutcome.FAILED;
         }
         preMarketRecoveryCompletedDate = today;
-        String nextAction =
-                KiwoomMarketHours.isOpen()
-                        ? "현재 장중 청산 관리 시작 준비"
-                        : "09:00 주문 시작 대기";
+        String nextAction = KiwoomMarketHours.isOpen() ? "현재 장중 청산 관리 시작 준비" : "09:00 주문 시작 대기";
         log.info(
                 "[자동매매][전일 주문 정리·포지션 준비 완료] 실행={}, 기준일={}, 키움 주문 응답={}건, 전일 미종결 주문 만료={}건, 처리={}",
                 trigger.label(),
@@ -288,8 +272,7 @@ public class KiwoomOrderSyncService {
                 String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
                 if (orderNo != null && brokerUnfilledOrderNumbers.contains(orderNo)) continue;
 
-                String reason =
-                        "전일 일일 주문이 다음 거래일 키움 미체결 목록에 없어 자동 만료 처리했습니다.";
+                String reason = "전일 일일 주문이 다음 거래일 키움 미체결 목록에 없어 자동 만료 처리했습니다.";
                 proposal.expired(reason);
                 proposals.save(proposal);
                 audit.log("PREVIOUS_DAY_ORDER_EXPIRED", proposal.getId(), reason);
@@ -302,11 +285,9 @@ public class KiwoomOrderSyncService {
                         isTakeProfit(proposal) ? "익절 지정가" : "일반 주문");
                 expired++;
             }
-            return PreMarketRecoveryResult.completed(
-                    allRecords.size(), expired, "전일 주문 정리 완료");
+            return PreMarketRecoveryResult.completed(allRecords.size(), expired, "전일 주문 정리 완료");
         } catch (Exception e) {
-            return PreMarketRecoveryResult.failed(
-                    "전일 주문 정리 실패: " + trim(e.getMessage()));
+            return PreMarketRecoveryResult.failed("전일 주문 정리 실패: " + trim(e.getMessage()));
         } finally {
             endSync();
         }
@@ -352,9 +333,7 @@ public class KiwoomOrderSyncService {
                         "손절·수동 청산 전환을 위한 익절 주문 취소가 60초 안에 확인되지 않았습니다.");
                 events.publishEvent(
                         "error",
-                        "청산 전환 지연: "
-                                + proposal.getStockCode()
-                                + " 익절 주문 취소가 60초 안에 확인되지 않았습니다.");
+                        "청산 전환 지연: " + proposal.getStockCode() + " 익절 주문 취소가 60초 안에 확인되지 않았습니다.");
             }
         }
         urgentCancelDelayLogged.retainAll(activeKeys);
@@ -413,9 +392,7 @@ public class KiwoomOrderSyncService {
             List<JsonNode> records = new ArrayList<>(unfilledRecords);
             boolean cancellationMayHaveCompleted =
                     cancelRequests.stream()
-                            .filter(
-                                    proposal ->
-                                            activeKeys.contains(urgentCancelKey(proposal)))
+                            .filter(proposal -> activeKeys.contains(urgentCancelKey(proposal)))
                             .map(KiwoomTradeProposal::getBrokerOrderNo)
                             .map(this::normalizeOrderNo)
                             .anyMatch(
@@ -423,8 +400,7 @@ public class KiwoomOrderSyncService {
                                             orderNo != null
                                                     && !unfilledOrderNumbers.contains(orderNo));
             if (cancellationMayHaveCompleted)
-                collectRecords(
-                        trade.getFilledOrders().block(Duration.ofSeconds(10)), records);
+                collectRecords(trade.getFilledOrders().block(Duration.ofSeconds(10)), records);
             for (JsonNode record : records) if (apply(record)) updated++;
             updated +=
                     confirmCancellationRequests(
@@ -432,9 +408,7 @@ public class KiwoomOrderSyncService {
                             unfilledOrderNumbers,
                             proposal -> activeKeys.contains(urgentCancelKey(proposal)));
         } catch (Exception e) {
-            log.warn(
-                    "[자동매매][손절 취소 긴급 확인 실패] 처리=2초 뒤 재시도, 사유={}",
-                    trim(e.getMessage()));
+            log.warn("[자동매매][손절 취소 긴급 확인 실패] 처리=2초 뒤 재시도, 사유={}", trim(e.getMessage()));
         } finally {
             endSync();
         }
@@ -453,9 +427,7 @@ public class KiwoomOrderSyncService {
             int updated = 0;
             for (JsonNode record : records) if (apply(record)) updated++;
             Set<String> unfilledOrderNumbers = orderNumbers(unfilledRecords);
-            updated +=
-                    confirmCancellationRequests(
-                            records, unfilledOrderNumbers, proposal -> true);
+            updated += confirmCancellationRequests(records, unfilledOrderNumbers, proposal -> true);
             updated += cancelStaleBuyOrders(unfilledOrderNumbers);
             return new SyncResult(records.size(), updated, "주문 상태 동기화 완료");
         } catch (Exception e) {
@@ -475,8 +447,7 @@ public class KiwoomOrderSyncService {
                     || proposal.getOrderedAt() == null
                     || proposal.getOrderedAt().isAfter(cutoff)
                     || proposal.getRemainingQuantity() <= 0
-                    || proposal.getBrokerOrderNo() == null)
-                continue;
+                    || proposal.getBrokerOrderNo() == null) continue;
             String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
             if (orderNo == null || !brokerUnfilledOrderNumbers.contains(orderNo)) continue;
             int remaining = proposal.getRemainingQuantity();
@@ -536,8 +507,7 @@ public class KiwoomOrderSyncService {
             Predicate<KiwoomTradeProposal> filter) {
         int updated = 0;
         for (KiwoomTradeProposal proposal :
-                proposals.findByStatusIn(
-                        List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED))) {
+                proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.CANCEL_REQUESTED))) {
             if (!filter.test(proposal)) continue;
             boolean explicitlyConfirmed =
                     records.stream()
@@ -790,8 +760,7 @@ public class KiwoomOrderSyncService {
                                 KiwoomTradeProposal.Status.ORDERED,
                                 KiwoomTradeProposal.Status.PARTIALLY_FILLED))
                 .stream()
-                .anyMatch(
-                        proposal -> proposal.getAction() == KiwoomTradeProposal.Action.BUY);
+                .anyMatch(proposal -> proposal.getAction() == KiwoomTradeProposal.Action.BUY);
     }
 
     private boolean isTakeProfit(KiwoomTradeProposal proposal) {

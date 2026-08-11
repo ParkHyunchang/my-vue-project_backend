@@ -79,8 +79,7 @@ class KiwoomPositionExitServiceTest {
                 .when(trade.getDailyPriceLimit(anyString()))
                 .thenReturn(
                         Mono.just(
-                                new KiwoomTradeService.DailyPriceLimit(
-                                        CODE, 1_000_000, 1, 1_000)));
+                                new KiwoomTradeService.DailyPriceLimit(CODE, 1_000_000, 1, 1_000)));
 
         lenient()
                 .when(proposals.findByStatusIn(any()))
@@ -202,8 +201,7 @@ class KiwoomPositionExitServiceTest {
                 .thenAnswer(
                         invocation -> {
                             takeProfit.cancelRequested("테스트 취소", "{}");
-                            return new KiwoomProposalOrderService.Result(
-                                    true, "취소 요청", takeProfit);
+                            return new KiwoomProposalOrderService.Result(true, "취소 요청", takeProfit);
                         });
 
         service.refreshPositions("TEST", true);
@@ -432,8 +430,7 @@ class KiwoomPositionExitServiceTest {
         when(trade.getDailyPriceLimit(CODE))
                 .thenReturn(
                         Mono.just(
-                                new KiwoomTradeService.DailyPriceLimit(
-                                        CODE, 8_000, 4_320, 6_160)));
+                                new KiwoomTradeService.DailyPriceLimit(CODE, 8_000, 4_320, 6_160)));
         stubAutoExecuteSuccess();
 
         service.refreshPositions("TEST", true);
@@ -497,11 +494,10 @@ class KiwoomPositionExitServiceTest {
     }
 
     /**
-     * autoExecute가 불릴 때마다 그 시점에 아직 브로커에 전송 전인(PROPOSED) 주문을 찾아 체결 이전
-     * 상태로 표시한다. 한 번의 ensureTakeProfitOrder 호출은 tranche 하나만 만들므로 항상 PROPOSED
-     * 주문이 최대 1건이라 모호함이 없다. 같은 mock 메서드를 여러 번 stub하면 Mockito가 새 stub을
-     * 등록하면서 기존 stub의 answer를 한 번 더 실행시키는 부작용이 있어(재현: 이 헬퍼를 tier별로
-     * 다시 호출했다가 재현됨), 테스트당 한 번만 stub하고 여러 refreshPositions 호출에 재사용한다.
+     * autoExecute가 불릴 때마다 그 시점에 아직 브로커에 전송 전인(PROPOSED) 주문을 찾아 체결 이전 상태로 표시한다. 한 번의
+     * ensureTakeProfitOrder 호출은 tranche 하나만 만들므로 항상 PROPOSED 주문이 최대 1건이라 모호함이 없다. 같은 mock 메서드를 여러 번
+     * stub하면 Mockito가 새 stub을 등록하면서 기존 stub의 answer를 한 번 더 실행시키는 부작용이 있어(재현: 이 헬퍼를 tier별로 다시 호출했다가
+     * 재현됨), 테스트당 한 번만 stub하고 여러 refreshPositions 호출에 재사용한다.
      */
     private void stubAutoExecuteSuccess() {
         when(orders.autoExecute(anyLong()))
@@ -552,8 +548,8 @@ class KiwoomPositionExitServiceTest {
         return proposal;
     }
 
-    private KiwoomTradeProposal takeProfitTierOrder(int tier, int quantity, long price, String orderNo)
-            throws Exception {
+    private KiwoomTradeProposal takeProfitTierOrder(
+            int tier, int quantity, long price, String orderNo) throws Exception {
         KiwoomTradeProposal proposal = new KiwoomTradeProposal();
         setId(proposal, ids.incrementAndGet());
         proposal.setAction(KiwoomTradeProposal.Action.SELL);
@@ -572,5 +568,4 @@ class KiwoomPositionExitServiceTest {
         field.setAccessible(true);
         field.set(proposal, id);
     }
-
 }

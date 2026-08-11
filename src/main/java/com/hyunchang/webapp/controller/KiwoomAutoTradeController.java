@@ -152,8 +152,7 @@ public class KiwoomAutoTradeController {
             state.setAutoTrading(true);
             websocketClient.connectAndSubscribe(strategyService.subscriptionCodes());
             boolean exitsReady = exits.resumeExitManagement();
-            websocketClient.publishEvent(
-                    "system", "자동주문을 재개하고 현재 보유종목의 익절·손절 기준을 다시 계산했습니다.");
+            websocketClient.publishEvent("system", "자동주문을 재개하고 현재 보유종목의 익절·손절 기준을 다시 계산했습니다.");
             return ResponseEntity.ok(
                     Map.of(
                             "success", true,
@@ -162,50 +161,69 @@ public class KiwoomAutoTradeController {
         }
         state.setAutoTrading(false);
         KiwoomPositionExitService.PauseResult paused = exits.pauseExitManagement();
-        audit.log("FULL_AUTOMATION_STOPPED", null, "자동주문 완전 중지: 미체결 자동주문 취소 요청 " + paused.cancellationRequested() + "건");
+        audit.log(
+                "FULL_AUTOMATION_STOPPED",
+                null,
+                "자동주문 완전 중지: 미체결 자동주문 취소 요청 " + paused.cancellationRequested() + "건");
         if (paused.cancellationFailed() > 0)
             websocketClient.publishEvent(
-                    "error", "자동주문은 중지했지만 미체결 자동주문 " + paused.cancellationFailed() + "건의 취소 요청이 실패했습니다. 키움 주문을 확인하세요.");
+                    "error",
+                    "자동주문은 중지했지만 미체결 자동주문 "
+                            + paused.cancellationFailed()
+                            + "건의 취소 요청이 실패했습니다. 키움 주문을 확인하세요.");
         websocketClient.publishEvent(
                 "system", "자동주문을 완전히 중지했습니다. 기존 미체결 자동주문도 취소하며 재개 전까지 신규 자동주문을 보내지 않습니다.");
         return ResponseEntity.ok(
                 Map.of(
-                        "success", true,
-                        "autoTrading", false,
-                        "orderCancellationRequested", paused.cancellationRequested(),
-                        "orderCancellationFailed", paused.cancellationFailed()));
+                        "success",
+                        true,
+                        "autoTrading",
+                        false,
+                        "orderCancellationRequested",
+                        paused.cancellationRequested(),
+                        "orderCancellationFailed",
+                        paused.cancellationFailed()));
     }
 
     @GetMapping("/summary")
     public Mono<Map<String, Object>> summary() {
         return Mono.zip(tradeService.getDeposit(), tradeService.getBalance())
-                .map(data -> {
-                    KiwoomTradeService.AccountAsset totalAsset =
-                            tradeService.accountAsset(data.getT1(), data.getT2());
-                    KiwoomAutoTradeState.AssetChange assetChange =
-                            state.assetChangeFromPreviousClose(totalAsset.amount());
-                    Map<String, Object> summary = new LinkedHashMap<>();
-                    summary.put("totalAsset", totalAsset.amount());
-                    summary.put(
-                            "totalAssetSource",
-                            "추정예탁자산".equals(totalAsset.source())
-                                    ? "키움 기준 · 결제 예정금액 포함"
-                                    : "예수금 + 보유주식 평가액");
-                    summary.put("totalAssetChange", assetChange == null ? null : assetChange.amount());
-                    summary.put(
-                            "totalAssetChangePercent",
-                            assetChange == null ? null : assetChange.percent());
-                    summary.put("deposit", number(data.getT1(), "entr"));
-                    summary.put("d1Deposit", number(data.getT1(), "d1_entra"));
-                    summary.put("d2Deposit", number(data.getT1(), "d2_entra"));
-                    summary.put(
-                            "orderAvailable",
-                            number(data.getT1(), "ord_alow_amt", "ord_psbl_cash", "entr"));
-                    summary.put("profitLoss", tradeService.totalEvaluationProfitLoss(data.getT2()));
-                    summary.put("stockProfitRate", tradeService.totalEvaluationProfitRate(data.getT2()));
-                    summary.put("totalEvaluation", tradeService.totalEvaluationAmount(data.getT2()));
-                    return summary;
-                });
+                .map(
+                        data -> {
+                            KiwoomTradeService.AccountAsset totalAsset =
+                                    tradeService.accountAsset(data.getT1(), data.getT2());
+                            KiwoomAutoTradeState.AssetChange assetChange =
+                                    state.assetChangeFromPreviousClose(totalAsset.amount());
+                            Map<String, Object> summary = new LinkedHashMap<>();
+                            summary.put("totalAsset", totalAsset.amount());
+                            summary.put(
+                                    "totalAssetSource",
+                                    "추정예탁자산".equals(totalAsset.source())
+                                            ? "키움 기준 · 결제 예정금액 포함"
+                                            : "예수금 + 보유주식 평가액");
+                            summary.put(
+                                    "totalAssetChange",
+                                    assetChange == null ? null : assetChange.amount());
+                            summary.put(
+                                    "totalAssetChangePercent",
+                                    assetChange == null ? null : assetChange.percent());
+                            summary.put("deposit", number(data.getT1(), "entr"));
+                            summary.put("d1Deposit", number(data.getT1(), "d1_entra"));
+                            summary.put("d2Deposit", number(data.getT1(), "d2_entra"));
+                            summary.put(
+                                    "orderAvailable",
+                                    number(data.getT1(), "ord_alow_amt", "ord_psbl_cash", "entr"));
+                            summary.put(
+                                    "profitLoss",
+                                    tradeService.totalEvaluationProfitLoss(data.getT2()));
+                            summary.put(
+                                    "stockProfitRate",
+                                    tradeService.totalEvaluationProfitRate(data.getT2()));
+                            summary.put(
+                                    "totalEvaluation",
+                                    tradeService.totalEvaluationAmount(data.getT2()));
+                            return summary;
+                        });
     }
 
     /** 자동매매가 실제로 사용하는 키움 계좌 보유현황 스냅샷이다. */

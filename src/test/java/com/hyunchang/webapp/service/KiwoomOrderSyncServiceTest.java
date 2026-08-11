@@ -62,7 +62,8 @@ class KiwoomOrderSyncServiceTest {
         proposal.setQuantity(6);
         proposal.setReason("[EXIT:TAKE_PROFIT] 익절 지정가 주문");
         proposal.ordered("{}", "0357151");
-        lenient().when(proposals.findByStatusIn(any()))
+        lenient()
+                .when(proposals.findByStatusIn(any()))
                 .thenAnswer(
                         invocation -> {
                             List<KiwoomTradeProposal.Status> statuses = invocation.getArgument(0);
@@ -286,12 +287,10 @@ class KiwoomOrderSyncServiceTest {
     void longRunningSyncIsExposedAndAlertsOnlyOnce() throws Exception {
         Class<?> operationType =
                 Class.forName(KiwoomOrderSyncService.class.getName() + "$SyncOperation");
-        var constructor =
-                operationType.getDeclaredConstructor(String.class, LocalDateTime.class);
+        var constructor = operationType.getDeclaredConstructor(String.class, LocalDateTime.class);
         constructor.setAccessible(true);
         Object operation =
-                constructor.newInstance(
-                        "서버 재시작 주문 복구", LocalDateTime.now().minusSeconds(31));
+                constructor.newInstance("서버 재시작 주문 복구", LocalDateTime.now().minusSeconds(31));
         Field activeSync = KiwoomOrderSyncService.class.getDeclaredField("activeSync");
         activeSync.setAccessible(true);
         activeSync.set(service, operation);

@@ -82,12 +82,10 @@ public class KiwoomTradeService {
         return normalized;
     }
 
-    /**
-     * 당일 입출금 내역(kt00015)을 합산합니다. 매수·매도·환전은 제외하고 실제 현금 입출금만
-     * 반환하므로 일일 손실률 기준자산을 보정할 때 사용합니다.
-     */
+    /** 당일 입출금 내역(kt00015)을 합산합니다. 매수·매도·환전은 제외하고 실제 현금 입출금만 반환하므로 일일 손실률 기준자산을 보정할 때 사용합니다. */
     public Mono<CashFlow> getTodayCashFlow() {
-        String today = LocalDate.now(KiwoomMarketHours.KST).format(DateTimeFormatter.BASIC_ISO_DATE);
+        String today =
+                LocalDate.now(KiwoomMarketHours.KST).format(DateTimeFormatter.BASIC_ISO_DATE);
         return readRequest(
                         "kt00015",
                         "/api/dostk/acnt",
@@ -145,8 +143,7 @@ public class KiwoomTradeService {
     }
 
     /**
-     * 장중 전일대비 상승률 상위 종목을 조회한다. 후보 선별에 사용하는 등락률과 거래량은
-     * 전일 KRX 종가가 아니라 이 응답의 현재가·현재 누적 거래량을 기준으로 한다.
+     * 장중 전일대비 상승률 상위 종목을 조회한다. 후보 선별에 사용하는 등락률과 거래량은 전일 KRX 종가가 아니라 이 응답의 현재가·현재 누적 거래량을 기준으로 한다.
      */
     public Mono<List<IntradayRankStock>> getTopRisingStocks() {
         return readRequest(
@@ -561,7 +558,11 @@ public class KiwoomTradeService {
             double plPct) {}
 
     public record IntradayRankStock(
-            String code, String name, long currentPrice, double changePercent, long currentVolume) {}
+            String code,
+            String name,
+            long currentPrice,
+            double changePercent,
+            long currentVolume) {}
 
     public record SellAvailability(
             String stockCode,

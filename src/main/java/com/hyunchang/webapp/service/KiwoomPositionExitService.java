@@ -30,10 +30,10 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 /**
- * Maintains one or two (2단계 분할 익절 시) broker-side take-profit limit orders per automated
- * position and watches stop-loss levels from 0B real-time ticks. Tick comparisons are
- * intentionally memory-only: balance is read only at startup, after an order state change, or
- * while WebSocket fallback protection is active.
+ * Maintains one or two (2단계 분할 익절 시) broker-side take-profit limit orders per automated position
+ * and watches stop-loss levels from 0B real-time ticks. Tick comparisons are intentionally
+ * memory-only: balance is read only at startup, after an order state change, or while WebSocket
+ * fallback protection is active.
  */
 @Service
 public class KiwoomPositionExitService {
@@ -171,8 +171,8 @@ public class KiwoomPositionExitService {
     }
 
     /**
-     * 화면에서 누른 수동 시장가 청산이다. 보유 전량을 예약 중인 익절 지정가 주문을 먼저 취소하고, 키움 잔고의 매도가능수량이 돌아오는 대로 시장가로 전량 매도한다.
-     * 자동 주문 스위치와 무관하게 동작한다.
+     * 화면에서 누른 수동 시장가 청산이다. 보유 전량을 예약 중인 익절 지정가 주문을 먼저 취소하고, 키움 잔고의 매도가능수량이 돌아오는 대로 시장가로 전량 매도한다. 자동
+     * 주문 스위치와 무관하게 동작한다.
      *
      * @param requestedCodes 비어 있으면 보유 전 종목
      */
@@ -252,7 +252,8 @@ public class KiwoomPositionExitService {
 
         List<LiquidationItem> items = pending.values().stream().map(Liquidation::toItem).toList();
         long submitted = items.stream().filter(item -> "SUBMITTED".equals(item.status())).count();
-        long waiting = items.stream().filter(item -> "WAITING_SELLABLE".equals(item.status())).count();
+        long waiting =
+                items.stream().filter(item -> "WAITING_SELLABLE".equals(item.status())).count();
         long failed = items.stream().filter(item -> "FAILED".equals(item.status())).count();
         log.warn(
                 "[자동매매][수동 청산 결과] 대상={}종목, 시장가 매도 전송={}건, 매도가능수량 대기={}건, 실패={}건",
@@ -352,8 +353,7 @@ public class KiwoomPositionExitService {
 
     private void submitManualExit(Liquidation item) {
         Position position = toPosition(item.holding);
-        KiwoomTradeProposal order =
-                newExitProposal(position, KiwoomTradeProposal.OrderType.MARKET);
+        KiwoomTradeProposal order = newExitProposal(position, KiwoomTradeProposal.OrderType.MARKET);
         order.setReason(exitReason(ExitTrigger.MANUAL_EXIT, position));
         proposals.save(order);
         audit.log(ExitTrigger.MANUAL_EXIT.auditOrderEvent(), order.getId(), order.getReason());
@@ -376,8 +376,7 @@ public class KiwoomPositionExitService {
                             : submitted.getBrokerOrderNo(),
                     order.getReason());
         } else {
-            audit.log(
-                    ExitTrigger.MANUAL_EXIT.auditFailureEvent(), order.getId(), result.message());
+            audit.log(ExitTrigger.MANUAL_EXIT.auditFailureEvent(), order.getId(), result.message());
             item.markFailed(result.message());
             log.error(
                     "[자동매매][수동 청산 시장가 주문 전송 실패] {}({}), 수량={}주, 사유={}",
@@ -385,8 +384,7 @@ public class KiwoomPositionExitService {
                     position.stockCode(),
                     position.sellableQuantity(),
                     result.message());
-            websocket.publishEvent(
-                    "error", "수동 청산 주문 전송 실패: " + item.stockCode() + " (수동 확인 필요)");
+            websocket.publishEvent("error", "수동 청산 주문 전송 실패: " + item.stockCode() + " (수동 확인 필요)");
         }
     }
 
@@ -569,8 +567,8 @@ public class KiwoomPositionExitService {
     }
 
     /**
-     * 주문 동기화 서비스가 빠르게 조회해야 할 익절 취소 건인지 알려준다. 손절과 수동 청산은 취소 확인이 늦어질수록 시장가 매도가 그만큼 밀리므로 1분 정기
-     * 동기화를 기다리지 않는다. 보유기간 청산은 급하지 않아 정기 동기화에 맡긴다.
+     * 주문 동기화 서비스가 빠르게 조회해야 할 익절 취소 건인지 알려준다. 손절과 수동 청산은 취소 확인이 늦어질수록 시장가 매도가 그만큼 밀리므로 1분 정기 동기화를
+     * 기다리지 않는다. 보유기간 청산은 급하지 않아 정기 동기화에 맡긴다.
      */
     boolean isStopTransitionPending(String stockCode) {
         if (stockCode == null || exitSubmitted.contains(stockCode)) return false;
@@ -681,9 +679,8 @@ public class KiwoomPositionExitService {
     }
 
     /**
-     * 계획된 tranche(1개 또는 2개)를 현재 열려 있는 익절 주문과 비교해 한 번 호출에 한 가지 조치만
-     * 수행한다: 이미 맞는 tranche는 건너뛰고, 어긋난 tranche는 취소만 하고 반환(재생성은 다음 주기),
-     * 아직 없는 tranche는 매도가능수량이 허용할 때만 새로 건다. 2차 tranche는 1차 주문이 실제로
+     * 계획된 tranche(1개 또는 2개)를 현재 열려 있는 익절 주문과 비교해 한 번 호출에 한 가지 조치만 수행한다: 이미 맞는 tranche는 건너뛰고, 어긋난
+     * tranche는 취소만 하고 반환(재생성은 다음 주기), 아직 없는 tranche는 매도가능수량이 허용할 때만 새로 건다. 2차 tranche는 1차 주문이 실제로
      * 매도가능수량을 줄인 게 다음 refreshPositions 주기에 반영된 뒤에야 생성된다.
      */
     private boolean ensureTakeProfitOrder(Position position) {
@@ -953,8 +950,8 @@ public class KiwoomPositionExitService {
     }
 
     /**
-     * 1차/2차 분할 익절 주문 중 해당 tier에 태깅된 것만 골라낸다. 태깅 방식 도입 전(예: "[EXIT:TAKE_PROFIT]")에
-     * 이미 떠 있던 구버전 주문은 태그가 없어도 1차로 취급해야 설정 변경 시 정상적으로 재조정된다.
+     * 1차/2차 분할 익절 주문 중 해당 tier에 태깅된 것만 골라낸다. 태깅 방식 도입 전(예: "[EXIT:TAKE_PROFIT]")에 이미 떠 있던 구버전 주문은
+     * 태그가 없어도 1차로 취급해야 설정 변경 시 정상적으로 재조정된다.
      */
     private List<KiwoomTradeProposal> ordersForTier(List<KiwoomTradeProposal> current, int tier) {
         String tag = "[EXIT:TAKE_PROFIT-" + tier + "]";
@@ -1040,8 +1037,7 @@ public class KiwoomPositionExitService {
             KiwoomTradeService.DailyPriceLimit limit =
                     trade.getDailyPriceLimit(holding.code()).block(Duration.ofSeconds(10));
             long upperPrice = limit == null ? 0 : limit.upperPrice();
-            if (upperPrice <= 0)
-                throw new IllegalStateException("키움 종목 기본정보에 상한가가 없습니다.");
+            if (upperPrice <= 0) throw new IllegalStateException("키움 종목 기본정보에 상한가가 없습니다.");
             dailyPriceLimits.put(
                     holding.code(), new CachedDailyPriceLimit(today, upperPrice, Long.MAX_VALUE));
             priceLimitLookupFailureLogged.remove(logKey);
@@ -1074,9 +1070,8 @@ public class KiwoomPositionExitService {
     }
 
     /**
-     * 보유수량이 1주뿐이거나 2차 익절률이 꺼져 있으면(0) 지금까지처럼 1차 가격에 전량을 배정한 단일
-     * tranche를 돌려준다. 2차 익절가가 반올림 tick 때문에 1차 이하로 겹치면 분할 자체가 무의미하므로
-     * 같은 방식으로 단일 tranche로 안전하게 폴백한다.
+     * 보유수량이 1주뿐이거나 2차 익절률이 꺼져 있으면(0) 지금까지처럼 1차 가격에 전량을 배정한 단일 tranche를 돌려준다. 2차 익절가가 반올림 tick 때문에
+     * 1차 이하로 겹치면 분할 자체가 무의미하므로 같은 방식으로 단일 tranche로 안전하게 폴백한다.
      */
     private List<TakeProfitTranche> planTakeProfitTranches(
             long avgPrice, double tier1Percent, int holdingQuantity, long tier1Price) {

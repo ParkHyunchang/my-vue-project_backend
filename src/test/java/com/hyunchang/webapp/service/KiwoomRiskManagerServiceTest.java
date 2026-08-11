@@ -52,7 +52,9 @@ class KiwoomRiskManagerServiceTest {
 
         lenient().when(state.isEmergencyStopped()).thenReturn(false);
         lenient().when(state.tryStartDecision()).thenReturn(true);
-        lenient().when(state.recordDailyLossCheck(anyLong(), anyLong(), anyDouble())).thenReturn(false);
+        lenient()
+                .when(state.recordDailyLossCheck(anyLong(), anyLong(), anyDouble()))
+                .thenReturn(false);
         lenient().when(state.isDailyLossTriggered()).thenReturn(false);
         lenient().when(settingsService.current()).thenReturn(settings);
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(emptyNode));

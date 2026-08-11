@@ -50,7 +50,8 @@ public class KiwoomAutoTradeState {
         }
         if (saved.getLastCloseAssetDate() != null)
             lastCloseAsset =
-                    new ClosingAsset(saved.getLastCloseAssetDate(), saved.getLastCloseAssetAmount());
+                    new ClosingAsset(
+                            saved.getLastCloseAssetDate(), saved.getLastCloseAssetAmount());
         if (saved.getPreviousCloseAssetDate() != null)
             previousCloseAsset =
                     new ClosingAsset(

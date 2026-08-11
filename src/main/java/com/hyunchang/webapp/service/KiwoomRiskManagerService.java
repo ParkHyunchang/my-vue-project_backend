@@ -76,8 +76,8 @@ public class KiwoomRiskManagerService {
                             ? trade.getTodayCashFlow().block(Duration.ofSeconds(10)).netAmount()
                             : 0;
             if (state.recordDailyLossCheck(totalAsset, netCashFlow, dailyLossLimit)) {
-            KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
-            String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
+                KiwoomAutoTradeState.DailyLossStatus loss = state.dailyLossStatus();
+                String detail = dailyLossTriggerDetail(loss, dailyLossLimit, accountAsset.source());
                 log.warn("[자동매매][일일 손실 한도 발동] {}", detail);
                 audit.log("DAILY_LOSS_TRIGGERED", null, detail);
                 events.publishEvent("strategy", "일일 손실 한도 발동 — " + detail);

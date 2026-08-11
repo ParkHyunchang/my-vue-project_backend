@@ -241,8 +241,7 @@ public class KrxOpenApiService {
                         intraday.size());
                 return intraday;
             }
-            log.warn(
-                    "[자동매매][장중 후보 조회 대체] 키움 장중 상승률 조회가 비어 있어 직전 KRX 종가 기준 후보를 사용합니다.");
+            log.warn("[자동매매][장중 후보 조회 대체] 키움 장중 상승률 조회가 비어 있어 직전 KRX 종가 기준 후보를 사용합니다.");
         }
         swingCandidatesCacheUsesIntradayData = false;
         List<Map<String, NaverFinanceService.NaverStockData>> history =

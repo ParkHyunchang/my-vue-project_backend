@@ -95,17 +95,17 @@ public class DartFinancialService {
 
     /** 촉매 판단용 조회 결과. 빈 목록과 API 미설정·장애를 구분한다. */
     public PositiveDisclosureLookup recentPositiveDisclosureLookup(String symbol, int limit) {
-        if (!enabled() || limit <= 0)
-            return new PositiveDisclosureLookup(false, List.of());
+        if (!enabled() || limit <= 0) return new PositiveDisclosureLookup(false, List.of());
         LocalDate cutoff = LocalDate.now().minusDays(14);
         DisclosureLookup lookup = recentDisclosuresLookup(symbol, 40);
-        List<PositiveDisclosure> result = lookup.disclosures().stream()
-                .filter(this::isPositiveDisclosure)
-                .filter(d -> !d.name().contains("정정"))
-                .filter(d -> parseDisclosureDate(d.date()).isAfter(cutoff.minusDays(1)))
-                .limit(limit)
-                .map(d -> new PositiveDisclosure(d.date(), d.name(), d.receiptNo()))
-                .toList();
+        List<PositiveDisclosure> result =
+                lookup.disclosures().stream()
+                        .filter(this::isPositiveDisclosure)
+                        .filter(d -> !d.name().contains("정정"))
+                        .filter(d -> parseDisclosureDate(d.date()).isAfter(cutoff.minusDays(1)))
+                        .limit(limit)
+                        .map(d -> new PositiveDisclosure(d.date(), d.name(), d.receiptNo()))
+                        .toList();
         return new PositiveDisclosureLookup(lookup.available(), result);
     }
 
