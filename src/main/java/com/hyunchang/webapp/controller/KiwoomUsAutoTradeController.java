@@ -22,6 +22,7 @@ import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import reactor.core.publisher.Flux;
 
@@ -142,8 +143,9 @@ public class KiwoomUsAutoTradeController {
     }
 
     @PostMapping("/decide")
-    public KiwoomUsAutoTradeService.DecisionResult decide() {
-        return service.decide("ADMIN");
+    public KiwoomUsAutoTradeService.DecisionResult decide(
+            @RequestParam(defaultValue = "false") boolean allowOrder) {
+        return service.decide("ADMIN", allowOrder);
     }
 
     @PostMapping("/sync")

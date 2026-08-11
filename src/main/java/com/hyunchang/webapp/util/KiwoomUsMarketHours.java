@@ -91,6 +91,14 @@ public final class KiwoomUsMarketHours {
         return LocalDateTime.now(ET);
     }
 
+    /** DB LocalDateTime과 같은 시스템 시간대로 환산한 현재 미국 거래일의 시작 시각. */
+    public static LocalDateTime currentTradingDateStartInSystemZone() {
+        return today()
+                .atStartOfDay(ET)
+                .withZoneSameInstant(ZoneId.systemDefault())
+                .toLocalDateTime();
+    }
+
     public static boolean isDaylightSavingTime() {
         return ET.getRules().isDaylightSavings(Instant.now());
     }

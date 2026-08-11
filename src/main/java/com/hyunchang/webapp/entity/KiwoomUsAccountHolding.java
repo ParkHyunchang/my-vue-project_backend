@@ -38,6 +38,7 @@ public class KiwoomUsAccountHolding {
     private double profitLossPercent;
     private boolean active;
     private boolean managedByAutoTrade;
+    private boolean firstTakeProfitCompleted;
     private LocalDateTime positionOpenedAt;
     private LocalDateTime syncedAt;
 
@@ -110,11 +111,21 @@ public class KiwoomUsAccountHolding {
         managedByAutoTrade = true;
     }
 
+    public boolean isFirstTakeProfitCompleted() {
+        return firstTakeProfitCompleted;
+    }
+
+    public void markFirstTakeProfitCompleted() {
+        firstTakeProfitCompleted = true;
+    }
+
     public void deactivate() {
         active = false;
         managedByAutoTrade = false;
+        firstTakeProfitCompleted = false;
         quantity = 0;
         sellableQuantity = 0;
+        positionOpenedAt = null;
         syncedAt = LocalDateTime.now();
     }
 

@@ -72,26 +72,27 @@ public class KiwoomUsTradeService {
     public Mono<JsonNode> placeOrder(Order order) {
         if (!KiwoomUsMarketHours.isOpen()) {
             return Mono.error(
-                    new IllegalStateException("미국주식 자동주문은 미국 정규장(09:30~16:00 ET)에만 전송됩니다."));
+                    new OrderValidationException(
+                            "미국주식 자동주문은 미국 정규장(09:30~16:00 ET)에만 전송됩니다."));
         }
         if (!properties.getUs().isTradeEnabled()) {
             return Mono.error(
-                    new IllegalStateException(
+                    new OrderValidationException(
                             "미국주식 주문 전송이 비활성화되어 있습니다. KIWOOM_US_TRADE_ENABLED=true를 확인하세요."));
         }
         String symbol = normalizeSymbol(order.symbol());
         String exchange = normalizeExchange(order.exchange());
         if (order.quantity() <= 0)
-            return Mono.error(new IllegalArgumentException("주문 수량은 1주 이상이어야 합니다."));
+            return Mono.error(new OrderValidationException("주문 수량은 1주 이상이어야 합니다."));
         if (!order.market() && (order.price() == null || order.price().signum() <= 0)) {
-            return Mono.error(new IllegalArgumentException("지정가 주문에는 양수 가격이 필요합니다."));
+            return Mono.error(new OrderValidationException("지정가 주문에는 양수 가격이 필요합니다."));
         }
         String side = order.side() == null ? "" : order.side().toUpperCase();
         String apiId =
                 switch (side) {
                     case "BUY" -> "ust20000";
                     case "SELL" -> "ust20001";
-                    default -> throw new IllegalArgumentException("주문 구분은 BUY 또는 SELL이어야 합니다.");
+                    default -> throw new OrderValidationException("주문 구분은 BUY 또는 SELL이어야 합니다.");
                 };
         Map<String, String> body = new LinkedHashMap<>();
         body.put("stex_tp", exchange);
@@ -129,7 +130,7 @@ public class KiwoomUsTradeService {
         if (rows == null || !rows.isArray()) return result;
         for (JsonNode row : rows) {
             String symbol = text(row, "stk_cd");
-            int quantity = integer(row, "qty");
+            int quantity = integer(row, "poss_qty");
             if (symbol.isBlank() || quantity <= 0) continue;
             result.add(
                     new Holding(
@@ -137,7 +138,7 @@ public class KiwoomUsTradeService {
                             symbol,
                             text(row, "frgn_stk_nm", "stk_nm", "stk_enm"),
                             quantity,
-                            integer(row, "poss_qty", "sell_alowq"),
+                            integer(row, "sell_alowq"),
                             decimal(row, "frgn_stk_book_uv", "avg_pric"),
                             decimal(row, "now_pric", "cur_prc"),
                             decimal(row, "evlt_amt"),
@@ -191,10 +192,11 @@ public class KiwoomUsTradeService {
     private Mono<JsonNode> request(
             String apiId, String path, Map<String, ?> body, boolean retryToken) {
         return requestOnce(apiId, path, body, retryToken)
-                .doOnSuccess(ignored -> state.recordApiSuccess())
+                .doOnSuccess(ignored -> state.recordApiSuccess(apiId))
                 .doOnError(
                         error ->
                                 state.recordApiFailure(
+                                        apiId,
                                         apiId + ": " + error.getMessage(),
                                         properties.getUs().getMaxConsecutiveApiFailures()));
     }
@@ -228,7 +230,7 @@ public class KiwoomUsTradeService {
                                                     return code == 0
                                                             ? Mono.just(response)
                                                             : Mono.error(
-                                                                    new IllegalStateException(
+                                                                    new KiwoomApiException(
                                                                             "키움 미국주식 API 오류("
                                                                                     + apiId
                                                                                     + "): "
@@ -259,13 +261,18 @@ public class KiwoomUsTradeService {
 
     private String normalizeExchange(String exchange) {
         String value = exchange == null ? "" : exchange.trim().toUpperCase();
-        if (value.contains("NASDAQ") || "NAS".equals(value) || "ND".equals(value)) return "ND";
+        if (value.contains("NASDAQ")
+                || value.contains("나스닥")
+                || "NAS".equals(value)
+                || "ND".equals(value)) return "ND";
         if (value.contains("NEW YORK")
                 || value.contains("NYSE")
+                || value.contains("뉴욕")
                 || "NYS".equals(value)
                 || "NY".equals(value)) return "NY";
         if (value.contains("AMEX")
                 || value.contains("AMERICAN")
+                || value.contains("아멕스")
                 || "AMS".equals(value)
                 || "NA".equals(value)) return "NA";
         if (value.matches("[1-3]"))
@@ -274,7 +281,7 @@ public class KiwoomUsTradeService {
                 case "2" -> "ND";
                 default -> "NA";
             };
-        return "ND";
+        throw new IllegalArgumentException("지원하지 않는 미국 거래소 구분입니다: " + value);
     }
 
     private String text(JsonNode node, String... fields) {
@@ -298,6 +305,29 @@ public class KiwoomUsTradeService {
 
     private int integer(JsonNode node, String... fields) {
         return decimal(node, fields).abs().intValue();
+    }
+
+    public static boolean isDefinitiveOrderFailure(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof KiwoomApiException
+                    || current instanceof OrderValidationException
+                    || current instanceof IllegalArgumentException) return true;
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static final class KiwoomApiException extends IllegalStateException {
+        private KiwoomApiException(String message) {
+            super(message);
+        }
+    }
+
+    private static final class OrderValidationException extends IllegalStateException {
+        private OrderValidationException(String message) {
+            super(message);
+        }
     }
 
     public record UsdCash(

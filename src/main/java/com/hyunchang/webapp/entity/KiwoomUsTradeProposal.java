@@ -26,6 +26,7 @@ public class KiwoomUsTradeProposal {
         PARTIALLY_FILLED,
         FILLED,
         CANCEL_REQUESTED,
+        PARTIALLY_FILLED_CANCELED,
         CANCELED,
         FAILED,
         UNKNOWN
@@ -67,6 +68,7 @@ public class KiwoomUsTradeProposal {
     private String brokerResponse;
 
     private LocalDateTime orderedAt;
+    private LocalDateTime cancelRequestedAt;
     private LocalDateTime createdAt;
 
     @PrePersist
@@ -91,24 +93,27 @@ public class KiwoomUsTradeProposal {
         filledQuantity = Math.max(filledQuantity, filled);
         remainingQuantity = Math.max(0, remaining);
         if (price != null && price.signum() > 0) averageFillPrice = price;
-        status =
-                remainingQuantity == 0 && filledQuantity > 0
-                        ? Status.FILLED
-                        : filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED;
+        if (remainingQuantity == 0 && filledQuantity > 0) {
+            status = Status.FILLED;
+        } else if (status != Status.CANCEL_REQUESTED) {
+            status = filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED;
+        }
     }
 
     public void requestCancel() {
         status = Status.CANCEL_REQUESTED;
+        cancelRequestedAt = LocalDateTime.now();
     }
 
     public void canceled() {
-        status = Status.CANCELED;
+        status = filledQuantity > 0 ? Status.PARTIALLY_FILLED_CANCELED : Status.CANCELED;
         remainingQuantity = 0;
     }
 
     public void unknown(String response) {
         status = Status.UNKNOWN;
         brokerResponse = response;
+        if (orderedAt == null) orderedAt = LocalDateTime.now();
     }
 
     public Long getId() {
@@ -194,6 +199,10 @@ public class KiwoomUsTradeProposal {
 
     public LocalDateTime getOrderedAt() {
         return orderedAt;
+    }
+
+    public LocalDateTime getCancelRequestedAt() {
+        return cancelRequestedAt;
     }
 
     public LocalDateTime getCreatedAt() {

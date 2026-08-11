@@ -5,6 +5,8 @@ import com.hyunchang.webapp.repository.KiwoomUsControlStateRepository;
 import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import jakarta.annotation.PostConstruct;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +16,7 @@ public class KiwoomUsAutoTradeState {
     private final AtomicBoolean autoTrading = new AtomicBoolean();
     private final AtomicBoolean deciding = new AtomicBoolean();
     private final AtomicBoolean emergencyStopped = new AtomicBoolean();
+    private final Map<String, Integer> apiFailureCounts = new HashMap<>();
     private volatile int consecutiveApiFailures;
     private volatile LocalDateTime lastApiFailureAt;
     private volatile String lastApiFailureMessage;
@@ -31,6 +34,11 @@ public class KiwoomUsAutoTradeState {
             consecutiveApiFailures = s.getConsecutiveApiFailures();
             lastApiFailureAt = s.getLastApiFailureAt();
             lastApiFailureMessage = s.getLastApiFailureMessage();
+            if (!emergencyStopped.get()) {
+                consecutiveApiFailures = 0;
+                lastApiFailureAt = null;
+                lastApiFailureMessage = null;
+            }
         }
     }
 
@@ -56,7 +64,13 @@ public class KiwoomUsAutoTradeState {
 
     public synchronized void setAutoTrading(boolean enabled) {
         autoTrading.set(enabled);
-        if (enabled) emergencyStopped.set(false);
+        if (enabled) {
+            emergencyStopped.set(false);
+            apiFailureCounts.clear();
+            consecutiveApiFailures = 0;
+            lastApiFailureAt = null;
+            lastApiFailureMessage = null;
+        }
         save();
     }
 
@@ -67,11 +81,13 @@ public class KiwoomUsAutoTradeState {
         save();
     }
 
-    public synchronized boolean recordApiFailure(String message, int limit) {
-        consecutiveApiFailures++;
+    public synchronized boolean recordApiFailure(String apiId, String message, int limit) {
+        int endpointFailures = apiFailureCounts.merge(apiId, 1, Integer::sum);
+        consecutiveApiFailures =
+                apiFailureCounts.values().stream().mapToInt(Integer::intValue).max().orElse(0);
         lastApiFailureAt = LocalDateTime.now();
         lastApiFailureMessage = trim(message);
-        if (consecutiveApiFailures >= limit) {
+        if (endpointFailures >= limit) {
             autoTrading.set(false);
             emergencyStopped.set(true);
         }
@@ -79,11 +95,14 @@ public class KiwoomUsAutoTradeState {
         return emergencyStopped.get();
     }
 
-    public synchronized void recordApiSuccess() {
-        if (consecutiveApiFailures == 0) return;
-        consecutiveApiFailures = 0;
-        lastApiFailureAt = null;
-        lastApiFailureMessage = null;
+    public synchronized void recordApiSuccess(String apiId) {
+        if (apiFailureCounts.remove(apiId) == null) return;
+        consecutiveApiFailures =
+                apiFailureCounts.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+        if (consecutiveApiFailures == 0) {
+            lastApiFailureAt = null;
+            lastApiFailureMessage = null;
+        }
         save();
     }
 
