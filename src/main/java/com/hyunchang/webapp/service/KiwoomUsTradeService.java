@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
+import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.math.BigDecimal;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -69,6 +70,10 @@ public class KiwoomUsTradeService {
     }
 
     public Mono<JsonNode> placeOrder(Order order) {
+        if (!KiwoomUsMarketHours.isOpen()) {
+            return Mono.error(
+                    new IllegalStateException("미국주식 자동주문은 미국 정규장(09:30~16:00 ET)에만 전송됩니다."));
+        }
         if (!properties.getUs().isTradeEnabled()) {
             return Mono.error(
                     new IllegalStateException(

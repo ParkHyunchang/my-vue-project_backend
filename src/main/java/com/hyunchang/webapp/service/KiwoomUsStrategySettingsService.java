@@ -19,19 +19,24 @@ public class KiwoomUsStrategySettingsService {
 
     @PostConstruct
     void seed() {
-        repository
-                .findById(1L)
-                .orElseGet(
-                        () -> {
-                            var s = new KiwoomUsStrategySettings();
-                            s.setMaxOrderUsd(properties.getUs().getMaxOrderUsd());
-                            s.setMaxAllocatedUsd(properties.getUs().getMaxAllocatedUsd());
-                            s.setMaxPositions(properties.getUs().getMaxPositions());
-                            s.setDailyMaxBuys(properties.getUs().getDailyMaxBuys());
-                            s.setDailyLossLimitPercent(
-                                    properties.getUs().getDailyLossLimitPercent());
-                            return repository.save(s);
-                        });
+        var existing = repository.findById(1L);
+        var s = existing.orElseGet(KiwoomUsStrategySettings::new);
+        boolean created = existing.isEmpty();
+        boolean changed = created;
+        if (s.getMaxOrderPercent() <= 0) {
+            s.setMaxOrderPercent(properties.getUs().getMaxOrderPercent());
+            changed = true;
+        }
+        if (s.getMaxAllocationPercent() <= 0) {
+            s.setMaxAllocationPercent(properties.getUs().getMaxAllocationPercent());
+            changed = true;
+        }
+        if (created) {
+            s.setMaxPositions(properties.getUs().getMaxPositions());
+            s.setDailyMaxBuys(properties.getUs().getDailyMaxBuys());
+            s.setDailyLossLimitPercent(properties.getUs().getDailyLossLimitPercent());
+        }
+        if (changed) repository.save(s);
     }
 
     public KiwoomUsStrategySettings current() {
@@ -41,8 +46,8 @@ public class KiwoomUsStrategySettingsService {
     public KiwoomUsStrategySettings save(KiwoomUsStrategySettings incoming) {
         var s = current();
         s.setAutoExecute(incoming.isAutoExecute());
-        s.setMaxOrderUsd(clamp(incoming.getMaxOrderUsd(), 1, 10000));
-        s.setMaxAllocatedUsd(clamp(incoming.getMaxAllocatedUsd(), s.getMaxOrderUsd(), 100000));
+        s.setMaxOrderPercent(clamp(incoming.getMaxOrderPercent(), 0.1, 100));
+        s.setMaxAllocationPercent(clamp(incoming.getMaxAllocationPercent(), 0.1, 100));
         s.setMaxPositions((int) clamp(incoming.getMaxPositions(), 1, 20));
         s.setDailyMaxBuys((int) clamp(incoming.getDailyMaxBuys(), 1, 20));
         s.setMinChangePercent(clamp(incoming.getMinChangePercent(), 0, 20));

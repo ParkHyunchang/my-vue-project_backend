@@ -64,6 +64,13 @@ public class KiwoomUsAutoTradeController {
         result.put("strategyEnabled", properties.getUs().isStrategyEnabled());
         result.put("marketOpen", KiwoomUsMarketHours.isOpen());
         result.put("entryWindow", KiwoomUsMarketHours.isEntryWindow());
+        result.put("marketSeason", KiwoomUsMarketHours.seasonLabel());
+        result.put("regularSessionKst", KiwoomUsMarketHours.regularSessionKst());
+        result.put("entrySessionKst", KiwoomUsMarketHours.entrySessionKst());
+        result.put("easternNow", KiwoomUsMarketHours.now().toString());
+        result.put(
+                "marketHoursPolicy", "신규매수는 10:00~15:00 ET, 매도감시·체결동기화는 정규장 09:30~16:00 ET에만 실행");
+        result.put("calendarPolicy", "NYSE 2026~2028 휴장일·13:00 ET 조기폐장 반영; 미등록 연도는 안전하게 주문 차단");
         result.put("emergencyStopped", state.isEmergencyStopped());
         result.put("consecutiveApiFailures", state.getConsecutiveApiFailures());
         result.put(

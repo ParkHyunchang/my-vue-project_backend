@@ -20,8 +20,8 @@ public class KiwoomProperties {
     public static class Us {
         private boolean tradeEnabled;
         private boolean strategyEnabled = true;
-        private double maxOrderUsd = 200.0;
-        private double maxAllocatedUsd = 400.0;
+        private double maxOrderPercent = 10.0;
+        private double maxAllocationPercent = 20.0;
         private int maxPositions = 2;
         private int dailyMaxBuys = 1;
         private double dailyLossLimitPercent = 2.0;
@@ -43,20 +43,20 @@ public class KiwoomProperties {
             strategyEnabled = value;
         }
 
-        public double getMaxOrderUsd() {
-            return maxOrderUsd;
+        public double getMaxOrderPercent() {
+            return maxOrderPercent;
         }
 
-        public void setMaxOrderUsd(double value) {
-            maxOrderUsd = Math.max(1, value);
+        public void setMaxOrderPercent(double value) {
+            maxOrderPercent = Math.max(0.1, Math.min(100, value));
         }
 
-        public double getMaxAllocatedUsd() {
-            return maxAllocatedUsd;
+        public double getMaxAllocationPercent() {
+            return maxAllocationPercent;
         }
 
-        public void setMaxAllocatedUsd(double value) {
-            maxAllocatedUsd = Math.max(1, value);
+        public void setMaxAllocationPercent(double value) {
+            maxAllocationPercent = Math.max(0.1, Math.min(100, value));
         }
 
         public int getMaxPositions() {

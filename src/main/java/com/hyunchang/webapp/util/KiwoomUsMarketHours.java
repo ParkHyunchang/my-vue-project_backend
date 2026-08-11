@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.util;
 
 import java.time.DayOfWeek;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -88,5 +89,21 @@ public final class KiwoomUsMarketHours {
 
     public static LocalDateTime now() {
         return LocalDateTime.now(ET);
+    }
+
+    public static boolean isDaylightSavingTime() {
+        return ET.getRules().isDaylightSavings(Instant.now());
+    }
+
+    public static String seasonLabel() {
+        return isDaylightSavingTime() ? "하절기(DST)" : "동절기(표준시)";
+    }
+
+    public static String regularSessionKst() {
+        return isDaylightSavingTime() ? "22:30~익일 05:00" : "23:30~익일 06:00";
+    }
+
+    public static String entrySessionKst() {
+        return isDaylightSavingTime() ? "23:00~익일 04:00" : "00:00~05:00";
     }
 }

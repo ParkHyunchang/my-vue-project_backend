@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
@@ -14,6 +15,8 @@ public class KiwoomUsStrategySettings {
     private boolean autoExecute = true;
     private double maxOrderUsd = 200;
     private double maxAllocatedUsd = 400;
+    private double maxOrderPercent = 10;
+    private double maxAllocationPercent = 20;
     private int maxPositions = 2;
     private int dailyMaxBuys = 1;
     private double minChangePercent = 1;
@@ -46,6 +49,7 @@ public class KiwoomUsStrategySettings {
         autoExecute = v;
     }
 
+    @JsonIgnore
     public double getMaxOrderUsd() {
         return maxOrderUsd;
     }
@@ -54,12 +58,29 @@ public class KiwoomUsStrategySettings {
         maxOrderUsd = v;
     }
 
+    @JsonIgnore
     public double getMaxAllocatedUsd() {
         return maxAllocatedUsd;
     }
 
     public void setMaxAllocatedUsd(double v) {
         maxAllocatedUsd = v;
+    }
+
+    public double getMaxOrderPercent() {
+        return maxOrderPercent;
+    }
+
+    public void setMaxOrderPercent(double v) {
+        maxOrderPercent = v;
+    }
+
+    public double getMaxAllocationPercent() {
+        return maxAllocationPercent;
+    }
+
+    public void setMaxAllocationPercent(double v) {
+        maxAllocationPercent = v;
     }
 
     public int getMaxPositions() {
