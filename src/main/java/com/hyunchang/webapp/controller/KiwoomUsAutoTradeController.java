@@ -6,6 +6,7 @@ import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomUsAuditService;
 import com.hyunchang.webapp.service.KiwoomUsAutoTradeService;
 import com.hyunchang.webapp.service.KiwoomUsEventService;
+import com.hyunchang.webapp.service.KiwoomUsIndexUniverseService;
 import com.hyunchang.webapp.service.KiwoomUsStrategySettingsService;
 import com.hyunchang.webapp.service.KiwoomUsTradeService;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
@@ -37,6 +38,7 @@ public class KiwoomUsAutoTradeController {
     private final KiwoomUsStrategySettingsService settings;
     private final KiwoomUsAuditService audit;
     private final KiwoomUsEventService events;
+    private final KiwoomUsIndexUniverseService indexUniverse;
 
     public KiwoomUsAutoTradeController(
             KiwoomProperties properties,
@@ -45,7 +47,8 @@ public class KiwoomUsAutoTradeController {
             KiwoomUsAutoTradeService service,
             KiwoomUsStrategySettingsService settings,
             KiwoomUsAuditService audit,
-            KiwoomUsEventService events) {
+            KiwoomUsEventService events,
+            KiwoomUsIndexUniverseService indexUniverse) {
         this.properties = properties;
         this.auth = auth;
         this.state = state;
@@ -53,6 +56,7 @@ public class KiwoomUsAutoTradeController {
         this.settings = settings;
         this.audit = audit;
         this.events = events;
+        this.indexUniverse = indexUniverse;
     }
 
     @GetMapping("/status")
@@ -82,7 +86,10 @@ public class KiwoomUsAutoTradeController {
                 state.getLastApiFailureMessage() == null ? "" : state.getLastApiFailureMessage());
         result.put(
                 "cashPolicy",
-                KiwoomUsTradeService.USD_CASH_SOURCE + "만 사용; 원화 자동환전/원화 주문 가능액 사용 안 함");
+                KiwoomUsTradeService.USD_CASH_SOURCE
+                        + "만 사용; 원화주문설정금이 1원이라도 있으면 시작·매수 차단; 실제 주문 직전 원화주문 서비스 해지 상태와 외화 주문가능수량 재확인; USD 1% 수수료 여유 유지");
+        result.put("candidateUniversePolicy", "당일 거래대금 상위 50위 중 S&P 500 또는 NASDAQ-100 편입 종목만 허용");
+        result.put("indexUniverse", indexUniverse.status());
         return result;
     }
 
@@ -128,16 +135,30 @@ public class KiwoomUsAutoTradeController {
             return ResponseEntity.status(409)
                     .body(Map.of("message", "키움 운영계좌 설정과 KIWOOM_US_TRADE_ENABLED=true가 필요합니다."));
         }
+        if (request.enabled()) {
+            KiwoomUsTradeService.UsdCash cash = service.refreshUsdCash();
+            if (!cash.usdOnlyBuyAllowed()) {
+                audit.log("USD_CASH_BLOCK", null, cash.blockReason());
+                events.publish("USD_CASH_BLOCK", cash.blockReason(), null);
+                return ResponseEntity.status(409)
+                        .body(
+                                Map.of(
+                                        "message",
+                                        cash.blockReason(),
+                                        "krwOrderSettingAmount",
+                                        cash.krwOrderSettingAmount()));
+            }
+        }
         state.setAutoTrading(request.enabled());
         audit.log(
                 request.enabled() ? "START" : "STOP",
                 null,
                 request.enabled()
-                        ? "미국주식 자동매매를 시작했습니다. 매수 자금은 D+0 USD 외화예수금으로 제한됩니다."
+                        ? "미국주식 자동매매를 시작했습니다. 원화주문설정금 0원을 확인했고, 매수 자금은 D+0 USD 외화예수금의 99% 이내로 제한됩니다."
                         : "미국주식 신규 자동주문을 중지했습니다.");
         events.publish(
                 request.enabled() ? "START" : "STOP",
-                request.enabled() ? "미국주식 자동매매 시작 (USD 예수금만 사용)" : "미국주식 자동매매 중지",
+                request.enabled() ? "미국주식 자동매매 시작 (원화주문 차단·USD 예수금만 사용)" : "미국주식 자동매매 중지",
                 null);
         return ResponseEntity.ok(Map.of("autoTrading", state.isAutoTrading()));
     }
@@ -153,6 +174,12 @@ public class KiwoomUsAutoTradeController {
         service.reconcileOrders();
         KiwoomUsAutoTradeService.AccountSnapshot snapshot = service.refreshAccountSnapshot();
         return Map.of("success", true, "snapshot", snapshot);
+    }
+
+    @PostMapping("/index-universe/refresh")
+    public KiwoomUsIndexUniverseService.UniverseStatus refreshIndexUniverse() {
+        indexUniverse.refresh();
+        return indexUniverse.status();
     }
 
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)

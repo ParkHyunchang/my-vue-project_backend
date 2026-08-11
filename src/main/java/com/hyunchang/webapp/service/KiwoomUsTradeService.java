@@ -19,6 +19,8 @@ import reactor.core.publisher.Mono;
 @Service
 public class KiwoomUsTradeService {
     public static final String USD_CASH_SOURCE = "D+0 USD 외화예수금(d0_usd_fx_entr)";
+    public static final double USD_ONLY_MAX_SPEND_PERCENT = 99.0;
+    public static final BigDecimal USD_ONLY_SPEND_RATIO = new BigDecimal("0.99");
 
     private final KiwoomProperties properties;
     private final KiwoomAuthService authService;
@@ -69,11 +71,43 @@ public class KiwoomUsTradeService {
         return read("usa20540", "/api/us/rkinfo", body).map(this::rankedStocks);
     }
 
+    public Mono<JsonNode> getOrderableQuantity(String exchange, String symbol, BigDecimal price) {
+        Map<String, String> body = new LinkedHashMap<>();
+        body.put("stex_tp", normalizeExchange(exchange));
+        body.put("stk_cd", normalizeSymbol(symbol));
+        body.put("uv", price.stripTrailingZeros().toPlainString());
+        return read("ust31490", "/api/us/ordr", body);
+    }
+
+    public Mono<KrwOrderServiceStatus> getKrwOrderServiceStatus() {
+        return getOrderableQuantity("ND", "AAPL", BigDecimal.ONE)
+                .map(
+                        response -> {
+                            String value = text(response, "krw_ord_rqst_yn").toUpperCase();
+                            return switch (value) {
+                                case "Y" ->
+                                        new KrwOrderServiceStatus(
+                                                "APPLIED",
+                                                "신청됨",
+                                                "원화주문 서비스가 신청되어 있어 자동매매 매수를 차단합니다.");
+                                case "N" ->
+                                        new KrwOrderServiceStatus(
+                                                "CANCELED",
+                                                "해지됨",
+                                                "원화주문 서비스 해지 상태입니다. 환전된 USD만 사용합니다.");
+                                default ->
+                                        new KrwOrderServiceStatus(
+                                                "UNKNOWN",
+                                                "확인 불가",
+                                                "원화주문 서비스 상태를 명확히 확인할 수 없어 실제 매수를 차단합니다.");
+                            };
+                        });
+    }
+
     public Mono<JsonNode> placeOrder(Order order) {
         if (!KiwoomUsMarketHours.isOpen()) {
             return Mono.error(
-                    new OrderValidationException(
-                            "미국주식 자동주문은 미국 정규장(09:30~16:00 ET)에만 전송됩니다."));
+                    new OrderValidationException("미국주식 자동주문은 미국 정규장(09:30~16:00 ET)에만 전송됩니다."));
         }
         if (!properties.getUs().isTradeEnabled()) {
             return Mono.error(
@@ -101,7 +135,32 @@ public class KiwoomUsTradeService {
         body.put(
                 "ord_uv", order.market() ? "" : order.price().stripTrailingZeros().toPlainString());
         body.put("trde_tp", order.market() ? "03" : "00");
-        return write(apiId, "/api/us/ordr", body);
+        if (!"BUY".equals(side)) return write(apiId, "/api/us/ordr", body);
+        if (order.market()) {
+            return Mono.error(new UsdOnlyFundingException("환전된 USD만 사용하도록 미국주식 시장가 매수는 차단합니다."));
+        }
+        BigDecimal orderNotional = order.price().multiply(BigDecimal.valueOf(order.quantity()));
+        Mono<Void> fundingGuard =
+                getDepositDetail()
+                        .map(this::usdCash)
+                        .doOnNext(cash -> requireUsdOnlyFunding(cash, orderNotional))
+                        .then(getOrderableQuantity(exchange, symbol, order.price()))
+                        .doOnNext(
+                                response ->
+                                        requireUsdOnlyOrderability(
+                                                response, order.quantity(), orderNotional))
+                        .onErrorMap(
+                                error ->
+                                        error instanceof UsdOnlyFundingException
+                                                ? error
+                                                : new UsdOnlyFundingException(
+                                                        "주문 직전 USD 예수금 확인에 실패해 매수를 차단했습니다: "
+                                                                + (error.getMessage() == null
+                                                                        ? error.getClass()
+                                                                                .getSimpleName()
+                                                                        : error.getMessage())))
+                        .then();
+        return fundingGuard.then(write(apiId, "/api/us/ordr", body));
     }
 
     public Mono<JsonNode> cancelOrder(
@@ -117,11 +176,54 @@ public class KiwoomUsTradeService {
         return write("ust20003", "/api/us/ordr", body);
     }
 
-    /** Only this field is eligible for buys. KRW and KRW-converted order capacity are ignored. */
+    /** Only this field is eligible for buys. Any KRW order setting blocks buys completely. */
     public UsdCash usdCash(JsonNode deposit) {
         BigDecimal available = decimal(deposit, "d0_usd_fx_entr").max(BigDecimal.ZERO);
-        BigDecimal krwOrderCapacity = decimal(deposit, "krw_ord_set_amt");
-        return new UsdCash(available, USD_CASH_SOURCE, krwOrderCapacity, false);
+        BigDecimal krwOrderSetting = decimal(deposit, "krw_ord_set_amt").max(BigDecimal.ZERO);
+        boolean usdOnlyBuyAllowed = krwOrderSetting.signum() == 0;
+        String blockReason =
+                usdOnlyBuyAllowed
+                        ? ""
+                        : "원화주문설정금이 있어 매수를 차단했습니다. 키움의 미국주식 원화주문 서비스를 해지한 뒤 다시 확인하세요.";
+        return new UsdCash(
+                available, USD_CASH_SOURCE, krwOrderSetting, usdOnlyBuyAllowed, blockReason);
+    }
+
+    public void requireUsdOnlyFunding(UsdCash cash, BigDecimal orderNotional) {
+        if (cash == null || !cash.usdOnlyBuyAllowed()) {
+            String reason = cash == null ? "USD 예수금 확인 결과가 없습니다." : cash.blockReason();
+            throw new UsdOnlyFundingException(reason);
+        }
+        BigDecimal spendLimit =
+                cash.availableUsd().multiply(USD_ONLY_SPEND_RATIO).max(BigDecimal.ZERO);
+        if (orderNotional == null
+                || orderNotional.signum() <= 0
+                || orderNotional.compareTo(spendLimit) > 0) {
+            throw new UsdOnlyFundingException(
+                    "주문금액이 최신 D+0 USD 외화예수금의 안전한도를 초과해 매수를 차단했습니다." + " 수수료 여유로 USD의 1%를 남깁니다.");
+        }
+    }
+
+    private void requireUsdOnlyOrderability(
+            JsonNode response, int orderQuantity, BigDecimal orderNotional) {
+        String krwOrderRequested = text(response, "krw_ord_rqst_yn").toUpperCase();
+        if (!"N".equals(krwOrderRequested)) {
+            throw new UsdOnlyFundingException(
+                    "키움 미국주식 원화주문 서비스가 해지된 상태로 확인되지 않아 매수를 차단했습니다." + " 원화주문 서비스를 해지한 뒤 다시 확인하세요.");
+        }
+        if (decimal(response, "krw_ord_set_amt").signum() != 0
+                || decimal(response, "krw_ord_alowa_100").signum() != 0
+                || integer(response, "krw_ord_alowq_100") != 0) {
+            throw new UsdOnlyFundingException("키움 주문가능금액에 원화 자금이 포함되어 있어 매수를 차단했습니다.");
+        }
+        int cashOnlyOrderableQuantity = integer(response, "min_ord_alowq");
+        if (cashOnlyOrderableQuantity < orderQuantity) {
+            throw new UsdOnlyFundingException("환전된 외화 기준 주문가능수량보다 주문수량이 많아 매수를 차단했습니다.");
+        }
+        BigDecimal foreignCash = decimal(response, "fc_entra").max(BigDecimal.ZERO);
+        if (orderNotional.compareTo(foreignCash.multiply(USD_ONLY_SPEND_RATIO)) > 0) {
+            throw new UsdOnlyFundingException("종목별 주문가능수량 조회의 외화예수금 안전한도를 초과해 매수를 차단했습니다.");
+        }
     }
 
     public List<Holding> holdings(JsonNode response) {
@@ -312,7 +414,17 @@ public class KiwoomUsTradeService {
         while (current != null) {
             if (current instanceof KiwoomApiException
                     || current instanceof OrderValidationException
+                    || current instanceof UsdOnlyFundingException
                     || current instanceof IllegalArgumentException) return true;
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    public static boolean isUsdOnlyFundingBlocked(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof UsdOnlyFundingException) return true;
             current = current.getCause();
         }
         return false;
@@ -330,11 +442,20 @@ public class KiwoomUsTradeService {
         }
     }
 
+    private static final class UsdOnlyFundingException extends IllegalStateException {
+        private UsdOnlyFundingException(String message) {
+            super(message);
+        }
+    }
+
     public record UsdCash(
             BigDecimal availableUsd,
             String source,
-            BigDecimal ignoredKrwOrderCapacity,
-            boolean usesKrwConversion) {}
+            BigDecimal krwOrderSettingAmount,
+            boolean usdOnlyBuyAllowed,
+            String blockReason) {}
+
+    public record KrwOrderServiceStatus(String code, String label, String message) {}
 
     public record Holding(
             String exchange,
