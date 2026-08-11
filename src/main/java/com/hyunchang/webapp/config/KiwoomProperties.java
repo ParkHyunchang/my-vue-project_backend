@@ -21,7 +21,6 @@ public class KiwoomProperties {
         private boolean tradeEnabled;
         private boolean strategyEnabled = true;
         private double maxOrderPercent = 10.0;
-        private double maxAllocationPercent = 20.0;
         private int maxPositions = 2;
         private int dailyMaxBuys = 1;
         private double dailyLossLimitPercent = 2.0;
@@ -49,14 +48,6 @@ public class KiwoomProperties {
 
         public void setMaxOrderPercent(double value) {
             maxOrderPercent = Math.max(0.1, Math.min(100, value));
-        }
-
-        public double getMaxAllocationPercent() {
-            return maxAllocationPercent;
-        }
-
-        public void setMaxAllocationPercent(double value) {
-            maxAllocationPercent = Math.max(0.1, Math.min(100, value));
         }
 
         public int getMaxPositions() {

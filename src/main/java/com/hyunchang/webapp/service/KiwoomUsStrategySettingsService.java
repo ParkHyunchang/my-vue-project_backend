@@ -27,10 +27,6 @@ public class KiwoomUsStrategySettingsService {
             s.setMaxOrderPercent(properties.getUs().getMaxOrderPercent());
             changed = true;
         }
-        if (s.getMaxAllocationPercent() <= 0) {
-            s.setMaxAllocationPercent(properties.getUs().getMaxAllocationPercent());
-            changed = true;
-        }
         if (created) {
             s.setMaxPositions(properties.getUs().getMaxPositions());
             s.setDailyMaxBuys(properties.getUs().getDailyMaxBuys());
@@ -47,7 +43,6 @@ public class KiwoomUsStrategySettingsService {
         var s = current();
         s.setAutoExecute(incoming.isAutoExecute());
         s.setMaxOrderPercent(clamp(incoming.getMaxOrderPercent(), 0.1, 100));
-        s.setMaxAllocationPercent(clamp(incoming.getMaxAllocationPercent(), 0.1, 100));
         s.setMaxPositions((int) clamp(incoming.getMaxPositions(), 1, 20));
         s.setDailyMaxBuys((int) clamp(incoming.getDailyMaxBuys(), 1, 20));
         s.setMinChangePercent(clamp(incoming.getMinChangePercent(), 0, 20));

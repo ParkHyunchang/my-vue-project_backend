@@ -166,8 +166,6 @@ public class KiwoomUsAutoTradeService {
                 active.stream().filter(KiwoomUsAccountHolding::isManagedByAutoTrade).count();
         BigDecimal automatedCapital = cash.availableUsd().add(managedEvaluation);
         KiwoomUsStrategySettings settings = settingsService.current();
-        BigDecimal allocationLimit =
-                percentage(automatedCapital, settings.getMaxAllocationPercent());
         BigDecimal perOrderLimit = percentage(cash.availableUsd(), settings.getMaxOrderPercent());
         return new AccountSnapshot(
                 cash,
@@ -175,7 +173,6 @@ public class KiwoomUsAutoTradeService {
                 managedEvaluation,
                 cash.availableUsd().add(stockEvaluation),
                 automatedCapital,
-                allocationLimit,
                 perOrderLimit,
                 active.size(),
                 (int) managedPositions);
@@ -213,11 +210,7 @@ public class KiwoomUsAutoTradeService {
         Set<String> held = new HashSet<>();
         for (KiwoomUsAccountHolding holding : holdings()) held.add(holding.getSymbol());
         LocalDateTime cooldown = LocalDateTime.now().minusDays(settings.getSymbolCooldownDays());
-        BigDecimal remainingAllocation =
-                account.allocationLimitUsd()
-                        .subtract(account.managedEvaluationUsd())
-                        .max(BigDecimal.ZERO);
-        BigDecimal cashLimit = account.perOrderLimitUsd().min(remainingAllocation);
+        BigDecimal cashLimit = account.perOrderLimitUsd();
         List<Candidate> result = new ArrayList<>();
         for (RankedStock stock : ranked) {
             boolean liquidUniverse =
@@ -231,11 +224,7 @@ public class KiwoomUsAutoTradeService {
             boolean cooldownPassed =
                     !proposalRepository.existsBySymbolAndActionAndOrderedAtAfter(
                             stock.symbol(), KiwoomUsTradeProposal.Action.BUY, cooldown);
-            boolean riskCapacity =
-                    account.managedPositionCount() < settings.getMaxPositions()
-                            && account.managedEvaluationUsd()
-                                            .compareTo(account.allocationLimitUsd())
-                                    < 0;
+            boolean riskCapacity = account.managedPositionCount() < settings.getMaxPositions();
             if (liquidUniverse
                     && momentum
                     && volume
@@ -263,11 +252,7 @@ public class KiwoomUsAutoTradeService {
         long dailyBuys = dailyBuys();
         if (dailyBuys >= settings.getDailyMaxBuys())
             throw new IllegalStateException("오늘 미국주식 매수 횟수 한도에 도달했습니다.");
-        BigDecimal remainingAllocation =
-                account.allocationLimitUsd()
-                        .subtract(account.managedEvaluationUsd())
-                        .max(BigDecimal.ZERO);
-        BigDecimal orderBudget = account.perOrderLimitUsd().min(remainingAllocation);
+        BigDecimal orderBudget = account.perOrderLimitUsd();
         int quantity = orderBudget.divide(candidate.price(), 0, RoundingMode.DOWN).intValue();
         if (quantity < 1) throw new IllegalStateException("D+0 USD 외화예수금으로 1주를 살 수 없습니다.");
 
@@ -278,7 +263,7 @@ public class KiwoomUsAutoTradeService {
         proposal.setStockName(candidate.name());
         proposal.setQuantity(quantity);
         proposal.setLimitPrice(candidate.price());
-        proposal.setReason("7조건 통과; 자금원=" + KiwoomUsTradeService.USD_CASH_SOURCE);
+        proposal.setReason("매수 조건 통과; 자금원=" + KiwoomUsTradeService.USD_CASH_SOURCE);
         proposal = proposalRepository.save(proposal);
         try {
             JsonNode response =
@@ -610,7 +595,6 @@ public class KiwoomUsAutoTradeService {
             BigDecimal managedEvaluationUsd,
             BigDecimal totalAssetUsd,
             BigDecimal automatedCapitalUsd,
-            BigDecimal allocationLimitUsd,
             BigDecimal perOrderLimitUsd,
             int positionCount,
             int managedPositionCount) {}

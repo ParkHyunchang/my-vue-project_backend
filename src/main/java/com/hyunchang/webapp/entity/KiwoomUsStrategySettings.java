@@ -75,6 +75,8 @@ public class KiwoomUsStrategySettings {
         maxOrderPercent = v;
     }
 
+    /** 기존 DB 열 호환용 값이며 신규 전략에서는 사용하지 않습니다. */
+    @JsonIgnore
     public double getMaxAllocationPercent() {
         return maxAllocationPercent;
     }
