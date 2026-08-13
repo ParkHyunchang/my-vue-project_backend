@@ -53,6 +53,7 @@ public class KiwoomUsAutoTradeService {
     private final KiwoomUsEventService events;
     private final AtomicReference<List<Candidate>> lastCandidates =
             new AtomicReference<>(List.of());
+    private final AtomicReference<AccountSnapshot> lastAccountSnapshot = new AtomicReference<>();
     private final Map<String, Integer> cancelDisappearanceCounts = new ConcurrentHashMap<>();
 
     public KiwoomUsAutoTradeService(
@@ -189,16 +190,66 @@ public class KiwoomUsAutoTradeService {
                     new KrwOrderServiceStatus(
                             "UNKNOWN", "확인 불가", "원화주문 서비스 상태 조회 실패: " + safe(error));
         }
-        return new AccountSnapshot(
-                cash,
-                stockEvaluation,
-                managedEvaluation,
-                cash.availableUsd().add(stockEvaluation),
-                automatedCapital,
-                perOrderLimit,
-                active.size(),
-                (int) managedPositions,
-                krwOrderServiceStatus);
+        AccountSnapshot snapshot =
+                new AccountSnapshot(
+                        cash,
+                        stockEvaluation,
+                        managedEvaluation,
+                        cash.availableUsd().add(stockEvaluation),
+                        automatedCapital,
+                        perOrderLimit,
+                        active.size(),
+                        (int) managedPositions,
+                        krwOrderServiceStatus,
+                        true,
+                        "",
+                        LocalDateTime.now());
+        lastAccountSnapshot.set(snapshot);
+        return snapshot;
+    }
+
+    /** 화면 조회용. 키움 일일 결제 처리 중에는 주문 판단과 분리해 마지막 정상값만 표시한다. */
+    public AccountSnapshot accountSummary() {
+        try {
+            return refreshAccountSnapshot();
+        } catch (RuntimeException error) {
+            if (!KiwoomUsTradeService.isTemporaryAccountSettlementError(error)) throw error;
+            AccountSnapshot cached = lastAccountSnapshot.get();
+            String notice = "키움 수도결제 처리 중이라 마지막 정상 계좌 정보를 표시합니다. 잠시 후 자동 갱신됩니다.";
+            if (cached == null) {
+                return new AccountSnapshot(
+                        new UsdCash(
+                                BigDecimal.ZERO,
+                                KiwoomUsTradeService.USD_CASH_SOURCE,
+                                BigDecimal.ZERO,
+                                true,
+                                ""),
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        BigDecimal.ZERO,
+                        0,
+                        0,
+                        new KrwOrderServiceStatus("UNKNOWN", "확인 대기", notice),
+                        false,
+                        notice,
+                        null);
+            }
+            return new AccountSnapshot(
+                    cached.cash(),
+                    cached.stockEvaluationUsd(),
+                    cached.managedEvaluationUsd(),
+                    cached.totalAssetUsd(),
+                    cached.automatedCapitalUsd(),
+                    cached.perOrderLimitUsd(),
+                    cached.positionCount(),
+                    cached.managedPositionCount(),
+                    cached.krwOrderServiceStatus(),
+                    false,
+                    notice,
+                    cached.capturedAt());
+        }
     }
 
     public UsdCash refreshUsdCash() {
@@ -219,6 +270,10 @@ public class KiwoomUsAutoTradeService {
 
     public List<KiwoomUsTradeProposal> proposals() {
         return proposalRepository.findTop50ByOrderByIdDesc();
+    }
+
+    public List<KiwoomUsStrategyRun> runs() {
+        return runRepository.findTop30ByOrderByIdDesc();
     }
 
     private void validateDecisionReady() {
@@ -756,6 +811,18 @@ public class KiwoomUsAutoTradeService {
         run.setStatus(status);
         run.setMessage(message);
         runRepository.save(run);
+        log(
+                "DECISION_RESULT",
+                proposalId,
+                "["
+                        + run.getTriggeredBy()
+                        + "]["
+                        + status
+                        + "] "
+                        + message
+                        + " 후보="
+                        + count
+                        + "개");
         return new DecisionResult(status, message, count, proposalId);
     }
 
@@ -859,7 +926,10 @@ public class KiwoomUsAutoTradeService {
             BigDecimal perOrderLimitUsd,
             int positionCount,
             int managedPositionCount,
-            KrwOrderServiceStatus krwOrderServiceStatus) {}
+            KrwOrderServiceStatus krwOrderServiceStatus,
+            boolean fresh,
+            String notice,
+            LocalDateTime capturedAt) {}
 
     public record DecisionResult(
             String status, String message, int candidateCount, Long proposalId) {}

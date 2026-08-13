@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -17,6 +18,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 class KiwoomStrategyHistoryCleanupServiceTest {
@@ -26,6 +28,13 @@ class KiwoomStrategyHistoryCleanupServiceTest {
     @Mock private KiwoomStrategyAuditService audit;
 
     private KiwoomStrategyHistoryCleanupService service;
+
+    @Test
+    void scheduledCleanupOwnsTheTransactionBoundary() throws Exception {
+        var cleanup = KiwoomStrategyHistoryCleanupService.class.getMethod("cleanup");
+
+        assertTrue(cleanup.isAnnotationPresent(Transactional.class));
+    }
 
     private KiwoomStrategyRun runWithId(long id) {
         KiwoomStrategyRun run = new KiwoomStrategyRun();

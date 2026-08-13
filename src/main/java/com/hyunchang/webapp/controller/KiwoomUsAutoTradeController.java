@@ -95,7 +95,7 @@ public class KiwoomUsAutoTradeController {
 
     @GetMapping("/summary")
     public KiwoomUsAutoTradeService.AccountSnapshot summary() {
-        return service.refreshAccountSnapshot();
+        return service.accountSummary();
     }
 
     @GetMapping("/holdings")
@@ -111,6 +111,11 @@ public class KiwoomUsAutoTradeController {
     @GetMapping("/proposals")
     public Object proposals() {
         return service.proposals();
+    }
+
+    @GetMapping("/runs")
+    public Object runs() {
+        return service.runs();
     }
 
     @GetMapping("/audit")
@@ -172,7 +177,7 @@ public class KiwoomUsAutoTradeController {
     @PostMapping("/sync")
     public Map<String, Object> sync() {
         service.reconcileOrders();
-        KiwoomUsAutoTradeService.AccountSnapshot snapshot = service.refreshAccountSnapshot();
+        KiwoomUsAutoTradeService.AccountSnapshot snapshot = service.accountSummary();
         return Map.of("success", true, "snapshot", snapshot);
     }
 

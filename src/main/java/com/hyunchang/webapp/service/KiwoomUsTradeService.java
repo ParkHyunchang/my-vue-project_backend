@@ -10,6 +10,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -18,6 +20,7 @@ import reactor.core.publisher.Mono;
 /** Kiwoom US REST adapter. Write requests are deliberately never retried. */
 @Service
 public class KiwoomUsTradeService {
+    private static final Logger log = LoggerFactory.getLogger(KiwoomUsTradeService.class);
     public static final String USD_CASH_SOURCE = "D+0 USD 외화예수금(d0_usd_fx_entr)";
     public static final double USD_ONLY_MAX_SPEND_PERCENT = 99.0;
     public static final BigDecimal USD_ONLY_SPEND_RATIO = new BigDecimal("0.99");
@@ -296,11 +299,19 @@ public class KiwoomUsTradeService {
         return requestOnce(apiId, path, body, retryToken)
                 .doOnSuccess(ignored -> state.recordApiSuccess(apiId))
                 .doOnError(
-                        error ->
-                                state.recordApiFailure(
+                        error -> {
+                            if (isTemporaryAccountSettlementError(error)) {
+                                log.warn(
+                                        "[미국자동매매][일시적 계좌조회 제한][{}] {}",
                                         apiId,
-                                        apiId + ": " + error.getMessage(),
-                                        properties.getUs().getMaxConsecutiveApiFailures()));
+                                        error.getMessage());
+                                return;
+                            }
+                            state.recordApiFailure(
+                                    apiId,
+                                    apiId + ": " + error.getMessage(),
+                                    properties.getUs().getMaxConsecutiveApiFailures());
+                        });
     }
 
     private Mono<JsonNode> requestOnce(
@@ -416,6 +427,20 @@ public class KiwoomUsTradeService {
                     || current instanceof OrderValidationException
                     || current instanceof UsdOnlyFundingException
                     || current instanceof IllegalArgumentException) return true;
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    /** 키움의 일일 결제 처리 시간에만 발생하는 계좌조회 제한. 주문 API 장애로 집계하지 않는다. */
+    public static boolean isTemporaryAccountSettlementError(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null
+                    && (message.contains("572070")
+                            || message.contains("수도결제중")
+                            || message.contains("수도 결제중"))) return true;
             current = current.getCause();
         }
         return false;

@@ -28,6 +28,7 @@ public class KiwoomStrategyHistoryCleanupService {
     }
 
     @Scheduled(cron = "0 30 3 * * *", zone = "Asia/Seoul")
+    @Transactional
     public void cleanup() {
         LocalDateTime cutoff = LocalDateTime.now().minusDays(RETENTION_DAYS);
         List<KiwoomStrategyRun> stale = runs.findByCreatedAtBefore(cutoff);
@@ -46,7 +47,6 @@ public class KiwoomStrategyHistoryCleanupService {
                         + "건을 정리했습니다.");
     }
 
-    @Transactional
     long deleteStale(List<Long> staleRunIds) {
         // 자식(proposal)을 먼저 지워야 run_id 외래키 제약에 걸리지 않는다.
         long deletedProposals = proposals.deleteByRunIdIn(staleRunIds);
