@@ -112,10 +112,12 @@ public class KiwoomUsAutoTradeService {
                     settings.getDailyLossLimitPercent())) {
                 throw new IllegalStateException("미국계좌 일일 손실 한도에 도달해 신규 매수를 중지했습니다.");
             }
-            List<Candidate> candidates =
+            CandidateScreeningResult screening =
                     filterCandidates(
                             trade.getTradeValueTop().block(API_TIMEOUT), settings, snapshot);
+            List<Candidate> candidates = screening.candidates();
             lastCandidates.set(candidates);
+            log("SCREENING", null, screening.stats().auditMessage());
             for (Candidate candidate : candidates) {
                 log(
                         "CANDIDATE",
@@ -137,7 +139,7 @@ public class KiwoomUsAutoTradeService {
             run.setCandidateSummary(
                     candidates.stream().limit(10).map(Candidate::symbol).toList().toString());
             if (candidates.isEmpty())
-                return finishRun(run, "NO_CANDIDATE", "7개 조건을 모두 통과한 후보가 없습니다.", 0, null);
+                return finishRun(run, "NO_CANDIDATE", "모든 조건을 통과한 후보가 없습니다.", 0, null);
             if (!allowOrder)
                 return finishRun(
                         run, "PREVIEW", "후보만 기록했습니다(미리보기는 주문을 전송하지 않음).", candidates.size(), null);
@@ -286,50 +288,84 @@ public class KiwoomUsAutoTradeService {
         if (state.isEmergencyStopped()) throw new IllegalStateException("API 오류 안전정지가 걸려 있습니다.");
     }
 
-    private List<Candidate> filterCandidates(
+    CandidateScreeningResult filterCandidates(
             List<RankedStock> ranked, KiwoomUsStrategySettings settings, AccountSnapshot account) {
-        if (ranked == null) return List.of();
+        List<RankedStock> source = ranked == null ? List.of() : ranked;
         Set<String> held = new HashSet<>();
         for (KiwoomUsAccountHolding holding : holdings()) held.add(holding.getSymbol());
         LocalDateTime cooldown = LocalDateTime.now().minusDays(settings.getSymbolCooldownDays());
         BigDecimal cashLimit = account.perOrderLimitUsd();
+        boolean riskCapacity = account.managedPositionCount() < settings.getMaxPositions();
         List<Candidate> result = new ArrayList<>();
-        for (RankedStock stock : ranked) {
+        int liquidCount = 0;
+        int indexCount = 0;
+        int momentumCount = 0;
+        int volumeCount = 0;
+        int affordableCount = 0;
+        int notHeldCount = 0;
+        int cooldownCount = 0;
+        int capacityCount = 0;
+        for (RankedStock stock : source) {
             boolean liquidUniverse =
                     stock.rank() > 0 && stock.rank() <= 50 && stock.tradedValue().signum() > 0;
+            if (!liquidUniverse) continue;
+            liquidCount++;
+
             boolean majorIndexMember = indexUniverse.isEligible(stock.symbol());
+            if (!majorIndexMember) continue;
+            indexCount++;
+
             boolean momentum =
                     stock.changePercent() >= settings.getMinChangePercent()
                             && stock.changePercent() <= settings.getMaxChangePercent();
+            if (!momentum) continue;
+            momentumCount++;
+
             boolean volume = stock.volumeRatio() >= settings.getMinVolumeRatio();
+            if (!volume) continue;
+            volumeCount++;
+
             boolean affordable = stock.currentPrice().compareTo(cashLimit) <= 0;
+            if (!affordable) continue;
+            affordableCount++;
+
             boolean notHeld = !held.contains(stock.symbol());
+            if (!notHeld) continue;
+            notHeldCount++;
+
             boolean cooldownPassed =
                     !proposalRepository.existsBySymbolAndActionAndOrderedAtAfter(
                             stock.symbol(), KiwoomUsTradeProposal.Action.BUY, cooldown);
-            boolean riskCapacity = account.managedPositionCount() < settings.getMaxPositions();
-            if (liquidUniverse
-                    && majorIndexMember
-                    && momentum
-                    && volume
-                    && affordable
-                    && notHeld
-                    && cooldownPassed
-                    && riskCapacity) {
-                result.add(
-                        new Candidate(
-                                stock.rank(),
-                                stock.exchange(),
-                                stock.symbol(),
-                                stock.name(),
-                                stock.currentPrice(),
-                                stock.changePercent(),
-                                stock.volumeRatio(),
-                                stock.tradedValue(),
-                                indexUniverse.membershipLabel(stock.symbol())));
-            }
+            if (!cooldownPassed) continue;
+            cooldownCount++;
+
+            if (!riskCapacity) continue;
+            capacityCount++;
+            result.add(
+                    new Candidate(
+                            stock.rank(),
+                            stock.exchange(),
+                            stock.symbol(),
+                            stock.name(),
+                            stock.currentPrice(),
+                            stock.changePercent(),
+                            stock.volumeRatio(),
+                            stock.tradedValue(),
+                            indexUniverse.membershipLabel(stock.symbol())));
         }
-        return result;
+        CandidateScreeningStats stats =
+                new CandidateScreeningStats(
+                        source.size(),
+                        liquidCount,
+                        indexCount,
+                        momentumCount,
+                        volumeCount,
+                        affordableCount,
+                        notHeldCount,
+                        cooldownCount,
+                        capacityCount,
+                        cashLimit);
+        return new CandidateScreeningResult(List.copyOf(result), stats);
     }
 
     private KiwoomUsTradeProposal submitBuy(
@@ -814,15 +850,7 @@ public class KiwoomUsAutoTradeService {
         log(
                 "DECISION_RESULT",
                 proposalId,
-                "["
-                        + run.getTriggeredBy()
-                        + "]["
-                        + status
-                        + "] "
-                        + message
-                        + " 후보="
-                        + count
-                        + "개");
+                "[" + run.getTriggeredBy() + "][" + status + "] " + message + " 후보=" + count + "개");
         return new DecisionResult(status, message, count, proposalId);
     }
 
@@ -916,6 +944,48 @@ public class KiwoomUsAutoTradeService {
             double volumeRatio,
             BigDecimal tradedValue,
             String indexMembership) {}
+
+    record CandidateScreeningResult(List<Candidate> candidates, CandidateScreeningStats stats) {}
+
+    record CandidateScreeningStats(
+            int inputCount,
+            int liquidCount,
+            int indexCount,
+            int momentumCount,
+            int volumeCount,
+            int affordableCount,
+            int notHeldCount,
+            int cooldownCount,
+            int capacityCount,
+            BigDecimal perOrderLimitUsd) {
+        String auditMessage() {
+            StringBuilder message = new StringBuilder("후보 필터 단계별 잔존/탈락: 원본=").append(inputCount);
+            appendStage(message, "순위·거래대금", inputCount, liquidCount);
+            appendStage(message, "주요지수", liquidCount, indexCount);
+            appendStage(message, "등락률", indexCount, momentumCount);
+            appendStage(message, "거래량", momentumCount, volumeCount);
+            appendStage(message, "주문가능가격", volumeCount, affordableCount);
+            message.append("(한도=$")
+                    .append(perOrderLimitUsd.setScale(2, RoundingMode.DOWN))
+                    .append(')');
+            appendStage(message, "미보유", affordableCount, notHeldCount);
+            appendStage(message, "재매수제한", notHeldCount, cooldownCount);
+            appendStage(message, "보유한도", cooldownCount, capacityCount);
+            message.append(" → 최종=").append(capacityCount);
+            return message.toString();
+        }
+
+        private static void appendStage(
+                StringBuilder message, String label, int previousCount, int remainingCount) {
+            message.append(" → ")
+                    .append(label)
+                    .append('=')
+                    .append(remainingCount)
+                    .append("(탈락 ")
+                    .append(Math.max(0, previousCount - remainingCount))
+                    .append(')');
+        }
+    }
 
     public record AccountSnapshot(
             UsdCash cash,
