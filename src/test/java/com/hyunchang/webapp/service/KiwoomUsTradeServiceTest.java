@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.anyInt;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
+import java.math.BigDecimal;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.reactive.function.client.ClientResponse;
@@ -18,6 +20,33 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 class KiwoomUsTradeServiceTest {
+
+    @Test
+    void relativeVolumeIsAdjustedForElapsedRegularSessionTime() {
+        var stock =
+                new KiwoomUsTradeService.RankedStock(
+                        1,
+                        "NAS",
+                        "TEST",
+                        "Test",
+                        BigDecimal.TEN,
+                        3,
+                        100,
+                        100,
+                        BigDecimal.valueOf(1_000));
+
+        assertEquals(2.0, stock.relativeVolumeRatio(0.5), 0.000_001);
+        assertEquals(1.0, stock.relativeVolumeRatio(1.0), 0.000_001);
+    }
+
+    @Test
+    void orderBookSpreadUsesTheBidAskMidpoint() {
+        var quote =
+                new KiwoomUsTradeService.OrderBookQuote(
+                        new BigDecimal("99.90"), new BigDecimal("100.10"));
+
+        assertEquals(0.2, quote.spreadPercent(), 0.000_001);
+    }
 
     @Test
     void settlementWindowResponseDoesNotCountAsApiFailure() {

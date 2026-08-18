@@ -13,6 +13,7 @@ import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
@@ -71,7 +72,117 @@ public class KiwoomUsTradeService {
         body.put("stk_cnd", "0");
         body.put("pric_cnd", "0");
         body.put("trde_prica_cnd", "0");
-        return read("usa20540", "/api/us/rkinfo", body).map(this::rankedStocks);
+        return readRankPages(body, "", "", true, new ArrayList<>(), 0);
+    }
+
+    private Mono<List<RankedStock>> readRankPages(
+            Map<String, String> body,
+            String continuation,
+            String nextKey,
+            boolean retryToken,
+            List<RankedStock> accumulated,
+            int page) {
+        return readRankPage(body, continuation, nextKey, retryToken)
+                .flatMap(
+                        response -> {
+                            for (RankedStock stock : rankedStocks(response.body())) {
+                                if (accumulated.stream()
+                                        .noneMatch(
+                                                existing ->
+                                                        existing.symbol().equals(stock.symbol()))) {
+                                    accumulated.add(stock);
+                                }
+                            }
+                            if (accumulated.size() >= 50
+                                    || page >= 4
+                                    || !"Y".equalsIgnoreCase(response.continuation())
+                                    || response.nextKey().isBlank()) {
+                                return Mono.just(
+                                        List.copyOf(accumulated.stream().limit(50).toList()));
+                            }
+                            return readRankPages(
+                                    body,
+                                    response.continuation(),
+                                    response.nextKey(),
+                                    true,
+                                    accumulated,
+                                    page + 1);
+                        });
+    }
+
+    private Mono<RankPage> readRankPage(
+            Map<String, String> body, String continuation, String nextKey, boolean retryToken) {
+        String apiId = "usa20540";
+        return authService
+                .getAccessToken()
+                .flatMap(
+                        token ->
+                                requestDelay()
+                                        .then(
+                                                webClient
+                                                        .post()
+                                                        .uri(
+                                                                properties.getRestBaseUrl()
+                                                                        + "/api/us/rkinfo")
+                                                        .contentType(MediaType.APPLICATION_JSON)
+                                                        .header("authorization", "Bearer " + token)
+                                                        .header("api-id", apiId)
+                                                        .headers(
+                                                                headers -> {
+                                                                    if (!continuation.isBlank())
+                                                                        headers.set(
+                                                                                "cont-yn",
+                                                                                continuation);
+                                                                    if (!nextKey.isBlank())
+                                                                        headers.set(
+                                                                                "next-key",
+                                                                                nextKey);
+                                                                })
+                                                        .bodyValue(body)
+                                                        .retrieve()
+                                                        .toEntity(JsonNode.class))
+                                        .flatMap(
+                                                entity -> {
+                                                    JsonNode response = entity.getBody();
+                                                    if (response == null)
+                                                        return Mono.error(
+                                                                new KiwoomApiException(
+                                                                        "키움 미국주식 순위 응답이 비어 있습니다."));
+                                                    if (retryToken && invalidToken(response)) {
+                                                        authService.invalidateAccessToken(token);
+                                                        return readRankPage(
+                                                                body, continuation, nextKey, false);
+                                                    }
+                                                    int code =
+                                                            response.path("return_code").asInt(0);
+                                                    if (code != 0)
+                                                        return Mono.error(
+                                                                new KiwoomApiException(
+                                                                        "키움 미국주식 API 오류("
+                                                                                + apiId
+                                                                                + "): "
+                                                                                + response.path(
+                                                                                                "return_msg")
+                                                                                        .asText()));
+                                                    return Mono.just(
+                                                            new RankPage(
+                                                                    response,
+                                                                    firstHeader(entity, "cont-yn"),
+                                                                    firstHeader(
+                                                                            entity, "next-key")));
+                                                }))
+                .doOnSuccess(ignored -> state.recordApiSuccess(apiId))
+                .doOnError(
+                        error ->
+                                state.recordApiFailure(
+                                        apiId,
+                                        apiId + ": " + error.getMessage(),
+                                        properties.getUs().getMaxConsecutiveApiFailures()));
+    }
+
+    private String firstHeader(ResponseEntity<?> response, String name) {
+        String value = response.getHeaders().getFirst(name);
+        return value == null ? "" : value.trim();
     }
 
     public Mono<JsonNode> getOrderableQuantity(String exchange, String symbol, BigDecimal price) {
@@ -80,6 +191,15 @@ public class KiwoomUsTradeService {
         body.put("stk_cd", normalizeSymbol(symbol));
         body.put("uv", price.stripTrailingZeros().toPlainString());
         return read("ust31490", "/api/us/ordr", body);
+    }
+
+    /** 미국주식 현재가 10호가(usa20101)에서 매도·매수 1호가를 조회한다. */
+    public Mono<OrderBookQuote> getOrderBook(String exchange, String symbol) {
+        Map<String, String> body =
+                Map.of(
+                        "stex_tp", normalizeExchange(exchange),
+                        "stk_cd", normalizeSymbol(symbol));
+        return read("usa20101", "/api/us/mrkcond", body).map(this::orderBookQuote);
     }
 
     public Mono<KrwOrderServiceStatus> getKrwOrderServiceStatus() {
@@ -286,6 +406,56 @@ public class KiwoomUsTradeService {
         return result;
     }
 
+    private OrderBookQuote orderBookQuote(JsonNode response) {
+        BigDecimal ask =
+                findDecimal(
+                        response,
+                        "sel_fpr_bid",
+                        "sel_1th_pre_bid",
+                        "sel_1th_bid",
+                        "sel_bid1",
+                        "ask_pric1",
+                        "ask_price1");
+        BigDecimal bid =
+                findDecimal(
+                        response,
+                        "buy_fpr_bid",
+                        "buy_1th_pre_bid",
+                        "buy_1th_bid",
+                        "buy_bid1",
+                        "bid_pric1",
+                        "bid_price1");
+        ask = ask.abs();
+        bid = bid.abs();
+        if (ask.signum() <= 0 || bid.signum() <= 0 || ask.compareTo(bid) < 0) {
+            throw new IllegalStateException("미국주식 최우선 호가를 확인할 수 없습니다.");
+        }
+        return new OrderBookQuote(bid, ask);
+    }
+
+    private BigDecimal findDecimal(JsonNode node, String... fields) {
+        if (node == null) return BigDecimal.ZERO;
+        if (node.isObject()) {
+            for (String field : fields) {
+                if (node.has(field)) {
+                    BigDecimal value = decimal(node, field);
+                    if (value.signum() != 0) return value;
+                }
+            }
+            var children = node.elements();
+            while (children.hasNext()) {
+                BigDecimal value = findDecimal(children.next(), fields);
+                if (value.signum() != 0) return value;
+            }
+        } else if (node.isArray()) {
+            for (JsonNode child : node) {
+                BigDecimal value = findDecimal(child, fields);
+                if (value.signum() != 0) return value;
+            }
+        }
+        return BigDecimal.ZERO;
+    }
+
     private Mono<JsonNode> read(String apiId, String path, Map<String, ?> body) {
         return request(apiId, path, body, true);
     }
@@ -301,10 +471,7 @@ public class KiwoomUsTradeService {
                 .doOnError(
                         error -> {
                             if (isTemporaryAccountSettlementError(error)) {
-                                log.warn(
-                                        "[미국자동매매][일시적 계좌조회 제한][{}] {}",
-                                        apiId,
-                                        error.getMessage());
+                                log.warn("[미국자동매매][일시적 계좌조회 제한][{}] {}", apiId, error.getMessage());
                                 return;
                             }
                             state.recordApiFailure(
@@ -507,6 +674,13 @@ public class KiwoomUsTradeService {
         public double volumeRatio() {
             return previousVolume > 0 ? accumulatedVolume / (double) previousVolume : 0;
         }
+
+        /** 전일 전체 거래량을 현재 장 진행률로 보정한 시간대별 상대 거래량이다. */
+        public double relativeVolumeRatio(double regularSessionProgress) {
+            if (previousVolume <= 0 || regularSessionProgress <= 0) return 0;
+            double expectedSoFar = previousVolume * Math.min(1, regularSessionProgress);
+            return expectedSoFar > 0 ? accumulatedVolume / expectedSoFar : 0;
+        }
     }
 
     public record Order(
@@ -516,4 +690,18 @@ public class KiwoomUsTradeService {
             int quantity,
             BigDecimal price,
             boolean market) {}
+
+    public record OrderBookQuote(BigDecimal bid, BigDecimal ask) {
+        public double spreadPercent() {
+            BigDecimal midpoint =
+                    bid.add(ask).divide(BigDecimal.valueOf(2), 8, java.math.RoundingMode.HALF_UP);
+            if (midpoint.signum() <= 0) return Double.POSITIVE_INFINITY;
+            return ask.subtract(bid)
+                    .multiply(BigDecimal.valueOf(100))
+                    .divide(midpoint, 8, java.math.RoundingMode.HALF_UP)
+                    .doubleValue();
+        }
+    }
+
+    private record RankPage(JsonNode body, String continuation, String nextKey) {}
 }

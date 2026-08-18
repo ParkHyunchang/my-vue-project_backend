@@ -21,9 +21,9 @@ public class KiwoomProperties {
         private boolean tradeEnabled;
         private boolean strategyEnabled = true;
         private double maxOrderPercent = 10.0;
-        private int maxPositions = 2;
-        private int dailyMaxBuys = 1;
-        private double dailyLossLimitPercent = 2.0;
+        private int maxPositions = 3;
+        private int dailyMaxBuys = 2;
+        private double dailyLossLimitPercent = 3.0;
         private int maxConsecutiveApiFailures = 3;
 
         public boolean isTradeEnabled() {

@@ -11,6 +11,7 @@ import com.hyunchang.webapp.repository.KiwoomUsStrategyRunRepository;
 import com.hyunchang.webapp.repository.KiwoomUsTradeProposalRepository;
 import com.hyunchang.webapp.service.KiwoomUsTradeService.Holding;
 import com.hyunchang.webapp.service.KiwoomUsTradeService.KrwOrderServiceStatus;
+import com.hyunchang.webapp.service.KiwoomUsTradeService.OrderBookQuote;
 import com.hyunchang.webapp.service.KiwoomUsTradeService.RankedStock;
 import com.hyunchang.webapp.service.KiwoomUsTradeService.UsdCash;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
@@ -20,6 +21,7 @@ import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -29,6 +31,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
 @Service
 public class KiwoomUsAutoTradeService {
@@ -44,6 +48,7 @@ public class KiwoomUsAutoTradeService {
     private final KiwoomProperties properties;
     private final KiwoomUsTradeService trade;
     private final KiwoomUsStrategySettingsService settingsService;
+    private final KiwoomUsFundamentalService fundamentals;
     private final KiwoomUsIndexUniverseService indexUniverse;
     private final KiwoomUsAutoTradeState state;
     private final KiwoomUsAccountHoldingRepository holdingRepository;
@@ -60,6 +65,7 @@ public class KiwoomUsAutoTradeService {
             KiwoomProperties properties,
             KiwoomUsTradeService trade,
             KiwoomUsStrategySettingsService settingsService,
+            KiwoomUsFundamentalService fundamentals,
             KiwoomUsIndexUniverseService indexUniverse,
             KiwoomUsAutoTradeState state,
             KiwoomUsAccountHoldingRepository holdingRepository,
@@ -70,6 +76,7 @@ public class KiwoomUsAutoTradeService {
         this.properties = properties;
         this.trade = trade;
         this.settingsService = settingsService;
+        this.fundamentals = fundamentals;
         this.indexUniverse = indexUniverse;
         this.state = state;
         this.holdingRepository = holdingRepository;
@@ -92,7 +99,7 @@ public class KiwoomUsAutoTradeService {
         try {
             reconcileOrders();
             syncHoldings();
-            if (state.isAutoTrading()) evaluateExits();
+            evaluateExits();
         } catch (RuntimeException error) {
             log("ERROR", null, "계좌/주문 동기화 실패: " + safe(error));
         }
@@ -133,7 +140,15 @@ public class KiwoomUsAutoTradeService {
                                 + "%"
                                 + ", 거래량비 "
                                 + format(candidate.volumeRatio())
-                                + "배, 지수="
+                                + "배, PER "
+                                + formatNullable(candidate.forwardPe())
+                                + ", ROE "
+                                + formatNullable(candidate.roePercent())
+                                + "%, 스프레드 "
+                                + format(candidate.spreadPercent())
+                                + "%, 점수 "
+                                + format(candidate.score())
+                                + ", 지수="
                                 + candidate.indexMembership());
             }
             run.setCandidateSummary(
@@ -143,9 +158,6 @@ public class KiwoomUsAutoTradeService {
             if (!allowOrder)
                 return finishRun(
                         run, "PREVIEW", "후보만 기록했습니다(미리보기는 주문을 전송하지 않음).", candidates.size(), null);
-            if (!settings.isAutoExecute())
-                return finishRun(
-                        run, "CANDIDATE_ONLY", "후보만 기록했습니다(자동주문 설정 꺼짐).", candidates.size(), null);
             if (!state.isAutoTrading())
                 return finishRun(run, "PAUSED", "후보만 기록했습니다(자동매매 꺼짐).", candidates.size(), null);
 
@@ -290,82 +302,272 @@ public class KiwoomUsAutoTradeService {
 
     CandidateScreeningResult filterCandidates(
             List<RankedStock> ranked, KiwoomUsStrategySettings settings, AccountSnapshot account) {
+        return filterCandidates(
+                ranked, settings, account, KiwoomUsMarketHours.regularSessionProgress());
+    }
+
+    CandidateScreeningResult filterCandidates(
+            List<RankedStock> ranked,
+            KiwoomUsStrategySettings settings,
+            AccountSnapshot account,
+            double regularSessionProgress) {
         List<RankedStock> source = ranked == null ? List.of() : ranked;
         Set<String> held = new HashSet<>();
         for (KiwoomUsAccountHolding holding : holdings()) held.add(holding.getSymbol());
         LocalDateTime cooldown = LocalDateTime.now().minusDays(settings.getSymbolCooldownDays());
         BigDecimal cashLimit = account.perOrderLimitUsd();
         boolean riskCapacity = account.managedPositionCount() < settings.getMaxPositions();
-        List<Candidate> result = new ArrayList<>();
-        int liquidCount = 0;
-        int indexCount = 0;
-        int momentumCount = 0;
-        int volumeCount = 0;
-        int affordableCount = 0;
-        int notHeldCount = 0;
-        int cooldownCount = 0;
-        int capacityCount = 0;
+
+        List<RankedStock> liquid = new ArrayList<>();
         for (RankedStock stock : source) {
-            boolean liquidUniverse =
-                    stock.rank() > 0 && stock.rank() <= 50 && stock.tradedValue().signum() > 0;
-            if (!liquidUniverse) continue;
-            liquidCount++;
-
-            boolean majorIndexMember = indexUniverse.isEligible(stock.symbol());
-            if (!majorIndexMember) continue;
-            indexCount++;
-
-            boolean momentum =
-                    stock.changePercent() >= settings.getMinChangePercent()
-                            && stock.changePercent() <= settings.getMaxChangePercent();
-            if (!momentum) continue;
-            momentumCount++;
-
-            boolean volume = stock.volumeRatio() >= settings.getMinVolumeRatio();
-            if (!volume) continue;
-            volumeCount++;
-
-            boolean affordable = stock.currentPrice().compareTo(cashLimit) <= 0;
-            if (!affordable) continue;
-            affordableCount++;
-
-            boolean notHeld = !held.contains(stock.symbol());
-            if (!notHeld) continue;
-            notHeldCount++;
-
-            boolean cooldownPassed =
-                    !proposalRepository.existsBySymbolAndActionAndOrderedAtAfter(
-                            stock.symbol(), KiwoomUsTradeProposal.Action.BUY, cooldown);
-            if (!cooldownPassed) continue;
-            cooldownCount++;
-
-            if (!riskCapacity) continue;
-            capacityCount++;
-            result.add(
-                    new Candidate(
-                            stock.rank(),
-                            stock.exchange(),
-                            stock.symbol(),
-                            stock.name(),
-                            stock.currentPrice(),
-                            stock.changePercent(),
-                            stock.volumeRatio(),
-                            stock.tradedValue(),
-                            indexUniverse.membershipLabel(stock.symbol())));
+            if (stock.rank() <= 0 || stock.rank() > 50) {
+                reject(stock, "순위·거래대금", "거래대금 순위=" + stock.rank() + ", 허용 순위=1~50");
+            } else if (stock.tradedValue().signum() <= 0) {
+                reject(stock, "순위·거래대금", "거래대금이 0 이하입니다.");
+            } else {
+                liquid.add(stock);
+            }
         }
+
+        List<RankedStock> indexed = new ArrayList<>();
+        for (RankedStock stock : liquid) {
+            if (indexUniverse.isEligible(stock.symbol())) indexed.add(stock);
+            else reject(stock, "주요지수", "S&P 500 또는 NASDAQ-100 편입 종목이 아닙니다.");
+        }
+
+        List<RankedStock> momentum = new ArrayList<>();
+        for (RankedStock stock : indexed) {
+            if (stock.changePercent() >= settings.getMinChangePercent()
+                    && stock.changePercent() <= settings.getMaxChangePercent()) {
+                momentum.add(stock);
+            } else {
+                reject(
+                        stock,
+                        "등락률",
+                        "현재="
+                                + format(stock.changePercent())
+                                + "%, 허용="
+                                + format(settings.getMinChangePercent())
+                                + "~"
+                                + format(settings.getMaxChangePercent())
+                                + "%");
+            }
+        }
+
+        List<VolumeQualified> volume = new ArrayList<>();
+        for (RankedStock stock : momentum) {
+            double relativeVolume = stock.relativeVolumeRatio(regularSessionProgress);
+            if (relativeVolume >= settings.getMinVolumeRatio()) {
+                volume.add(new VolumeQualified(stock, relativeVolume));
+            } else {
+                reject(
+                        stock,
+                        "시간보정 RVOL",
+                        "현재="
+                                + format(relativeVolume)
+                                + "배, 최소="
+                                + format(settings.getMinVolumeRatio())
+                                + "배");
+            }
+        }
+
+        List<FundamentalQualified> quality = new ArrayList<>();
+        for (VolumeQualified item : volume) {
+            if (!settings.isFundamentalFilterEnabled()) {
+                quality.add(new FundamentalQualified(item, null));
+                continue;
+            }
+            Optional<KiwoomUsFundamentalService.FundamentalSnapshot> snapshot =
+                    fundamentals.find(item.stock().symbol());
+            if (snapshot.isEmpty()) {
+                dataMissing(item.stock(), "PER·ROE", "유효한 PER 또는 ROE 데이터가 없습니다.");
+                continue;
+            }
+            var value = snapshot.get();
+            if (value.effectivePe() <= settings.getMaxForwardPe()
+                    && value.roePercent() >= settings.getMinRoePercent()) {
+                quality.add(new FundamentalQualified(item, value));
+            } else {
+                reject(
+                        item.stock(),
+                        "PER·ROE",
+                        "PER="
+                                + format(value.effectivePe())
+                                + "(최대 "
+                                + format(settings.getMaxForwardPe())
+                                + "), ROE="
+                                + format(value.roePercent())
+                                + "%(최소 "
+                                + format(settings.getMinRoePercent())
+                                + "%)");
+            }
+        }
+
+        List<OrderBookCheck> orderBookChecks =
+                Optional.ofNullable(
+                                Flux.fromIterable(quality)
+                                        .flatMap(
+                                                item -> {
+                                                    RankedStock stock = item.volume().stock();
+                                                    return trade.getOrderBook(
+                                                                    stock.exchange(),
+                                                                    stock.symbol())
+                                                            .timeout(Duration.ofSeconds(4))
+                                                            .map(
+                                                                    quote ->
+                                                                            new OrderBookCheck(
+                                                                                    item, quote,
+                                                                                    null))
+                                                            .switchIfEmpty(
+                                                                    Mono.just(
+                                                                            new OrderBookCheck(
+                                                                                    item,
+                                                                                    null,
+                                                                                    "조회 결과가 비어 있습니다.")))
+                                                            .onErrorResume(
+                                                                    error ->
+                                                                            Mono.just(
+                                                                                    new OrderBookCheck(
+                                                                                            item,
+                                                                                            null,
+                                                                                            safe(
+                                                                                                    error))));
+                                                },
+                                                4)
+                                        .collectList()
+                                        .block())
+                        .orElseGet(List::of);
+
+        List<SpreadQualified> spread = new ArrayList<>();
+        for (OrderBookCheck check : orderBookChecks) {
+            RankedStock stock = check.quality().volume().stock();
+            if (check.quote() == null) {
+                dataMissing(stock, "실시간 호가", check.errorMessage());
+            } else if (check.quote().spreadPercent() > settings.getMaxSpreadPercent()) {
+                reject(
+                        stock,
+                        "호가 스프레드",
+                        "현재="
+                                + format(check.quote().spreadPercent())
+                                + "%, 최대="
+                                + format(settings.getMaxSpreadPercent())
+                                + "%");
+            } else {
+                spread.add(new SpreadQualified(check.quality(), check.quote()));
+            }
+        }
+
+        List<SpreadQualified> affordable = new ArrayList<>();
+        for (SpreadQualified item : spread) {
+            RankedStock stock = item.quality().volume().stock();
+            if (item.quote().ask().compareTo(cashLimit) <= 0) affordable.add(item);
+            else
+                reject(stock, "주문가능가격", "매도 1호가=$" + item.quote().ask() + ", 종목당 한도=$" + cashLimit);
+        }
+
+        List<SpreadQualified> notHeld = new ArrayList<>();
+        for (SpreadQualified item : affordable) {
+            RankedStock stock = item.quality().volume().stock();
+            if (!held.contains(stock.symbol())) notHeld.add(item);
+            else reject(stock, "미보유", "이미 보유 중인 종목입니다.");
+        }
+
+        List<SpreadQualified> cooldownPassed = new ArrayList<>();
+        for (SpreadQualified item : notHeld) {
+            RankedStock stock = item.quality().volume().stock();
+            boolean recentlyBought =
+                    proposalRepository.existsBySymbolAndActionAndOrderedAtAfter(
+                            stock.symbol(), KiwoomUsTradeProposal.Action.BUY, cooldown);
+            if (!recentlyBought) cooldownPassed.add(item);
+            else
+                reject(
+                        stock,
+                        "재매수 제한",
+                        "최근 " + settings.getSymbolCooldownDays() + "일 이내 매수 이력이 있습니다.");
+        }
+
+        List<Candidate> result = new ArrayList<>();
+        if (riskCapacity) {
+            for (SpreadQualified item : cooldownPassed) {
+                RankedStock stock = item.quality().volume().stock();
+                var fundamental = item.quality().fundamental();
+                result.add(
+                        new Candidate(
+                                stock.rank(),
+                                stock.exchange(),
+                                stock.symbol(),
+                                stock.name(),
+                                item.quote().ask(),
+                                stock.changePercent(),
+                                item.quality().volume().relativeVolume(),
+                                fundamental == null ? null : fundamental.effectivePe(),
+                                fundamental == null ? null : fundamental.roePercent(),
+                                item.quote().spreadPercent(),
+                                candidateScore(stock, item, settings),
+                                stock.tradedValue(),
+                                indexUniverse.membershipLabel(stock.symbol())));
+            }
+        } else {
+            for (SpreadQualified item : cooldownPassed) {
+                reject(
+                        item.quality().volume().stock(),
+                        "보유 한도",
+                        "자동관리 보유="
+                                + account.managedPositionCount()
+                                + "개, 최대="
+                                + settings.getMaxPositions()
+                                + "개");
+            }
+        }
+        result.sort(
+                Comparator.comparingDouble(Candidate::score)
+                        .reversed()
+                        .thenComparingInt(Candidate::rank));
+
         CandidateScreeningStats stats =
                 new CandidateScreeningStats(
                         source.size(),
-                        liquidCount,
-                        indexCount,
-                        momentumCount,
-                        volumeCount,
-                        affordableCount,
-                        notHeldCount,
-                        cooldownCount,
-                        capacityCount,
+                        liquid.size(),
+                        indexed.size(),
+                        momentum.size(),
+                        volume.size(),
+                        quality.size(),
+                        spread.size(),
+                        affordable.size(),
+                        notHeld.size(),
+                        cooldownPassed.size(),
+                        result.size(),
                         cashLimit);
         return new CandidateScreeningResult(List.copyOf(result), stats);
+    }
+
+    private double candidateScore(
+            RankedStock stock, SpreadQualified item, KiwoomUsStrategySettings settings) {
+        double volumeScore =
+                Math.min(3, item.quality().volume().relativeVolume() / settings.getMinVolumeRatio())
+                        * 10;
+        double liquidityScore = Math.max(0, 51 - stock.rank()) / 50.0 * 20;
+        double spreadScore =
+                Math.max(0, 1 - item.quote().spreadPercent() / settings.getMaxSpreadPercent()) * 15;
+        var fundamental = item.quality().fundamental();
+        double qualityScore = 0;
+        if (fundamental != null) {
+            qualityScore +=
+                    Math.min(2, fundamental.roePercent() / Math.max(1, settings.getMinRoePercent()))
+                            * 10;
+            qualityScore +=
+                    Math.min(2, settings.getMaxForwardPe() / fundamental.effectivePe()) * 7.5;
+        }
+        double midpoint = (settings.getMinChangePercent() + settings.getMaxChangePercent()) / 2;
+        double halfRange =
+                Math.max(
+                        0.1, (settings.getMaxChangePercent() - settings.getMinChangePercent()) / 2);
+        double momentumScore =
+                Math.max(0, 1 - Math.abs(stock.changePercent() - midpoint) / halfRange) * 15;
+        return Math.round(
+                        (volumeScore + liquidityScore + spreadScore + qualityScore + momentumScore)
+                                * 100.0)
+                / 100.0;
     }
 
     private KiwoomUsTradeProposal submitBuy(
@@ -859,6 +1061,27 @@ public class KiwoomUsAutoTradeService {
         events.publish(type, message, proposalId);
     }
 
+    private void reject(RankedStock stock, String stage, String reason) {
+        log(
+                "CANDIDATE_REJECTED",
+                null,
+                "종목=" + stockLabel(stock) + ", 단계=" + stage + ", 사유=" + reason);
+    }
+
+    private void dataMissing(RankedStock stock, String dataType, String reason) {
+        String detail = reason == null || reason.isBlank() ? "조회 결과가 비어 있습니다." : reason;
+        log(
+                "DATA_MISSING",
+                null,
+                "종목=" + stockLabel(stock) + ", 데이터=" + dataType + ", 사유=" + detail + " → 후보 제외");
+    }
+
+    private String stockLabel(RankedStock stock) {
+        String name =
+                stock.name() == null || stock.name().isBlank() ? "" : "(" + stock.name() + ")";
+        return stock.symbol() + name;
+    }
+
     private void collectObjects(JsonNode node, List<JsonNode> result) {
         if (node == null) return;
         if (node.isObject()) {
@@ -910,6 +1133,10 @@ public class KiwoomUsAutoTradeService {
         return String.format("%.2f", value);
     }
 
+    private String formatNullable(Double value) {
+        return value == null ? "미사용" : format(value);
+    }
+
     private BigDecimal percentage(BigDecimal amount, double percent) {
         return amount.multiply(BigDecimal.valueOf(percent))
                 .divide(BigDecimal.valueOf(100), 4, RoundingMode.DOWN)
@@ -942,8 +1169,22 @@ public class KiwoomUsAutoTradeService {
             BigDecimal price,
             double changePercent,
             double volumeRatio,
+            Double forwardPe,
+            Double roePercent,
+            double spreadPercent,
+            double score,
             BigDecimal tradedValue,
             String indexMembership) {}
+
+    private record VolumeQualified(RankedStock stock, double relativeVolume) {}
+
+    private record FundamentalQualified(
+            VolumeQualified volume, KiwoomUsFundamentalService.FundamentalSnapshot fundamental) {}
+
+    private record SpreadQualified(FundamentalQualified quality, OrderBookQuote quote) {}
+
+    private record OrderBookCheck(
+            FundamentalQualified quality, OrderBookQuote quote, String errorMessage) {}
 
     record CandidateScreeningResult(List<Candidate> candidates, CandidateScreeningStats stats) {}
 
@@ -953,6 +1194,8 @@ public class KiwoomUsAutoTradeService {
             int indexCount,
             int momentumCount,
             int volumeCount,
+            int fundamentalCount,
+            int spreadCount,
             int affordableCount,
             int notHeldCount,
             int cooldownCount,
@@ -963,8 +1206,10 @@ public class KiwoomUsAutoTradeService {
             appendStage(message, "순위·거래대금", inputCount, liquidCount);
             appendStage(message, "주요지수", liquidCount, indexCount);
             appendStage(message, "등락률", indexCount, momentumCount);
-            appendStage(message, "거래량", momentumCount, volumeCount);
-            appendStage(message, "주문가능가격", volumeCount, affordableCount);
+            appendStage(message, "시간보정거래량", momentumCount, volumeCount);
+            appendStage(message, "PER·ROE", volumeCount, fundamentalCount);
+            appendStage(message, "스프레드", fundamentalCount, spreadCount);
+            appendStage(message, "주문가능가격", spreadCount, affordableCount);
             message.append("(한도=$")
                     .append(perOrderLimitUsd.setScale(2, RoundingMode.DOWN))
                     .append(')');

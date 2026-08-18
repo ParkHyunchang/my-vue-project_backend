@@ -135,9 +135,9 @@ kiwoom:
     trade-enabled: ${KIWOOM_US_TRADE_ENABLED:false}
     strategy-enabled: ${KIWOOM_US_STRATEGY_ENABLED:true}
     max-order-percent: ${KIWOOM_US_MAX_ORDER_PERCENT:10}
-    max-positions: ${KIWOOM_US_MAX_POSITIONS:2}
-    daily-max-buys: ${KIWOOM_US_DAILY_MAX_BUYS:1}
-    daily-loss-limit-percent: ${KIWOOM_US_DAILY_LOSS_LIMIT_PERCENT:2}
+    max-positions: ${KIWOOM_US_MAX_POSITIONS:3}
+    daily-max-buys: ${KIWOOM_US_DAILY_MAX_BUYS:2}
+    daily-loss-limit-percent: ${KIWOOM_US_DAILY_LOSS_LIMIT_PERCENT:3}
     max-consecutive-api-failures: ${KIWOOM_US_MAX_CONSECUTIVE_API_FAILURES:3}
   strategy:
     enabled: ${KIWOOM_STRATEGY_ENABLED:true}

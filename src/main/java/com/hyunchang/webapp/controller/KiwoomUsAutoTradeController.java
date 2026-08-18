@@ -12,7 +12,9 @@ import com.hyunchang.webapp.service.KiwoomUsTradeService;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
 import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -88,7 +90,9 @@ public class KiwoomUsAutoTradeController {
                 "cashPolicy",
                 KiwoomUsTradeService.USD_CASH_SOURCE
                         + "만 사용; 원화주문설정금이 1원이라도 있으면 시작·매수 차단; 실제 주문 직전 원화주문 서비스 해지 상태와 외화 주문가능수량 재확인; USD 1% 수수료 여유 유지");
-        result.put("candidateUniversePolicy", "당일 거래대금 상위 50위 중 S&P 500 또는 NASDAQ-100 편입 종목만 허용");
+        result.put(
+                "candidateUniversePolicy",
+                "당일 거래대금 상위 50위 중 S&P 500 또는 NASDAQ-100 편입 종목만 허용; PER·ROE, 시간보정 RVOL, 실시간 호가 스프레드 적용");
         result.put("indexUniverse", indexUniverse.status());
         return result;
     }
@@ -130,7 +134,47 @@ public class KiwoomUsAutoTradeController {
 
     @PatchMapping("/settings")
     public KiwoomUsStrategySettings settings(@RequestBody KiwoomUsStrategySettings request) {
-        return settings.save(request);
+        Map<String, String> before = settingsValues(settings.current());
+        KiwoomUsStrategySettings saved = settings.save(request);
+        Map<String, String> after = settingsValues(saved);
+        List<String> changes = new ArrayList<>();
+        before.forEach(
+                (name, oldValue) -> {
+                    String newValue = after.get(name);
+                    if (!oldValue.equals(newValue))
+                        changes.add(name + " " + oldValue + " → " + newValue);
+                });
+        if (!changes.isEmpty()) {
+            String message = "전략 설정 변경: " + String.join(", ", changes);
+            audit.log("SETTINGS_CHANGED", null, message);
+            events.publish("SETTINGS_CHANGED", message, null);
+        }
+        return saved;
+    }
+
+    private Map<String, String> settingsValues(KiwoomUsStrategySettings value) {
+        Map<String, String> result = new LinkedHashMap<>();
+        result.put("PER·ROE 필터", value.isFundamentalFilterEnabled() ? "사용" : "미사용");
+        result.put("최대 Forward PER", number(value.getMaxForwardPe()));
+        result.put("최소 ROE(%)", number(value.getMinRoePercent()));
+        result.put("최소 등락률(%)", number(value.getMinChangePercent()));
+        result.put("최대 등락률(%)", number(value.getMaxChangePercent()));
+        result.put("최소 RVOL(배)", number(value.getMinVolumeRatio()));
+        result.put("최대 스프레드(%)", number(value.getMaxSpreadPercent()));
+        result.put("종목당 주문비율(%)", number(value.getMaxOrderPercent()));
+        result.put("최대 보유종목", String.valueOf(value.getMaxPositions()));
+        result.put("일일 최대매수", String.valueOf(value.getDailyMaxBuys()));
+        result.put("재매수 제한(일)", String.valueOf(value.getSymbolCooldownDays()));
+        result.put("최대 보유기간(일)", String.valueOf(value.getMaxHoldingDays()));
+        result.put("손절률(%)", number(value.getStopLossPercent()));
+        result.put("1차 익절률(%)", number(value.getTakeProfitPercent()));
+        result.put("2차 익절률(%)", number(value.getTakeProfitPercent2()));
+        result.put("일일 손실한도(%)", number(value.getDailyLossLimitPercent()));
+        return result;
+    }
+
+    private String number(double value) {
+        return java.math.BigDecimal.valueOf(value).stripTrailingZeros().toPlainString();
     }
 
     @PostMapping("/control")
@@ -159,11 +203,13 @@ public class KiwoomUsAutoTradeController {
                 request.enabled() ? "START" : "STOP",
                 null,
                 request.enabled()
-                        ? "미국주식 자동매매를 시작했습니다. 원화주문설정금 0원을 확인했고, 매수 자금은 D+0 USD 외화예수금의 99% 이내로 제한됩니다."
-                        : "미국주식 신규 자동주문을 중지했습니다.");
+                        ? "미국주식 신규 자동매수를 시작했습니다. 원화주문설정금 0원을 확인했고, 매수 자금은 D+0 USD 외화예수금의 99% 이내로 제한됩니다."
+                        : "미국주식 신규 자동매수를 중지했습니다. 기존 자동매매 보유종목의 손절·익절 감시는 계속됩니다.");
         events.publish(
                 request.enabled() ? "START" : "STOP",
-                request.enabled() ? "미국주식 자동매매 시작 (원화주문 차단·USD 예수금만 사용)" : "미국주식 자동매매 중지",
+                request.enabled()
+                        ? "미국주식 신규 자동매수 시작 (원화주문 차단·USD 예수금만 사용)"
+                        : "미국주식 신규 자동매수 중지 (보유종목 매도 감시는 유지)",
                 null);
         return ResponseEntity.ok(Map.of("autoTrading", state.isAutoTrading()));
     }

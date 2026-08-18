@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.util;
 
 import java.time.DayOfWeek;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -81,6 +82,18 @@ public final class KiwoomUsMarketHours {
         LocalTime entryClose = close.minusHours(1);
         return !now.toLocalTime().isBefore(LocalTime.of(10, 0))
                 && now.toLocalTime().isBefore(entryClose);
+    }
+
+    /** 정규장 전체 시간 대비 현재까지 경과한 비율. 시간대별 상대 거래량 계산에 사용한다. */
+    public static double regularSessionProgress() {
+        LocalDateTime now = LocalDateTime.now(ET);
+        LocalTime open = LocalTime.of(9, 30);
+        LocalTime close = EARLY_CLOSE.getOrDefault(now.toLocalDate(), LocalTime.of(16, 0));
+        if (!now.toLocalTime().isAfter(open)) return 0;
+        if (!now.toLocalTime().isBefore(close)) return 1;
+        long totalSeconds = Duration.between(open, close).toSeconds();
+        long elapsedSeconds = Duration.between(open, now.toLocalTime()).toSeconds();
+        return Math.max(0, Math.min(1, elapsedSeconds / (double) totalSeconds));
     }
 
     public static LocalDate today() {

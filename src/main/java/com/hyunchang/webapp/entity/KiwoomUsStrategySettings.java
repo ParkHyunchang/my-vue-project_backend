@@ -12,23 +12,26 @@ import java.time.LocalDateTime;
 @Table(name = "kiwoom_us_strategy_settings")
 public class KiwoomUsStrategySettings {
     @Id private Long id = 1L;
-    private boolean autoExecute = true;
+    @JsonIgnore private boolean autoExecute = true;
     private double maxOrderUsd = 200;
     private double maxAllocatedUsd = 400;
     private double maxOrderPercent = 10;
     private double maxAllocationPercent = 20;
-    private int maxPositions = 2;
-    private int dailyMaxBuys = 1;
-    private double minChangePercent = 1;
-    private double maxChangePercent = 4;
-    private double minVolumeRatio = 1.5;
+    private int maxPositions = 3;
+    private int dailyMaxBuys = 2;
+    private double minChangePercent = 2;
+    private double maxChangePercent = 8;
+    private double minVolumeRatio = 1.2;
+    private boolean fundamentalFilterEnabled = true;
+    private double maxForwardPe = 50;
+    private double minRoePercent = 10;
     private double maxSpreadPercent = 0.15;
-    private double stopLossPercent = 2.5;
-    private double takeProfitPercent = 4;
-    private double takeProfitPercent2 = 7;
-    private int maxHoldingDays = 3;
+    private double stopLossPercent = 3;
+    private double takeProfitPercent = 5;
+    private double takeProfitPercent2 = 8;
+    private int maxHoldingDays = 5;
     private int symbolCooldownDays = 5;
-    private double dailyLossLimitPercent = 2;
+    private double dailyLossLimitPercent = 3;
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -123,6 +126,30 @@ public class KiwoomUsStrategySettings {
 
     public void setMinVolumeRatio(double v) {
         minVolumeRatio = v;
+    }
+
+    public boolean isFundamentalFilterEnabled() {
+        return fundamentalFilterEnabled;
+    }
+
+    public void setFundamentalFilterEnabled(boolean v) {
+        fundamentalFilterEnabled = v;
+    }
+
+    public double getMaxForwardPe() {
+        return maxForwardPe;
+    }
+
+    public void setMaxForwardPe(double v) {
+        maxForwardPe = v;
+    }
+
+    public double getMinRoePercent() {
+        return minRoePercent;
+    }
+
+    public void setMinRoePercent(double v) {
+        minRoePercent = v;
     }
 
     public double getMaxSpreadPercent() {
