@@ -14,6 +14,7 @@ import jakarta.annotation.PostConstruct;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -51,6 +52,7 @@ public class KiwoomPositionExitService {
     private static final int LIQUIDATION_ATTEMPTS = 4;
     private static final long LIQUIDATION_RETRY_INTERVAL_MS = 1500;
     private static final long PRICE_LIMIT_LOOKUP_RETRY_MS = 60_000;
+    private static final double BREAK_EVEN_COST_BUFFER_PERCENT = 0.3;
 
     private final KiwoomProperties props;
     private final KiwoomTradeService trade;
@@ -526,6 +528,13 @@ public class KiwoomPositionExitService {
         if (retryDue) refreshPositions("PRICE_LIMIT_RECHECK", true);
     }
 
+    /** 설정된 최대 보유일의 14:50에 잔여 포지션 청산을 시작한다. */
+    @Scheduled(cron = "0 50 14 * * MON-FRI", zone = "Asia/Seoul")
+    public void triggerScheduledTimeExits() {
+        if (!canManageExits() || !KiwoomMarketHours.isOpen()) return;
+        refreshPositions("TIME_EXIT_1450", true);
+    }
+
     /**
      * 익절 취소는 확인됐지만 키움 잔고의 매도 가능 수량 반영이 늦는 경우, 손절 감지 후 60초 동안 2초 간격으로 잔고를 다시 확인해 복구 즉시 시장가 손절을 전송한다.
      */
@@ -603,12 +612,16 @@ public class KiwoomPositionExitService {
                         + "원 도달 (현재가 "
                         + String.format("%,d", currentPrice)
                         + "원)");
+        String stopLabel =
+                position.stopLossPrice() >= position.averagePrice()
+                        ? "1차 익절 후 평단+비용 " + BREAK_EVEN_COST_BUFFER_PERCENT + "%"
+                        : "-" + settings.current().getSwingStopLossPercent() + "%";
         log.warn(
-                "[자동매매][손절 조건 감지] {}({}), 평단={}원, 손절 기준=-{}%, 손절가={}원, 현재가={}원, 처리=기존 익절 주문 취소 후 시장가 청산",
+                "[자동매매][손절 조건 감지] {}({}), 평단={}원, 손절 기준={}, 손절가={}원, 현재가={}원, 처리=기존 익절 주문 취소 후 시장가 청산",
                 position.stockName(),
                 position.stockCode(),
                 String.format("%,d", position.averagePrice()),
-                settings.current().getSwingStopLossPercent(),
+                stopLabel,
                 String.format("%,d", position.stopLossPrice()),
                 String.format("%,d", currentPrice));
         websocket.publishEvent("order", "손절 조건 도달: " + stockCode);
@@ -619,8 +632,12 @@ public class KiwoomPositionExitService {
     private void triggerTimeExitIfDue(Position position) {
         long heldTradingDays = engineHoldingTradingDays(position.stockCode());
         int maxHoldingDays = settings.current().getSwingMaxHoldingDays();
-        if (heldTradingDays <= maxHoldingDays
-                || pendingExits.putIfAbsent(position.stockCode(), ExitTrigger.TIME_EXIT) != null)
+        LocalTime now = LocalTime.now(KiwoomMarketHours.KST);
+        boolean due =
+                heldTradingDays > maxHoldingDays
+                        || (heldTradingDays == maxHoldingDays
+                                && !now.isBefore(KiwoomMarketHours.TIME_EXIT_AT));
+        if (!due || pendingExits.putIfAbsent(position.stockCode(), ExitTrigger.TIME_EXIT) != null)
             return;
         exitTriggeredAt.putIfAbsent(position.stockCode(), LocalDateTime.now());
         audit.log(
@@ -633,7 +650,7 @@ public class KiwoomPositionExitService {
                         + maxHoldingDays
                         + "거래일");
         log.warn(
-                "[자동매매][최대 보유기간 도달] {}({}), 보유={}거래일, 설정={}거래일, 처리=기존 익절 주문 취소 후 시장가 청산",
+                "[자동매매][최대 보유기간 도달] {}({}), 보유={}거래일, 설정={}거래일, 기준시각=14:50, 처리=기존 익절 주문 취소 후 시장가 청산",
                 position.stockName(),
                 position.stockCode(),
                 heldTradingDays,
@@ -881,7 +898,11 @@ public class KiwoomPositionExitService {
         if (trigger == ExitTrigger.TIME_EXIT)
             return "[EXIT:TIME_EXIT] 최대 보유기간 "
                     + settings.current().getSwingMaxHoldingDays()
-                    + "거래일 초과 시장가 청산";
+                    + "거래일째 14:50 시장가 청산";
+        if (position.stopLossPrice() >= position.averagePrice())
+            return "[EXIT:STOP_LOSS] 1차 익절 후 잔여 수량 평단+비용 "
+                    + BREAK_EVEN_COST_BUFFER_PERCENT
+                    + "% 보호 시장가 청산";
         return "[EXIT:STOP_LOSS] 평단 "
                 + String.format("%,d", position.averagePrice())
                 + " 기준 -"
@@ -904,12 +925,12 @@ public class KiwoomPositionExitService {
     }
 
     private long tradingDaysSince(LocalDate opened) {
-        LocalDate today = LocalDate.now(KiwoomMarketHours.KST);
-        if (opened == null || !opened.isBefore(today)) return 0L;
-        return opened.plusDays(1)
-                .datesUntil(today.plusDays(1))
-                .filter(KiwoomMarketHours::isTradingDay)
-                .count();
+        return inclusiveHoldingTradingDays(opened, LocalDate.now(KiwoomMarketHours.KST));
+    }
+
+    static long inclusiveHoldingTradingDays(LocalDate opened, LocalDate today) {
+        if (opened == null || today == null || opened.isAfter(today)) return 0L;
+        return opened.datesUntil(today.plusDays(1)).filter(KiwoomMarketHours::isTradingDay).count();
     }
 
     private KiwoomTradeProposal newExitProposal(
@@ -1002,6 +1023,25 @@ public class KiwoomPositionExitService {
         double takeProfitPercent = settings.current().getSwingTakeProfitPercent();
         long stop =
                 stopPercent <= 0 ? 0 : roundDown(holding.avgPrice() * (100 - stopPercent) / 100.0);
+        LocalDateTime openedAt = accountHoldings.positionOpenedAt(holding.code()).orElse(null);
+        boolean firstTakeProfitCompleted =
+                openedAt != null
+                        && proposals
+                                .existsByStockCodeAndActionAndStatusAndReasonStartingWithAndCreatedAtGreaterThanEqual(
+                                        holding.code(),
+                                        KiwoomTradeProposal.Action.SELL,
+                                        KiwoomTradeProposal.Status.FILLED,
+                                        "[EXIT:TAKE_PROFIT-1]",
+                                        openedAt);
+        if (firstTakeProfitCompleted) {
+            stop =
+                    Math.max(
+                            stop,
+                            roundUp(
+                                    holding.avgPrice()
+                                            * (100 + BREAK_EVEN_COST_BUFFER_PERCENT)
+                                            / 100.0));
+        }
         long takeProfit =
                 takeProfitPercent <= 0
                         ? 0

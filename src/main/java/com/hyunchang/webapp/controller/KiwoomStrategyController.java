@@ -168,6 +168,12 @@ public class KiwoomStrategyController {
         result.put("swingMinChangePercent", s.getSwingMinChangePercent());
         result.put("swingMaxChangePercent", s.getSwingMaxChangePercent());
         result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
+        result.put("swingMaxVolumeRatio", s.getSwingMaxVolumeRatio());
+        result.put("minMarketCapWon", s.getMinMarketCapWon());
+        result.put("minTradingValueWon", s.getMinTradingValueWon());
+        result.put("maxSpreadPercent", s.getMaxSpreadPercent());
+        result.put("maxPriceAboveMa20Percent", s.getMaxPriceAboveMa20Percent());
+        result.put("maxAtrPercent", s.getMaxAtrPercent());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
         result.put("swingTakeProfitPercent2", s.getSwingTakeProfitPercent2());
@@ -181,6 +187,12 @@ public class KiwoomStrategyController {
         result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
         result.put("defaultDailyLossPercent", props.getStrategy().getDefaultDailyLossPercent());
         result.put("dailyMaxProposals", s.getDailyMaxProposals());
+        result.put("maxPositions", s.getMaxPositions());
+        result.put("maxPositionsPerSector", s.getMaxPositionsPerSector());
+        result.put("stopLossCooldownTradingDays", s.getStopLossCooldownTradingDays());
+        result.put("dailyStopLossLimit", s.getDailyStopLossLimit());
+        result.put("entryWindow", "09:30~14:00");
+        result.put("timeExitAt", "3거래일째 14:50");
         result.put("requireCatalystForAutoBuy", s.isRequireCatalystForAutoBuy());
         result.put("prompt", promptService.instruction(AiPromptCatalog.KIWOOM_TRADE_STRATEGY));
         return result;
@@ -199,6 +211,12 @@ public class KiwoomStrategyController {
                                 request.swingMinChangePercent(),
                                 request.swingMaxChangePercent(),
                                 request.swingMinVolumeRatio(),
+                                request.swingMaxVolumeRatio(),
+                                request.minMarketCapWon(),
+                                request.minTradingValueWon(),
+                                request.maxSpreadPercent(),
+                                request.maxPriceAboveMa20Percent(),
+                                request.maxAtrPercent(),
                                 request.swingStopLossPercent(),
                                 request.swingTakeProfitPercent(),
                                 request.swingTakeProfitPercent2(),
@@ -207,11 +225,15 @@ public class KiwoomStrategyController {
                                 request.riskLoopEnabled(),
                                 request.dailyLossLimitPercent(),
                                 request.dailyMaxProposals(),
+                                request.maxPositions(),
+                                request.maxPositionsPerSector(),
+                                request.stopLossCooldownTradingDays(),
+                                request.dailyStopLossLimit(),
                                 request.requireCatalystForAutoBuy() == null
                                         || request.requireCatalystForAutoBuy(),
                                 request.prompt()),
                         "admin");
-        audit.log("STRATEGY_SETTINGS_UPDATED", null, "Runtime strategy settings were updated.");
+        audit.log("SETTINGS_CHANGED", null, "국내 자동매매 전략 설정이 변경되었습니다.");
         var applied = positionExits.applyChangedSettings();
         Map<String, Object> result = new HashMap<>();
         result.put("success", true);
@@ -243,6 +265,12 @@ public class KiwoomStrategyController {
         result.put("swingMinChangePercent", s.getSwingMinChangePercent());
         result.put("swingMaxChangePercent", s.getSwingMaxChangePercent());
         result.put("swingMinVolumeRatio", s.getSwingMinVolumeRatio());
+        result.put("swingMaxVolumeRatio", s.getSwingMaxVolumeRatio());
+        result.put("minMarketCapWon", s.getMinMarketCapWon());
+        result.put("minTradingValueWon", s.getMinTradingValueWon());
+        result.put("maxSpreadPercent", s.getMaxSpreadPercent());
+        result.put("maxPriceAboveMa20Percent", s.getMaxPriceAboveMa20Percent());
+        result.put("maxAtrPercent", s.getMaxAtrPercent());
         result.put("swingStopLossPercent", s.getSwingStopLossPercent());
         result.put("swingTakeProfitPercent", s.getSwingTakeProfitPercent());
         result.put("swingTakeProfitPercent2", s.getSwingTakeProfitPercent2());
@@ -251,6 +279,12 @@ public class KiwoomStrategyController {
         result.put("riskLoopEnabled", s.isRiskLoopEnabled());
         result.put("dailyLossLimitPercent", s.getDailyLossLimitPercent());
         result.put("requireCatalystForAutoBuy", s.isRequireCatalystForAutoBuy());
+        result.put("maxPositions", s.getMaxPositions());
+        result.put("maxPositionsPerSector", s.getMaxPositionsPerSector());
+        result.put("stopLossCooldownTradingDays", s.getStopLossCooldownTradingDays());
+        result.put("dailyStopLossLimit", s.getDailyStopLossLimit());
+        result.put("entryWindow", "09:30~14:00");
+        result.put("timeExitAt", "14:50");
         result.put("orderEnabled", props.isTradeEnabled());
         return result;
     }
@@ -331,6 +365,12 @@ public class KiwoomStrategyController {
             double swingMinChangePercent,
             double swingMaxChangePercent,
             double swingMinVolumeRatio,
+            double swingMaxVolumeRatio,
+            long minMarketCapWon,
+            long minTradingValueWon,
+            double maxSpreadPercent,
+            double maxPriceAboveMa20Percent,
+            double maxAtrPercent,
             double swingStopLossPercent,
             double swingTakeProfitPercent,
             double swingTakeProfitPercent2,
@@ -339,6 +379,10 @@ public class KiwoomStrategyController {
             boolean riskLoopEnabled,
             double dailyLossLimitPercent,
             int dailyMaxProposals,
+            int maxPositions,
+            int maxPositionsPerSector,
+            int stopLossCooldownTradingDays,
+            int dailyStopLossLimit,
             Boolean requireCatalystForAutoBuy,
             String prompt) {}
 }

@@ -58,6 +58,46 @@ public class KiwoomStrategySettingsService {
                 existing.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
                 changed = true;
             }
+            if (existing.getSwingMaxVolumeRatio() <= 0) {
+                existing.setSwingMaxVolumeRatio(5.0);
+                changed = true;
+            }
+            if (existing.getMinMarketCapWon() <= 0) {
+                existing.setMinMarketCapWon(300_000_000_000L);
+                changed = true;
+            }
+            if (existing.getMinTradingValueWon() <= 0) {
+                existing.setMinTradingValueWon(10_000_000_000L);
+                changed = true;
+            }
+            if (existing.getMaxSpreadPercent() <= 0) {
+                existing.setMaxSpreadPercent(0.3);
+                changed = true;
+            }
+            if (existing.getMaxPriceAboveMa20Percent() <= 0) {
+                existing.setMaxPriceAboveMa20Percent(10.0);
+                changed = true;
+            }
+            if (existing.getMaxAtrPercent() <= 0) {
+                existing.setMaxAtrPercent(4.0);
+                changed = true;
+            }
+            if (existing.getMaxPositions() <= 0) {
+                existing.setMaxPositions(3);
+                changed = true;
+            }
+            if (existing.getMaxPositionsPerSector() <= 0) {
+                existing.setMaxPositionsPerSector(1);
+                changed = true;
+            }
+            if (existing.getStopLossCooldownTradingDays() <= 0) {
+                existing.setStopLossCooldownTradingDays(5);
+                changed = true;
+            }
+            if (existing.getDailyStopLossLimit() <= 0) {
+                existing.setDailyStopLossLimit(2);
+                changed = true;
+            }
             // swingTakeProfitPercent2는 0이 "미설정"이 아니라 "2차 익절 사용 안 함"이라는 의도적인 값이라
             // 손절/익절 비율처럼 여기서 백필하지 않는다 — 관리자가 화면에서 켜기 전까진 계속 꺼진 채로 둔다.
             if (existing.getSwingTakeProfitSplitPercent() <= 0) {
@@ -80,6 +120,12 @@ public class KiwoomStrategySettingsService {
         s.setSwingMinChangePercent(DEFAULT_SWING_MIN_CHANGE_PERCENT);
         s.setSwingMaxChangePercent(DEFAULT_SWING_MAX_CHANGE_PERCENT);
         s.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
+        s.setSwingMaxVolumeRatio(5.0);
+        s.setMinMarketCapWon(300_000_000_000L);
+        s.setMinTradingValueWon(10_000_000_000L);
+        s.setMaxSpreadPercent(0.3);
+        s.setMaxPriceAboveMa20Percent(10.0);
+        s.setMaxAtrPercent(4.0);
         s.setSwingStopLossPercent(p.getSwingStopLossPercent());
         s.setSwingTakeProfitPercent(p.getSwingTakeProfitPercent());
         s.setSwingTakeProfitPercent2(p.getSwingTakeProfitPercent2());
@@ -90,6 +136,10 @@ public class KiwoomStrategySettingsService {
         s.setDailyLossLimitPercent(0);
         // 하루 신규 매수 체결 건수 한도는 화면에서 조정 가능한 값으로 승격 — 최초 시드값만 env(.env 미설정 시 기본값)에서 가져온다.
         s.setDailyMaxProposals(p.getDailyMaxProposals());
+        s.setMaxPositions(3);
+        s.setMaxPositionsPerSector(1);
+        s.setStopLossCooldownTradingDays(5);
+        s.setDailyStopLossLimit(2);
         s.setRequireCatalystForAutoBuy(true);
         repo.save(s);
     }
@@ -119,6 +169,13 @@ public class KiwoomStrategySettingsService {
         s.setSwingMaxChangePercent(
                 Math.max(s.getSwingMinChangePercent(), clamp(u.swingMaxChangePercent, 0.5, 30)));
         s.setSwingMinVolumeRatio(clamp(u.swingMinVolumeRatio, 1, 20));
+        s.setSwingMaxVolumeRatio(
+                Math.max(s.getSwingMinVolumeRatio(), clamp(u.swingMaxVolumeRatio, 1, 20)));
+        s.setMinMarketCapWon(clamp(u.minMarketCapWon, 0, 100_000_000_000_000L));
+        s.setMinTradingValueWon(clamp(u.minTradingValueWon, 0, 10_000_000_000_000L));
+        s.setMaxSpreadPercent(clamp(u.maxSpreadPercent, 0.01, 5));
+        s.setMaxPriceAboveMa20Percent(clamp(u.maxPriceAboveMa20Percent, 0, 100));
+        s.setMaxAtrPercent(clamp(u.maxAtrPercent, 0.1, 100));
         s.setSwingStopLossPercent(clamp(u.swingStopLossPercent, 0, 100));
         s.setSwingTakeProfitPercent(clamp(u.swingTakeProfitPercent, 0, 100));
         s.setSwingTakeProfitPercent2(
@@ -132,6 +189,10 @@ public class KiwoomStrategySettingsService {
         s.setRiskLoopEnabled(u.riskLoopEnabled);
         s.setDailyLossLimitPercent(clamp(u.dailyLossLimitPercent, 0, 30));
         s.setDailyMaxProposals(clamp(u.dailyMaxProposals, 1, 200));
+        s.setMaxPositions(clamp(u.maxPositions, 1, 20));
+        s.setMaxPositionsPerSector(clamp(u.maxPositionsPerSector, 1, 10));
+        s.setStopLossCooldownTradingDays(clamp(u.stopLossCooldownTradingDays, 0, 30));
+        s.setDailyStopLossLimit(clamp(u.dailyStopLossLimit, 1, 20));
         s.setRequireCatalystForAutoBuy(u.requireCatalystForAutoBuy);
         prompts.saveOverride(AiPromptCatalog.KIWOOM_TRADE_STRATEGY, u.prompt, user);
         KiwoomStrategySettings saved = repo.save(s);
@@ -156,7 +217,19 @@ public class KiwoomStrategySettingsService {
                 + s.getSwingMaxChangePercent()
                 + "%, 거래량="
                 + s.getSwingMinVolumeRatio()
-                + "배 이상, 손절/익절=-"
+                + "~"
+                + s.getSwingMaxVolumeRatio()
+                + "배, 시총="
+                + s.getMinMarketCapWon()
+                + "원 이상, 거래대금="
+                + s.getMinTradingValueWon()
+                + "원 이상, 스프레드="
+                + s.getMaxSpreadPercent()
+                + "% 이하, MA20 과열="
+                + s.getMaxPriceAboveMa20Percent()
+                + "% 이하, ATR="
+                + s.getMaxAtrPercent()
+                + "% 이하, 손절/익절=-"
                 + s.getSwingStopLossPercent()
                 + "%/+"
                 + s.getSwingTakeProfitPercent()
@@ -172,7 +245,17 @@ public class KiwoomStrategySettingsService {
                 + s.getSwingMaxHoldingDays()
                 + "거래일, 일일 신규 매수 체결 건수 한도="
                 + s.getDailyMaxProposals()
-                + "건, 자동매수 촉매="
+                + "건, 최대 보유="
+                + s.getMaxPositions()
+                + "종목, 업종당="
+                + s.getMaxPositionsPerSector()
+                + "종목, 손절 재매수 제한="
+                + s.getStopLossCooldownTradingDays()
+                + "거래일, 일일 손절="
+                + s.getDailyStopLossLimit()
+                + "건, 일일 손실="
+                + s.getDailyLossLimitPercent()
+                + "%, 자동매수 촉매="
                 + (s.isRequireCatalystForAutoBuy() ? "필수" : "선택");
     }
 
@@ -184,6 +267,10 @@ public class KiwoomStrategySettingsService {
         return Math.max(min, Math.min(max, v));
     }
 
+    private long clamp(long v, long min, long max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
     public record Update(
             boolean autoExecute,
             int autoExecuteMinConfidence,
@@ -192,6 +279,12 @@ public class KiwoomStrategySettingsService {
             double swingMinChangePercent,
             double swingMaxChangePercent,
             double swingMinVolumeRatio,
+            double swingMaxVolumeRatio,
+            long minMarketCapWon,
+            long minTradingValueWon,
+            double maxSpreadPercent,
+            double maxPriceAboveMa20Percent,
+            double maxAtrPercent,
             double swingStopLossPercent,
             double swingTakeProfitPercent,
             double swingTakeProfitPercent2,
@@ -200,6 +293,10 @@ public class KiwoomStrategySettingsService {
             boolean riskLoopEnabled,
             double dailyLossLimitPercent,
             int dailyMaxProposals,
+            int maxPositions,
+            int maxPositionsPerSector,
+            int stopLossCooldownTradingDays,
+            int dailyStopLossLimit,
             boolean requireCatalystForAutoBuy,
             String prompt) {}
 }

@@ -67,6 +67,67 @@ public class KiwoomTradeService {
                 .map(response -> parseDailyPriceLimit(stockCode, response));
     }
 
+    /** 주식호가(ka10004)의 최우선 매수·매도 호가를 조회한다. 신규 매수 직전 스프레드 하드 가드가 사용한다. */
+    public Mono<OrderBookQuote> getOrderBookQuote(String stockCode) {
+        return readRequest(
+                        "ka10004",
+                        "/api/dostk/mrkcond",
+                        Map.of("stk_cd", normalizedStockCode(stockCode)))
+                .map(this::parseOrderBookQuote);
+    }
+
+    OrderBookQuote parseOrderBookQuote(JsonNode response) {
+        long ask = absoluteNumber(response, "sel_fpr_bid");
+        long bid = absoluteNumber(response, "buy_fpr_bid");
+        if (ask <= 0 || bid <= 0 || ask < bid)
+            throw new IllegalStateException("최우선 매수·매도 호가를 확인할 수 없습니다.");
+        return new OrderBookQuote(bid, ask);
+    }
+
+    /** 수정주가 일봉(ka10081)을 조회해 이동평균·ATR·업종 하드 가드를 계산한다. */
+    public Mono<List<DailyCandle>> getDailyChart(String stockCode) {
+        String today =
+                LocalDate.now(KiwoomMarketHours.KST).format(DateTimeFormatter.BASIC_ISO_DATE);
+        return readRequest(
+                        "ka10081",
+                        "/api/dostk/chart",
+                        Map.of(
+                                "stk_cd",
+                                normalizedStockCode(stockCode),
+                                "base_dt",
+                                today,
+                                "upd_stkpc_tp",
+                                "1"))
+                .map(this::parseDailyChart);
+    }
+
+    List<DailyCandle> parseDailyChart(JsonNode response) {
+        List<DailyCandle> result = new ArrayList<>();
+        if (response == null) return result;
+        JsonNode rows = response.path("stk_dt_pole_chart_qry");
+        if (!rows.isArray()) return result;
+        for (JsonNode row : rows) {
+            String rawDate = row.path("dt").asText("").trim();
+            if (!rawDate.matches("\\d{8}")) continue;
+            long close = absoluteNumber(row, "cur_prc", "close_pric");
+            long high = absoluteNumber(row, "high_pric");
+            long low = absoluteNumber(row, "low_pric");
+            if (close <= 0 || high <= 0 || low <= 0) continue;
+            String sector = row.path("sm_inds_tp").asText("").trim();
+            if (sector.isBlank()) sector = row.path("bic_inds_tp").asText("").trim();
+            result.add(
+                    new DailyCandle(
+                            LocalDate.parse(rawDate, DateTimeFormatter.BASIC_ISO_DATE),
+                            close,
+                            high,
+                            low,
+                            Math.max(0, absoluteNumber(row, "trde_qty")),
+                            sector));
+        }
+        result.sort(java.util.Comparator.comparing(DailyCandle::date).reversed());
+        return result;
+    }
+
     DailyPriceLimit parseDailyPriceLimit(String stockCode, JsonNode response) {
         return new DailyPriceLimit(
                 normalizedStockCode(stockCode),
@@ -172,6 +233,7 @@ public class KiwoomTradeService {
             if (!code.matches("\\d{6}")) continue;
             long currentPrice = Math.abs(number(row, "cur_prc"));
             long currentVolume = Math.max(0, number(row, "now_trde_qty"));
+            long tradingValue = Math.max(0, number(row, "trde_prica", "acc_trde_prica"));
             double changePercent = decimalNumber(row, "flu_rt");
             if (currentPrice <= 0 || currentVolume <= 0 || changePercent <= 0) continue;
             result.add(
@@ -180,7 +242,8 @@ public class KiwoomTradeService {
                             row.path("stk_nm").asText(code).trim(),
                             currentPrice,
                             changePercent,
-                            currentVolume));
+                            currentVolume,
+                            tradingValue));
         }
         return result;
     }
@@ -562,7 +625,27 @@ public class KiwoomTradeService {
             String name,
             long currentPrice,
             double changePercent,
-            long currentVolume) {}
+            long currentVolume,
+            long tradingValue) {
+        public IntradayRankStock(
+                String code,
+                String name,
+                long currentPrice,
+                double changePercent,
+                long currentVolume) {
+            this(code, name, currentPrice, changePercent, currentVolume, 0);
+        }
+    }
+
+    public record OrderBookQuote(long bid, long ask) {
+        public double spreadPercent() {
+            double midpoint = (bid + ask) / 2.0;
+            return midpoint <= 0 ? Double.POSITIVE_INFINITY : (ask - bid) * 100.0 / midpoint;
+        }
+    }
+
+    public record DailyCandle(
+            LocalDate date, long close, long high, long low, long volume, String sectorCode) {}
 
     public record SellAvailability(
             String stockCode,

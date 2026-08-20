@@ -15,6 +15,7 @@ import com.hyunchang.webapp.service.prompt.AiPromptService;
 import com.hyunchang.webapp.util.KiwoomMarketHours;
 import com.hyunchang.webapp.util.KiwoomPriceRules;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -73,6 +74,7 @@ public class KiwoomStrategyService {
     private final KiwoomStrategySettingsService settings;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomAccountHoldingSyncService accountHoldings;
+    private final KiwoomCandidateQualityService candidateQuality;
 
     public KiwoomStrategyService(
             KiwoomProperties props,
@@ -88,7 +90,8 @@ public class KiwoomStrategyService {
             ShortSwingCandidateService catalystService,
             KiwoomStrategySettingsService settings,
             KiwoomStrategyAuditService audit,
-            KiwoomAccountHoldingSyncService accountHoldings) {
+            KiwoomAccountHoldingSyncService accountHoldings,
+            KiwoomCandidateQualityService candidateQuality) {
         this.props = props;
         this.trade = trade;
         this.state = state;
@@ -103,6 +106,7 @@ public class KiwoomStrategyService {
         this.settings = settings;
         this.audit = audit;
         this.accountHoldings = accountHoldings;
+        this.candidateQuality = candidateQuality;
     }
 
     @Scheduled(cron = "0 0/15 9-15 * * MON-FRI", zone = "Asia/Seoul")
@@ -110,7 +114,7 @@ public class KiwoomStrategyService {
         if (props.getStrategy().isEnabled()
                 && state.isAutoTrading()
                 && props.isConfigured()
-                && KiwoomMarketHours.isOpen()) {
+                && KiwoomMarketHours.isEntryWindow()) {
             try {
                 runDecision("SCHEDULE");
             } catch (IllegalStateException ignored) {
@@ -169,8 +173,39 @@ public class KiwoomStrategyService {
             // 스윙 후보는 이번 판단 안에서 한 번만 조회해 유니버스 구성·신호 텍스트·BUY 검증에 함께 재사용한다.
             // DART 공시·뉴스 촉매까지 확인된 후보만 남기므로(ShortSwingCandidateService), 숫자만으로
             // 급등을 판단하지 않고 실제 근거가 있는지까지 반영한다.
-            List<ShortSwingCandidateService.KrCandidateCatalyst> catalystCandidates =
+            List<ShortSwingCandidateService.KrCandidateCatalyst> screenedCandidates =
                     fetchCatalystCandidates();
+            Map<String, KiwoomCandidateQualityService.CandidateQuality> candidateQualities =
+                    new HashMap<>();
+            List<ShortSwingCandidateService.KrCandidateCatalyst> catalystCandidates =
+                    new ArrayList<>();
+            for (ShortSwingCandidateService.KrCandidateCatalyst candidate : screenedCandidates) {
+                KiwoomCandidateQualityService.CandidateQuality quality =
+                        candidateQuality.evaluate(candidate.candidate(), settings.current());
+                candidateQualities.put(candidate.candidate().bareCode(), quality);
+                if (quality.accepted()) {
+                    catalystCandidates.add(candidate);
+                } else {
+                    String detail =
+                            candidate.candidate().name()
+                                    + "("
+                                    + candidate.candidate().bareCode()
+                                    + ") "
+                                    + quality.gate()
+                                    + ": "
+                                    + quality.detail();
+                    audit.log(
+                            quality.dataMissing() ? "DATA_MISSING" : "CANDIDATE_REJECTED",
+                            null,
+                            detail);
+                    log.info(
+                            "[자동매매][후보 제외] {}({}), 조건={}, 사유={}",
+                            candidate.candidate().name(),
+                            candidate.candidate().bareCode(),
+                            quality.gate(),
+                            quality.detail());
+                }
+            }
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates =
                     indexByCode(
                             catalystCandidates.stream()
@@ -184,9 +219,12 @@ public class KiwoomStrategyService {
                 catalystStatuses.put(c.bareCode(), cc.status());
                 universe.putIfAbsent(c.bareCode(), c.name());
                 if (!sellableQty.containsKey(c.bareCode())) {
-                    candidateLines.add(candidateLine(c, describeCatalyst(cc)));
+                    candidateLines.add(
+                            candidateLine(
+                                    c, describeCatalyst(cc), candidateQualities.get(c.bareCode())));
                 }
             }
+            Map<String, Integer> heldSectorCounts = heldSectorCounts(holdings);
             String swing = swingSignals(swingCandidates, universe.keySet());
             String guardRules = guardRules(deposit);
             String candidateSignature = candidateSignature(catalystCandidates);
@@ -266,6 +304,9 @@ public class KiwoomStrategyService {
                                 currentPrices,
                                 swingCandidates,
                                 catalystStatuses,
+                                candidateQualities,
+                                heldSectorCounts,
+                                holdings.size() + buyCount,
                                 deposit);
                 String code = validation.stockCode();
                 if (code != null && universe.containsKey(code)) respondedCodes.add(code);
@@ -305,8 +346,13 @@ public class KiwoomStrategyService {
                     holdProposals.add(p);
                     continue;
                 }
-                if (p.getAction() == KiwoomTradeProposal.Action.BUY) buyCount++;
-                else sellCount++;
+                if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
+                    buyCount++;
+                    KiwoomCandidateQualityService.CandidateQuality quality =
+                            candidateQualities.get(p.getStockCode());
+                    if (quality != null && quality.sectorCode() != null)
+                        heldSectorCounts.merge(quality.sectorCode(), 1, Integer::sum);
+                } else sellCount++;
                 log.info(
                         "[자동매매][AI 판단] {} {}({}), {}주, 신뢰도={}%, 사유={}",
                         actionLabel(p.getAction()),
@@ -464,7 +510,15 @@ public class KiwoomStrategyService {
                 + s.getSwingMaxChangePercent()
                 + "%, 거래량 "
                 + s.getSwingMinVolumeRatio()
-                + "배 이상, 재검토 "
+                + "~"
+                + s.getSwingMaxVolumeRatio()
+                + "배, 시총 "
+                + (s.getMinMarketCapWon() / 100_000_000L)
+                + "억원 이상, 거래대금 "
+                + (s.getMinTradingValueWon() / 100_000_000L)
+                + "억원 이상, 스프레드 "
+                + s.getMaxSpreadPercent()
+                + "% 이하, 매수시간 09:30~14:00, 재검토 "
                 + s.getCandidateReevaluationMinutes()
                 + "분, 자동 주문 신뢰도 "
                 + s.getAutoExecuteMinConfidence()
@@ -621,14 +675,11 @@ public class KiwoomStrategyService {
     private List<ShortSwingCandidateService.KrCandidateCatalyst> fetchCatalystCandidates() {
         try {
             var s = settings.current();
-            if (s.getSwingMinChangePercent() == 2.0
-                    && s.getSwingMaxChangePercent() == 8.0
-                    && s.getSwingMinVolumeRatio() == 2.0)
-                return catalystService.getKrCandidatesWithCatalysts(SWING_CANDIDATE_LIMIT);
             return catalystService.getKrCandidatesWithCatalysts(
                     SWING_CANDIDATE_LIMIT,
                     s.getSwingMinChangePercent(),
                     s.getSwingMinVolumeRatio(),
+                    s.getSwingMaxVolumeRatio(),
                     s.getSwingMaxChangePercent());
         } catch (Exception e) {
             return List.of();
@@ -658,6 +709,9 @@ public class KiwoomStrategyService {
             Map<String, Long> currentPrices,
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates,
             Map<String, ShortSwingCandidateService.CatalystStatus> catalystStatuses,
+            Map<String, KiwoomCandidateQualityService.CandidateQuality> candidateQualities,
+            Map<String, Integer> heldSectorCounts,
+            int activePositionCount,
             long deposit) {
         String code = d == null ? null : d.path("stockCode").asText(null);
         try {
@@ -688,10 +742,33 @@ public class KiwoomStrategyService {
                 KrxOpenApiService.KrSwingCandidate candidate = swingCandidates.get(code);
                 if (candidate == null || !matchesCurrentBuyRules(candidate, settings.current()))
                     return DecisionValidation.rejected(code, ValidationFailure.BUY_RULE_MISMATCH);
+                KiwoomCandidateQualityService.CandidateQuality quality =
+                        candidateQualities.get(code);
+                if (quality == null || !quality.accepted())
+                    return DecisionValidation.rejected(
+                            code, ValidationFailure.QUALITY_RULE_MISMATCH);
+                if (!KiwoomMarketHours.isEntryWindow())
+                    return DecisionValidation.rejected(code, ValidationFailure.ENTRY_WINDOW_CLOSED);
+                if (activePositionCount >= settings.current().getMaxPositions())
+                    return DecisionValidation.rejected(code, ValidationFailure.MAX_POSITIONS);
+                if (heldSectorCounts.getOrDefault(quality.sectorCode(), 0)
+                        >= settings.current().getMaxPositionsPerSector())
+                    return DecisionValidation.rejected(code, ValidationFailure.SECTOR_LIMIT);
+                if (boughtToday(code))
+                    return DecisionValidation.rejected(
+                            code, ValidationFailure.ALREADY_BOUGHT_TODAY);
+                if (insideStopLossCooldown(code))
+                    return DecisionValidation.rejected(code, ValidationFailure.STOP_LOSS_COOLDOWN);
+                if (dailyStopLossCount() >= settings.current().getDailyStopLossLimit())
+                    return DecisionValidation.rejected(
+                            code, ValidationFailure.DAILY_STOP_LOSS_LIMIT);
                 if (settings.current().isRequireCatalystForAutoBuy()) {
                     ShortSwingCandidateService.CatalystStatus catalystStatus =
                             catalystStatuses.getOrDefault(
                                     code, ShortSwingCandidateService.CatalystStatus.UNAVAILABLE);
+                    if (catalystStatus == ShortSwingCandidateService.CatalystStatus.RISK_EVENT)
+                        return DecisionValidation.rejected(
+                                code, ValidationFailure.CATALYST_RISK_EVENT);
                     if (catalystStatus == ShortSwingCandidateService.CatalystStatus.NOT_FOUND)
                         return DecisionValidation.rejected(
                                 code, ValidationFailure.CATALYST_NOT_FOUND);
@@ -767,7 +844,71 @@ public class KiwoomStrategyService {
             com.hyunchang.webapp.entity.KiwoomStrategySettings current) {
         return candidate.changePercent() >= current.getSwingMinChangePercent()
                 && candidate.changePercent() <= current.getSwingMaxChangePercent()
-                && candidate.volumeRatio() >= current.getSwingMinVolumeRatio();
+                && candidate.volumeRatio() >= current.getSwingMinVolumeRatio()
+                && candidate.volumeRatio() <= current.getSwingMaxVolumeRatio()
+                && candidate.marketCap() >= current.getMinMarketCapWon()
+                && candidate.tradingValue() >= current.getMinTradingValueWon();
+    }
+
+    private Map<String, Integer> heldSectorCounts(List<KiwoomTradeService.Holding> holdings) {
+        Map<String, Integer> counts = new HashMap<>();
+        for (KiwoomTradeService.Holding holding : holdings) {
+            String sector = candidateQuality.sectorCode(holding.code());
+            if (sector == null || sector.isBlank()) {
+                audit.log(
+                        "DATA_MISSING",
+                        null,
+                        holding.name() + "(" + holding.code() + ") 보유 종목 업종코드 조회 실패");
+                continue;
+            }
+            counts.merge(sector, 1, Integer::sum);
+        }
+        return counts;
+    }
+
+    private boolean boughtToday(String stockCode) {
+        return proposals.existsByStockCodeAndActionAndStatusInAndCreatedAtGreaterThanEqual(
+                stockCode,
+                KiwoomTradeProposal.Action.BUY,
+                List.of(
+                        KiwoomTradeProposal.Status.ORDERED,
+                        KiwoomTradeProposal.Status.PARTIALLY_FILLED,
+                        KiwoomTradeProposal.Status.FILLED,
+                        KiwoomTradeProposal.Status.CANCEL_REQUESTED,
+                        KiwoomTradeProposal.Status.ORDER_UNKNOWN),
+                LocalDate.now(KST).atStartOfDay());
+    }
+
+    private boolean insideStopLossCooldown(String stockCode) {
+        int cooldown = settings.current().getStopLossCooldownTradingDays();
+        if (cooldown <= 0) return false;
+        return proposals
+                .findFirstByStockCodeAndActionAndStatusAndReasonStartingWithOrderByCreatedAtDesc(
+                        stockCode,
+                        KiwoomTradeProposal.Action.SELL,
+                        KiwoomTradeProposal.Status.FILLED,
+                        "[EXIT:STOP_LOSS]")
+                .map(KiwoomTradeProposal::getCreatedAt)
+                .filter(java.util.Objects::nonNull)
+                .map(LocalDateTime::toLocalDate)
+                .map(date -> tradingDaysAfter(date, LocalDate.now(KST)) <= cooldown)
+                .orElse(false);
+    }
+
+    private long dailyStopLossCount() {
+        return proposals.countByActionAndStatusAndReasonStartingWithAndCreatedAtGreaterThanEqual(
+                KiwoomTradeProposal.Action.SELL,
+                KiwoomTradeProposal.Status.FILLED,
+                "[EXIT:STOP_LOSS]",
+                LocalDate.now(KST).atStartOfDay());
+    }
+
+    private long tradingDaysAfter(LocalDate from, LocalDate to) {
+        if (from == null || to == null || !from.isBefore(to)) return 0;
+        return from.plusDays(1)
+                .datesUntil(to.plusDays(1))
+                .filter(KiwoomMarketHours::isTradingDay)
+                .count();
     }
 
     /** 일부 모델이 0~100 정수 대신 0.0~1.0 비율로 응답하는 경우를 보정한다 (예: 0.82 → 82). */
@@ -868,7 +1009,9 @@ public class KiwoomStrategyService {
                 + s.getSwingMaxChangePercent()
                 + "% 이하이고 20일 평균 대비 거래량 "
                 + s.getSwingMinVolumeRatio()
-                + "배 이상인 후보 안에서만 판단하세요. 이보다 낮으면 HOLD를 선택하세요."
+                + "~"
+                + s.getSwingMaxVolumeRatio()
+                + "배이고 시총·거래대금·이동평균·ATR·실시간 스프레드 하드 가드를 통과한 후보 안에서만 판단하세요. 그 외에는 HOLD를 선택하세요."
                 + runtimeTradingRules(s, deposit);
     }
 
@@ -888,9 +1031,17 @@ public class KiwoomStrategyService {
                 + s.getSwingMaxChangePercent()
                 + "% 이하, 20일 평균 대비 거래량 "
                 + s.getSwingMinVolumeRatio()
-                + "배 이상인 후보 목록 안에서만 판단\n"
+                + "~"
+                + s.getSwingMaxVolumeRatio()
+                + "배, 시가총액 "
+                + (s.getMinMarketCapWon() / 100_000_000L)
+                + "억원 이상, 거래대금 "
+                + (s.getMinTradingValueWon() / 100_000_000L)
+                + "억원 이상, 스프레드 "
+                + s.getMaxSpreadPercent()
+                + "% 이하이며 이동평균·ATR 검증을 통과한 후보 목록 안에서만 판단\n"
                 + "- 위 상승률 범위를 벗어난 종목은 급등 추격 여부와 관계없이 신규 BUY 후보에서 제외\n"
-                + "- 공시·뉴스 촉매는 신뢰도를 높이는 근거이지 후보 제외의 필수 조건은 아님. 근거가 약하면 HOLD를 우선\n"
+                + "- 직접 관련된 긍정 공시·뉴스가 확인되지 않거나 유상증자·CB/BW·최대주주 변경 등 위험 공시가 있으면 신규 BUY 금지\n"
                 + "- 자동 주문 신뢰도 기준: "
                 + s.getAutoExecuteMinConfidence()
                 + "% 이상\n"
@@ -986,7 +1137,10 @@ public class KiwoomStrategyService {
     }
 
     /** KrSwingCandidate가 이미 가진 시세로 문자열을 만든다 — 추가 API 호출이 없다. catalystText가 있으면 근거를 덧붙인다. */
-    private String candidateLine(KrxOpenApiService.KrSwingCandidate c, String catalystText) {
+    private String candidateLine(
+            KrxOpenApiService.KrSwingCandidate c,
+            String catalystText,
+            KiwoomCandidateQualityService.CandidateQuality quality) {
         String base =
                 c.name()
                         + "("
@@ -998,7 +1152,19 @@ public class KiwoomStrategyService {
                         + c.changePercent()
                         + "%) · 거래량 20일평균 대비 "
                         + c.volumeRatio()
-                        + "배";
+                        + "배 · 시총 "
+                        + String.format("%,d", c.marketCap() / 100_000_000L)
+                        + "억원 · 거래대금 "
+                        + String.format("%,d", c.tradingValue() / 100_000_000L)
+                        + "억원"
+                        + (quality == null
+                                ? ""
+                                : String.format(
+                                        " · MA5 %.0f/MA20 %.0f · ATR %.2f%% · 스프레드 %.3f%%",
+                                        quality.ma5(),
+                                        quality.ma20(),
+                                        quality.atrPercent(),
+                                        quality.spreadPercent()));
         return catalystText == null || catalystText.isBlank()
                 ? base
                 : base + " · 근거: " + catalystText;
@@ -1019,7 +1185,15 @@ public class KiwoomStrategyService {
         INVALID_ACTION("매매 행동 형식 오류"),
         DUPLICATE_DECISION("동일 종목 중복 판단"),
         BUY_RULE_MISMATCH("현재 매수 후보 규칙 불일치"),
+        QUALITY_RULE_MISMATCH("유동성·추세·ATR·호가 규칙 불일치"),
+        ENTRY_WINDOW_CLOSED("신규 매수 시간(09:30~14:00) 외"),
+        MAX_POSITIONS("최대 동시 보유 종목 수 도달"),
+        SECTOR_LIMIT("동일 업종 보유 한도 도달"),
+        ALREADY_BOUGHT_TODAY("동일 종목 당일 재매수 금지"),
+        STOP_LOSS_COOLDOWN("손절 후 재매수 제한 기간"),
+        DAILY_STOP_LOSS_LIMIT("당일 손절 건수 한도 도달"),
         CATALYST_NOT_FOUND("확인된 촉매 없음"),
+        CATALYST_RISK_EVENT("부정·희석 위험 공시 확인"),
         CATALYST_UNAVAILABLE("촉매 조회 불가"),
         INVALID_QUANTITY("주문 수량 오류"),
         INVALID_PRICE("지정가 누락 또는 오류"),

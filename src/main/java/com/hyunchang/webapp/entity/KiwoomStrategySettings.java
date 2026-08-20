@@ -14,6 +14,12 @@ public class KiwoomStrategySettings {
     private double swingMinChangePercent = 2.0;
     private double swingMaxChangePercent = 8.0;
     private double swingMinVolumeRatio = 2.0;
+    private double swingMaxVolumeRatio = 5.0;
+    private long minMarketCapWon = 300_000_000_000L;
+    private long minTradingValueWon = 10_000_000_000L;
+    private double maxSpreadPercent = 0.3;
+    private double maxPriceAboveMa20Percent = 10.0;
+    private double maxAtrPercent = 4.0;
     private double swingStopLossPercent;
     private double swingTakeProfitPercent;
     private double swingTakeProfitPercent2;
@@ -22,6 +28,10 @@ public class KiwoomStrategySettings {
     private boolean riskLoopEnabled;
     private double dailyLossLimitPercent;
     private int dailyMaxProposals;
+    private int maxPositions = 3;
+    private int maxPositionsPerSector = 1;
+    private int stopLossCooldownTradingDays = 5;
+    private int dailyStopLossLimit = 2;
 
     /** null은 기능 추가 전 기존 행이다. 서비스 초기화에서 안전 기본값 true로 백필한다. */
     private Boolean requireCatalystForAutoBuy = true;
@@ -94,6 +104,54 @@ public class KiwoomStrategySettings {
         swingMinVolumeRatio = v;
     }
 
+    public double getSwingMaxVolumeRatio() {
+        return swingMaxVolumeRatio;
+    }
+
+    public void setSwingMaxVolumeRatio(double v) {
+        swingMaxVolumeRatio = v;
+    }
+
+    public long getMinMarketCapWon() {
+        return minMarketCapWon;
+    }
+
+    public void setMinMarketCapWon(long v) {
+        minMarketCapWon = v;
+    }
+
+    public long getMinTradingValueWon() {
+        return minTradingValueWon;
+    }
+
+    public void setMinTradingValueWon(long v) {
+        minTradingValueWon = v;
+    }
+
+    public double getMaxSpreadPercent() {
+        return maxSpreadPercent;
+    }
+
+    public void setMaxSpreadPercent(double v) {
+        maxSpreadPercent = v;
+    }
+
+    public double getMaxPriceAboveMa20Percent() {
+        return maxPriceAboveMa20Percent;
+    }
+
+    public void setMaxPriceAboveMa20Percent(double v) {
+        maxPriceAboveMa20Percent = v;
+    }
+
+    public double getMaxAtrPercent() {
+        return maxAtrPercent;
+    }
+
+    public void setMaxAtrPercent(double v) {
+        maxAtrPercent = v;
+    }
+
     public double getSwingStopLossPercent() {
         return swingStopLossPercent;
     }
@@ -156,6 +214,38 @@ public class KiwoomStrategySettings {
 
     public void setDailyMaxProposals(int v) {
         dailyMaxProposals = v;
+    }
+
+    public int getMaxPositions() {
+        return maxPositions;
+    }
+
+    public void setMaxPositions(int v) {
+        maxPositions = v;
+    }
+
+    public int getMaxPositionsPerSector() {
+        return maxPositionsPerSector;
+    }
+
+    public void setMaxPositionsPerSector(int v) {
+        maxPositionsPerSector = v;
+    }
+
+    public int getStopLossCooldownTradingDays() {
+        return stopLossCooldownTradingDays;
+    }
+
+    public void setStopLossCooldownTradingDays(int v) {
+        stopLossCooldownTradingDays = v;
+    }
+
+    public int getDailyStopLossLimit() {
+        return dailyStopLossLimit;
+    }
+
+    public void setDailyStopLossLimit(int v) {
+        dailyStopLossLimit = v;
     }
 
     public Boolean getRequireCatalystForAutoBuy() {

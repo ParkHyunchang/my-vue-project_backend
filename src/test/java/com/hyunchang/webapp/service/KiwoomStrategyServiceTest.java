@@ -51,6 +51,7 @@ class KiwoomStrategyServiceTest {
     @Mock private KiwoomStrategySettingsService settingsService;
     @Mock private KiwoomStrategyAuditService audit;
     @Mock private KiwoomAccountHoldingSyncService accountHoldings;
+    @Mock private KiwoomCandidateQualityService candidateQuality;
 
     private KiwoomProperties props;
     private KiwoomStrategySettings settings;
@@ -92,7 +93,8 @@ class KiwoomStrategyServiceTest {
                         catalystService,
                         settingsService,
                         audit,
-                        accountHoldings);
+                        accountHoldings,
+                        candidateQuality);
 
         lenient().when(state.isEmergencyStopped()).thenReturn(false);
         lenient().when(state.tryStartDecision()).thenReturn(true);
@@ -101,6 +103,38 @@ class KiwoomStrategyServiceTest {
                 .thenReturn(false);
         lenient().when(state.isDailyLossTriggered()).thenReturn(false);
         lenient().when(settingsService.current()).thenReturn(settings);
+        lenient()
+                .when(
+                        catalystService.getKrCandidatesWithCatalysts(
+                                eq(30), anyDouble(), anyDouble(), anyDouble(), anyDouble()))
+                .thenAnswer(
+                        invocation -> {
+                            double minChange = invocation.getArgument(1);
+                            double minVolume = invocation.getArgument(2);
+                            double maxChange = invocation.getArgument(4);
+                            List<ShortSwingCandidateService.KrCandidateCatalyst> result =
+                                    catalystService.getKrCandidatesWithCatalysts(
+                                            30, minChange, minVolume, maxChange);
+                            return result == null || result.isEmpty()
+                                    ? catalystService.getKrCandidatesWithCatalysts(30)
+                                    : result;
+                        });
+        lenient()
+                .when(candidateQuality.evaluate(any(), any()))
+                .thenAnswer(
+                        invocation -> {
+                            KrxOpenApiService.KrSwingCandidate candidate =
+                                    invocation.getArgument(0);
+                            return KiwoomCandidateQualityService.CandidateQuality.accepted(
+                                    candidate.bareCode(),
+                                    "TEST_SECTOR",
+                                    71_000,
+                                    69_000,
+                                    2.0,
+                                    1.5,
+                                    0.1,
+                                    70_100);
+                        });
         lenient().when(trade.getDeposit()).thenReturn(Mono.just(depositNode(100_000_000)));
         lenient().when(trade.getBalance()).thenReturn(Mono.just(emptyNode));
         lenient()
@@ -136,7 +170,10 @@ class KiwoomStrategyServiceTest {
                 1_000_000,
                 300_000,
                 3.5,
-                LocalDate.now());
+                LocalDate.now(),
+                3.5,
+                500_000_000_000L,
+                20_000_000_000L);
     }
 
     /** 공시·뉴스 촉매 없이 감싸는 기본 헬퍼 — 대부분의 테스트는 촉매 텍스트 자체를 검증하지 않는다. */

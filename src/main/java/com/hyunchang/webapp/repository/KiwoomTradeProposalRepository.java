@@ -26,6 +26,12 @@ public interface KiwoomTradeProposalRepository extends JpaRepository<KiwoomTrade
             Collection<KiwoomTradeProposal.Status> statuses,
             LocalDateTime at);
 
+    boolean existsByStockCodeAndActionAndStatusInAndCreatedAtGreaterThanEqual(
+            String code,
+            KiwoomTradeProposal.Action action,
+            Collection<KiwoomTradeProposal.Status> statuses,
+            LocalDateTime at);
+
     boolean existsByStockCodeAndActionAndStatusIn(
             String code,
             KiwoomTradeProposal.Action action,
@@ -33,6 +39,26 @@ public interface KiwoomTradeProposalRepository extends JpaRepository<KiwoomTrade
 
     Optional<KiwoomTradeProposal> findFirstByStockCodeAndActionAndStatusOrderByCreatedAtDesc(
             String code, KiwoomTradeProposal.Action action, KiwoomTradeProposal.Status status);
+
+    Optional<KiwoomTradeProposal>
+            findFirstByStockCodeAndActionAndStatusAndReasonStartingWithOrderByCreatedAtDesc(
+                    String code,
+                    KiwoomTradeProposal.Action action,
+                    KiwoomTradeProposal.Status status,
+                    String reasonPrefix);
+
+    long countByActionAndStatusAndReasonStartingWithAndCreatedAtGreaterThanEqual(
+            KiwoomTradeProposal.Action action,
+            KiwoomTradeProposal.Status status,
+            String reasonPrefix,
+            LocalDateTime at);
+
+    boolean existsByStockCodeAndActionAndStatusAndReasonStartingWithAndCreatedAtGreaterThanEqual(
+            String code,
+            KiwoomTradeProposal.Action action,
+            KiwoomTradeProposal.Status status,
+            String reasonPrefix,
+            LocalDateTime at);
 
     long deleteByRunIdIn(Collection<Long> runIds);
 }

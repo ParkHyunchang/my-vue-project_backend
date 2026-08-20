@@ -91,6 +91,47 @@ public class KiwoomOrderSyncService {
                 && hasPendingBuyOrders()) sync("미체결 매수 빠른 확인");
     }
 
+    /** 14:00 이후에는 신규 진입을 허용하지 않으므로 남은 자동매수 지정가 잔량을 즉시 취소한다. */
+    @Scheduled(cron = "0 0 14 * * MON-FRI", zone = "Asia/Seoul")
+    public void cancelBuyOrdersAtEntryClose() {
+        if (!props.isConfigured() || !KiwoomMarketHours.isTradingDay(LocalDate.now(KST))) return;
+        try {
+            List<JsonNode> unfilledRecords = new ArrayList<>();
+            collectRecords(
+                    trade.getUnfilledOrders().block(Duration.ofSeconds(15)), unfilledRecords);
+            Set<String> brokerOrderNumbers = orderNumbers(unfilledRecords);
+            int requested = 0;
+            for (KiwoomTradeProposal proposal :
+                    proposals.findByStatusIn(
+                            List.of(
+                                    KiwoomTradeProposal.Status.ORDERED,
+                                    KiwoomTradeProposal.Status.PARTIALLY_FILLED))) {
+                if (proposal.getAction() != KiwoomTradeProposal.Action.BUY
+                        || proposal.getRemainingQuantity() <= 0
+                        || proposal.getBrokerOrderNo() == null) continue;
+                String orderNo = normalizeOrderNo(proposal.getBrokerOrderNo());
+                if (orderNo == null || !brokerOrderNumbers.contains(orderNo)) continue;
+                JsonNode response =
+                        trade.cancelOrder(
+                                        new KiwoomTradeService.CancelOrderRequest(
+                                                proposal.getBrokerOrderNo(),
+                                                proposal.getStockCode(),
+                                                proposal.getRemainingQuantity()))
+                                .block(Duration.ofSeconds(20));
+                String reason = "신규 매수 종료시각 14:00 도달로 미체결 잔량 자동 취소";
+                proposal.cancelRequested(reason, response == null ? "" : response.toString());
+                proposals.save(proposal);
+                audit.log("ENTRY_CLOSE_BUY_CANCEL_REQUESTED", proposal.getId(), reason);
+                requested++;
+            }
+            log.info("[자동매매][14시 미체결 매수 취소] 취소 요청={}건", requested);
+        } catch (Exception e) {
+            String message = "14시 미체결 매수 취소 실패: " + trim(e.getMessage());
+            audit.log("ENTRY_CLOSE_BUY_CANCEL_FAILED", null, message);
+            log.error("[자동매매][14시 미체결 매수 취소 실패] {}", message);
+        }
+    }
+
     /** 단일 주문 동기화가 비정상적으로 오래 잠금을 점유하면 감사 이력과 관리자 실시간 로그에 한 번만 알린다. */
     @Scheduled(fixedDelay = 10000, initialDelay = 10000)
     public void warnLongRunningSync() {

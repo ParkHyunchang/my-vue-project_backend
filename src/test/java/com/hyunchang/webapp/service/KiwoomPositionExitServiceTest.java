@@ -23,6 +23,7 @@ import com.hyunchang.webapp.repository.KiwoomTradeProposalRepository;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import java.lang.reflect.Field;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -271,6 +272,21 @@ class KiwoomPositionExitServiceTest {
         assertEquals(KiwoomTradeProposal.OrderType.MARKET, timeExit.getOrderType());
         assertEquals(6, timeExit.getQuantity());
         verify(orders, times(1)).autoExecute(timeExit.getId());
+    }
+
+    @Test
+    void holdingPeriodCountsPurchaseDayAsFirstTradingDay() {
+        LocalDate friday = LocalDate.of(2026, 8, 7);
+
+        assertEquals(1, KiwoomPositionExitService.inclusiveHoldingTradingDays(friday, friday));
+        assertEquals(
+                2,
+                KiwoomPositionExitService.inclusiveHoldingTradingDays(
+                        friday, LocalDate.of(2026, 8, 10)));
+        assertEquals(
+                3,
+                KiwoomPositionExitService.inclusiveHoldingTradingDays(
+                        friday, LocalDate.of(2026, 8, 11)));
     }
 
     @Test

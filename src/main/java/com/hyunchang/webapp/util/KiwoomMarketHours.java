@@ -12,6 +12,9 @@ import java.util.Set;
 /** 한국 주식 정규장 시간 판정. 주말과 등록된 KRX 휴장일을 모두 제외한다. */
 public final class KiwoomMarketHours {
     public static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    public static final LocalTime ENTRY_START = LocalTime.of(9, 30);
+    public static final LocalTime ENTRY_END = LocalTime.of(14, 0);
+    public static final LocalTime TIME_EXIT_AT = LocalTime.of(14, 50);
 
     private KiwoomMarketHours() {}
 
@@ -27,6 +30,17 @@ public final class KiwoomMarketHours {
         if (date.getDayOfWeek() == DayOfWeek.SATURDAY || date.getDayOfWeek() == DayOfWeek.SUNDAY)
             return false;
         return !closedDates().contains(date);
+    }
+
+    public static boolean isEntryWindow() {
+        return isEntryWindow(LocalDateTime.now(KST));
+    }
+
+    static boolean isEntryWindow(LocalDateTime now) {
+        LocalTime time = now.toLocalTime();
+        return isTradingDay(now.toLocalDate())
+                && !time.isBefore(ENTRY_START)
+                && time.isBefore(ENTRY_END);
     }
 
     /**

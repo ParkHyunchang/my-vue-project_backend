@@ -59,6 +59,7 @@ public class DartFinancialService {
                     "담보",
                     "질권",
                     "전환사채",
+                    "교환사채",
                     "신주인수권",
                     "유상증자",
                     "감자",
@@ -98,6 +99,10 @@ public class DartFinancialService {
         if (!enabled() || limit <= 0) return new PositiveDisclosureLookup(false, List.of());
         LocalDate cutoff = LocalDate.now().minusDays(14);
         DisclosureLookup lookup = recentDisclosuresLookup(symbol, 40);
+        boolean hasRiskEvent =
+                lookup.disclosures().stream()
+                        .filter(d -> parseDisclosureDate(d.date()).isAfter(cutoff.minusDays(1)))
+                        .anyMatch(this::isRiskDisclosure);
         List<PositiveDisclosure> result =
                 lookup.disclosures().stream()
                         .filter(this::isPositiveDisclosure)
@@ -106,7 +111,7 @@ public class DartFinancialService {
                         .limit(limit)
                         .map(d -> new PositiveDisclosure(d.date(), d.name(), d.receiptNo()))
                         .toList();
-        return new PositiveDisclosureLookup(lookup.available(), result);
+        return new PositiveDisclosureLookup(lookup.available(), result, hasRiskEvent);
     }
 
     /** 국내 종목 재무 요약. symbol 은 "005930.KS" 또는 "005930". 미설정/실패 시 null. */
@@ -421,7 +426,11 @@ public class DartFinancialService {
     public record PositiveDisclosure(String date, String title, String receiptNo) {}
 
     public record PositiveDisclosureLookup(
-            boolean available, List<PositiveDisclosure> disclosures) {}
+            boolean available, List<PositiveDisclosure> disclosures, boolean hasRiskEvent) {
+        public PositiveDisclosureLookup(boolean available, List<PositiveDisclosure> disclosures) {
+            this(available, disclosures, false);
+        }
+    }
 
     /** "1,234,567" → long. 음수 괄호 "(1,234)" 처리. 실패 시 Long.MIN_VALUE. */
     private long parseAmount(String s) {

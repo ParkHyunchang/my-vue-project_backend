@@ -28,6 +28,7 @@ public class KiwoomProposalOrderService {
     private final KiwoomAutoTradeState state;
     private final KiwoomStrategyAuditService audit;
     private final KiwoomStrategySettingsService settings;
+    private final KiwoomCandidateQualityService candidateQuality;
 
     public KiwoomProposalOrderService(
             KiwoomTradeProposalRepository proposals,
@@ -36,7 +37,8 @@ public class KiwoomProposalOrderService {
             KiwoomWebsocketClient events,
             KiwoomAutoTradeState state,
             KiwoomStrategyAuditService audit,
-            KiwoomStrategySettingsService settings) {
+            KiwoomStrategySettingsService settings,
+            KiwoomCandidateQualityService candidateQuality) {
         this.proposals = proposals;
         this.trade = trade;
         this.props = props;
@@ -44,6 +46,7 @@ public class KiwoomProposalOrderService {
         this.state = state;
         this.audit = audit;
         this.settings = settings;
+        this.candidateQuality = candidateQuality;
     }
 
     public Result approve(long id) {
@@ -318,6 +321,8 @@ public class KiwoomProposalOrderService {
         if (p.getOrderType() == KiwoomTradeProposal.OrderType.LIMIT && p.getLimitPrice() == null)
             return "지정가 주문에는 가격이 필요합니다.";
         if (p.getAction() == KiwoomTradeProposal.Action.BUY) {
+            if (!KiwoomMarketHours.isEntryWindow())
+                return "신규 매수는 평일 09:30~14:00 KST에만 전송할 수 있습니다.";
             if (p.getOrderType() != KiwoomTradeProposal.OrderType.LIMIT)
                 return "매수 자동 전송은 지정가 주문만 허용합니다.";
             if (state.isDailyLossTriggered()) return "일일 손실 한도에 도달했습니다. 오늘은 신규 매수를 전송할 수 없습니다.";
@@ -330,6 +335,25 @@ public class KiwoomProposalOrderService {
             double percent = settings.current().getMaxBuyDepositPercent();
             long buyBudget = Math.round(deposit * percent / 100.0);
             if (amount > buyBudget) return "매수 금액이 예수금 대비 허용 비율(" + percent + "%)을 초과합니다.";
+            KiwoomCandidateQualityService.SpreadCheck spread =
+                    candidateQuality.checkLiveSpread(
+                            p.getStockCode(), settings.current().getMaxSpreadPercent());
+            if (!spread.accepted()) {
+                String detail =
+                        spread.bid() <= 0 || spread.ask() <= 0
+                                ? "실시간 호가 데이터 누락: " + spread.message()
+                                : String.format(
+                                        "실시간 스프레드 %.3f%%가 허용치 %.3f%%를 초과했습니다.",
+                                        spread.spreadPercent(),
+                                        settings.current().getMaxSpreadPercent());
+                audit.log(
+                        spread.bid() <= 0 || spread.ask() <= 0
+                                ? "DATA_MISSING"
+                                : "CANDIDATE_REJECTED",
+                        p.getId(),
+                        p.getStockCode() + " 주문 직전 차단: " + detail);
+                return detail;
+            }
         }
         long filledToday =
                 proposals.countByActionInAndStatusInAndCreatedAtGreaterThanEqual(

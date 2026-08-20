@@ -70,9 +70,20 @@ public class ShortSwingCandidateService {
 
     public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(
             int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
+        return getKrCandidatesWithCatalysts(
+                limit, minChangePercent, minVolumeRatio, Double.MAX_VALUE, maxChangePercent);
+    }
+
+    public List<KrCandidateCatalyst> getKrCandidatesWithCatalysts(
+            int limit,
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxVolumeRatio,
+            double maxChangePercent) {
         if (limit <= 0) return List.of();
         CandidateFilter filter =
-                new CandidateFilter(minChangePercent, minVolumeRatio, maxChangePercent);
+                new CandidateFilter(
+                        minChangePercent, minVolumeRatio, maxVolumeRatio, maxChangePercent);
         if (isFresh() && filter.equals(cacheFilter)) return cache.stream().limit(limit).toList();
 
         synchronized (krLock) {
@@ -92,6 +103,7 @@ public class ShortSwingCandidateService {
                         MAX_SCREENED_CANDIDATES,
                         filter.minChangePercent(),
                         filter.minVolumeRatio(),
+                        filter.maxVolumeRatio(),
                         filter.maxChangePercent());
         List<CandidateLookupTask> futures = new ArrayList<>();
         for (KrxOpenApiService.KrSwingCandidate candidate : screened) {
@@ -147,12 +159,16 @@ public class ShortSwingCandidateService {
         List<DartFinancialService.PositiveDisclosure> disclosures = disclosureLookup.disclosures();
         List<CatalystNews> news = extractCatalystNews(newsLookup.news());
         CatalystStatus status =
-                !disclosures.isEmpty() || !news.isEmpty()
-                        ? CatalystStatus.VERIFIED
-                        : disclosureLookup.available() && newsLookup.available()
-                                ? CatalystStatus.NOT_FOUND
-                                : CatalystStatus.UNAVAILABLE;
-        return new KrCandidateCatalyst(candidate, disclosures, news, status);
+                disclosureLookup.hasRiskEvent()
+                        ? CatalystStatus.RISK_EVENT
+                        : !disclosures.isEmpty() || !news.isEmpty()
+                                ? CatalystStatus.VERIFIED
+                                : disclosureLookup.available() && newsLookup.available()
+                                        ? CatalystStatus.NOT_FOUND
+                                        : CatalystStatus.UNAVAILABLE;
+        return disclosureLookup.hasRiskEvent()
+                ? new KrCandidateCatalyst(candidate, List.of(), List.of(), status)
+                : new KrCandidateCatalyst(candidate, disclosures, news, status);
     }
 
     @PreDestroy
@@ -187,6 +203,13 @@ public class ShortSwingCandidateService {
                                 + " "
                                 + (news.getDescription() == null ? "" : news.getDescription()))
                         .toLowerCase(Locale.ROOT);
+        if (text.contains("유상증자")
+                || text.contains("전환사채")
+                || text.contains("신주인수권")
+                || text.contains("교환사채")
+                || text.contains("최대주주 변경")
+                || text.contains("횡령")
+                || text.contains("배임")) return false;
         return text.contains("수주")
                 || text.contains("공급계약")
                 || text.contains("계약 체결")
@@ -288,6 +311,7 @@ public class ShortSwingCandidateService {
 
     public enum CatalystStatus {
         VERIFIED,
+        RISK_EVENT,
         NOT_FOUND,
         UNAVAILABLE
     }
@@ -325,7 +349,10 @@ public class ShortSwingCandidateService {
             CompletableFuture<KrCandidateCatalyst> future) {}
 
     private record CandidateFilter(
-            double minChangePercent, double minVolumeRatio, double maxChangePercent) {}
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxVolumeRatio,
+            double maxChangePercent) {}
 
     public record UsCandidateSignal(
             YahooFinanceService.RawQuote candidate,

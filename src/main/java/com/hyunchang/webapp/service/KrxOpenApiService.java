@@ -12,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDate;
+import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -153,9 +154,20 @@ public class KrxOpenApiService {
      */
     public List<KrSwingCandidate> getShortSwingCandidates(
             int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
+        return getShortSwingCandidates(
+                limit, minChangePercent, minVolumeRatio, Double.MAX_VALUE, maxChangePercent);
+    }
+
+    public List<KrSwingCandidate> getShortSwingCandidates(
+            int limit,
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxVolumeRatio,
+            double maxChangePercent) {
         if (limit <= 0 || !hasApiKey()) return List.of();
         if (!swingScreenNeedsRefresh()) {
-            return filterSwingCandidates(limit, minChangePercent, minVolumeRatio, maxChangePercent);
+            return filterSwingCandidates(
+                    limit, minChangePercent, minVolumeRatio, maxVolumeRatio, maxChangePercent);
         }
 
         synchronized (swingScreenLock) {
@@ -164,15 +176,21 @@ public class KrxOpenApiService {
                 swingCandidatesCacheTime = System.currentTimeMillis();
             }
         }
-        return filterSwingCandidates(limit, minChangePercent, minVolumeRatio, maxChangePercent);
+        return filterSwingCandidates(
+                limit, minChangePercent, minVolumeRatio, maxVolumeRatio, maxChangePercent);
     }
 
     private List<KrSwingCandidate> filterSwingCandidates(
-            int limit, double minChangePercent, double minVolumeRatio, double maxChangePercent) {
+            int limit,
+            double minChangePercent,
+            double minVolumeRatio,
+            double maxVolumeRatio,
+            double maxChangePercent) {
         return swingCandidatesCache.stream()
                 .filter(candidate -> candidate.changePercent() >= minChangePercent)
                 .filter(candidate -> candidate.changePercent() <= maxChangePercent)
                 .filter(candidate -> candidate.volumeRatio() >= minVolumeRatio)
+                .filter(candidate -> candidate.volumeRatio() <= maxVolumeRatio)
                 .limit(limit)
                 .toList();
     }
@@ -302,7 +320,13 @@ public class KrxOpenApiService {
         if (volumes.size() < SWING_LOOKBACK_DAYS) return null;
         double averageVolume = volumes.stream().mapToLong(Long::longValue).average().orElse(0);
         if (averageVolume <= 0) return null;
-        double ratio = intraday.currentVolume() / averageVolume;
+        double rawRatio = intraday.currentVolume() / averageVolume;
+        double ratio =
+                rawRatio / expectedCumulativeVolumeFraction(LocalTime.now(KiwoomMarketHours.KST));
+        long tradingValue =
+                intraday.tradingValue() > 0
+                        ? intraday.tradingValue()
+                        : saturatedMultiply(intraday.currentPrice(), intraday.currentVolume());
         return new KrSwingCandidate(
                 symbol,
                 intraday.name().isBlank() ? reference.name() : intraday.name(),
@@ -312,7 +336,10 @@ public class KrxOpenApiService {
                 intraday.currentVolume(),
                 Math.round(averageVolume),
                 Math.round(ratio * 100.0) / 100.0,
-                LocalDate.now(KiwoomMarketHours.KST));
+                LocalDate.now(KiwoomMarketHours.KST),
+                Math.round(rawRatio * 100.0) / 100.0,
+                reference.marketCap(),
+                tradingValue);
     }
 
     /**
@@ -374,7 +401,36 @@ public class KrxOpenApiService {
                 stock.volume(),
                 Math.round(averageVolume),
                 Math.round(volumeRatio * 100.0) / 100.0,
-                asOf);
+                asOf,
+                Math.round(volumeRatio * 100.0) / 100.0,
+                stock.marketCap(),
+                saturatedMultiply(Math.round(stock.price()), stock.volume()));
+    }
+
+    /** KRX 장중 누적거래량의 전형적인 U자형 분포를 이용한 시간보정 계수다. */
+    static double expectedCumulativeVolumeFraction(LocalTime time) {
+        int minute =
+                Math.max(
+                        0,
+                        Math.min(
+                                390, (int) Duration.between(LocalTime.of(9, 0), time).toMinutes()));
+        int[] minutes = {0, 30, 90, 150, 210, 270, 330, 390};
+        double[] fractions = {0.01, 0.18, 0.35, 0.47, 0.52, 0.67, 0.82, 1.0};
+        for (int i = 1; i < minutes.length; i++) {
+            if (minute <= minutes[i]) {
+                double progress = (minute - minutes[i - 1]) * 1.0 / (minutes[i] - minutes[i - 1]);
+                return fractions[i - 1] + progress * (fractions[i] - fractions[i - 1]);
+            }
+        }
+        return 1.0;
+    }
+
+    private static long saturatedMultiply(long left, long right) {
+        try {
+            return Math.multiplyExact(left, right);
+        } catch (ArithmeticException ignored) {
+            return Long.MAX_VALUE;
+        }
     }
 
     public record KrSwingCandidate(
@@ -386,7 +442,35 @@ public class KrxOpenApiService {
             long volume,
             long average20DayVolume,
             double volumeRatio,
-            LocalDate asOf) {
+            LocalDate asOf,
+            double rawVolumeRatio,
+            long marketCap,
+            long tradingValue) {
+        public KrSwingCandidate(
+                String symbol,
+                String name,
+                String market,
+                double closePrice,
+                double changePercent,
+                long volume,
+                long average20DayVolume,
+                double volumeRatio,
+                LocalDate asOf) {
+            this(
+                    symbol,
+                    name,
+                    market,
+                    closePrice,
+                    changePercent,
+                    volume,
+                    average20DayVolume,
+                    volumeRatio,
+                    asOf,
+                    volumeRatio,
+                    0,
+                    0);
+        }
+
         /** symbol의 ".KS"/".KQ" 접미사를 제거한 6자리 코드. Holding.code()와 같은 포맷으로 맞춘다. */
         public String bareCode() {
             return symbol.replaceAll("\\.(KS|KQ)$", "");
