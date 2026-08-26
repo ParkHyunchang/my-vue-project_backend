@@ -34,6 +34,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
 /**
@@ -136,7 +137,9 @@ public class StockSymbolNewsService {
             String ticker = symbol == null ? "" : symbol.split("\\.")[0].toUpperCase(Locale.ROOT);
             if (notBlank(ticker)) {
                 tasks.add(asyncLookup(() -> fetchYahooFinance(ticker)));
-                tasks.add(asyncLookup(() -> fetchAlphaVantage(ticker)));
+                if (alphaVantageKey != null && !alphaVantageKey.isBlank()) {
+                    tasks.add(asyncLookup(() -> fetchAlphaVantage(ticker)));
+                }
                 tasks.add(
                         asyncLookup(
                                 () ->
@@ -172,12 +175,12 @@ public class StockSymbolNewsService {
         }
 
         List<StockNewsDto> all = new ArrayList<>();
-        boolean sourceAvailable = false;
+        int availableSources = 0;
         for (CompletableFuture<NewsSourceLookup> f : tasks) {
             try {
                 NewsSourceLookup lookup = f.get(FETCH_TIMEOUT_SEC, TimeUnit.SECONDS);
                 all.addAll(lookup.news());
-                sourceAvailable |= lookup.available();
+                if (lookup.available()) availableSources++;
             } catch (TimeoutException e) {
                 log.warn("[SymbolNews] 소스 타임아웃");
                 f.cancel(true);
@@ -194,7 +197,17 @@ public class StockSymbolNewsService {
                                 RssClient.parsePubDateEpoch(b.getPubDate()),
                                 RssClient.parsePubDateEpoch(a.getPubDate())));
         List<StockNewsDto> result = deduped.stream().limit(TOTAL_NEWS_LIMIT).toList();
-        SymbolNewsLookup lookup = new SymbolNewsLookup(sourceAvailable, result);
+        SymbolNewsLookup lookup =
+                new SymbolNewsLookup(availableSources > 0, result, tasks.size(), availableSources);
+        if (result.isEmpty()) {
+            log.info(
+                    "[SymbolNews] 조회 결과 없음 — market={}, symbol={}, 상태={}, 성공소스={}/{}",
+                    mkt,
+                    symbol,
+                    lookup.status(),
+                    lookup.availableSources(),
+                    lookup.attemptedSources());
+        }
         // 빈 결과는 캐시하지 않는다 — 전 소스 일시 실패였다면 다음 호출에서 바로 재시도
         if (!result.isEmpty()) symbolNewsCache.put(cacheKey, lookup);
         return lookup;
@@ -260,19 +273,60 @@ public class StockSymbolNewsService {
 
     private List<StockNewsDto> fetchGoogleNews(
             String query, String langPrefix, String gl, String hl, String sourceLabel) {
+        try {
+            return parseRss(googleNewsUrl(query, langPrefix, gl, hl), sourceLabel, gl);
+        } catch (IllegalStateException e) {
+            if (!isHttpNotFound(e)) throw e;
+            String fallbackQuery = simplifyGoogleQuery(query);
+            log.warn(
+                    "[SymbolNews/{}] Google News RSS 404 — Bing News RSS로 1회 대체: {}",
+                    sourceLabel,
+                    fallbackQuery);
+            return parseRss(bingNewsUrl(fallbackQuery, gl), sourceLabel + " · Bing fallback", gl);
+        }
+    }
+
+    private String googleNewsUrl(String query, String langPrefix, String gl, String hl) {
         String encoded = URLEncoder.encode(query, StandardCharsets.UTF_8);
-        String url =
-                "https://news.google.com/rss/search?q="
-                        + encoded
-                        + "&hl="
-                        + hl
-                        + "&gl="
-                        + gl
-                        + "&ceid="
-                        + gl
-                        + ":"
-                        + langPrefix;
-        return parseRss(url, sourceLabel, gl);
+        return "https://news.google.com/rss/search?q="
+                + encoded
+                + "&hl="
+                + hl
+                + "&gl="
+                + gl
+                + "&ceid="
+                + gl
+                + ":"
+                + langPrefix;
+    }
+
+    private String bingNewsUrl(String query, String gl) {
+        String market = "KR".equalsIgnoreCase(gl) ? "ko-KR" : "en-US";
+        return "https://www.bing.com/news/search?q="
+                + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                + "&format=rss&mkt="
+                + market;
+    }
+
+    static String simplifyGoogleQuery(String query) {
+        if (query == null) return "stock";
+        String simplified =
+                query.replaceAll("\\([^)]*\\)", " ")
+                        .replaceAll("(?i)site:[^\\s]+", " ")
+                        .replaceAll("(?i)\\b(OR|AND)\\b", " ")
+                        .replaceAll("\\s+", " ")
+                        .trim();
+        return simplified.isBlank() ? query.trim() : simplified;
+    }
+
+    private boolean isHttpNotFound(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof HttpStatusCodeException status
+                    && status.getStatusCode().value() == 404) return true;
+            current = current.getCause();
+        }
+        return false;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -502,7 +556,22 @@ public class StockSymbolNewsService {
 
     private record NewsSourceLookup(boolean available, List<StockNewsDto> news) {}
 
-    public record SymbolNewsLookup(boolean available, List<StockNewsDto> news) {}
+    public enum NewsLookupStatus {
+        FOUND,
+        NOT_FOUND,
+        UNAVAILABLE
+    }
+
+    public record SymbolNewsLookup(
+            boolean available,
+            List<StockNewsDto> news,
+            int attemptedSources,
+            int availableSources) {
+        public NewsLookupStatus status() {
+            if (news != null && !news.isEmpty()) return NewsLookupStatus.FOUND;
+            return available ? NewsLookupStatus.NOT_FOUND : NewsLookupStatus.UNAVAILABLE;
+        }
+    }
 
     private boolean notBlank(String s) {
         return s != null && !s.isBlank();

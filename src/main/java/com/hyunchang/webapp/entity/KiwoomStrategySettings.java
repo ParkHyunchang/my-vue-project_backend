@@ -13,9 +13,9 @@ public class KiwoomStrategySettings {
     private int candidateReevaluationMinutes = 60;
     private double swingMinChangePercent = 2.0;
     private double swingMaxChangePercent = 8.0;
-    private double swingMinVolumeRatio = 2.0;
-    private double swingMaxVolumeRatio = 5.0;
-    private long minMarketCapWon = 300_000_000_000L;
+    private double swingMinVolumeRatio = 1.5;
+    private double swingMaxVolumeRatio = 8.0;
+    private long minMarketCapWon = 200_000_000_000L;
     private long minTradingValueWon = 10_000_000_000L;
     private double maxSpreadPercent = 0.3;
     private double maxPriceAboveMa20Percent = 10.0;

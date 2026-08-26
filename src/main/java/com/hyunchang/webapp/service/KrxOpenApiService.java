@@ -186,13 +186,33 @@ public class KrxOpenApiService {
             double minVolumeRatio,
             double maxVolumeRatio,
             double maxChangePercent) {
-        return swingCandidatesCache.stream()
-                .filter(candidate -> candidate.changePercent() >= minChangePercent)
-                .filter(candidate -> candidate.changePercent() <= maxChangePercent)
-                .filter(candidate -> candidate.volumeRatio() >= minVolumeRatio)
-                .filter(candidate -> candidate.volumeRatio() <= maxVolumeRatio)
-                .limit(limit)
-                .toList();
+        List<KrSwingCandidate> source = swingCandidatesCache;
+        List<KrSwingCandidate> minChange =
+                source.stream()
+                        .filter(candidate -> candidate.changePercent() >= minChangePercent)
+                        .toList();
+        List<KrSwingCandidate> maxChange =
+                minChange.stream()
+                        .filter(candidate -> candidate.changePercent() <= maxChangePercent)
+                        .toList();
+        List<KrSwingCandidate> minVolume =
+                maxChange.stream()
+                        .filter(candidate -> candidate.volumeRatio() >= minVolumeRatio)
+                        .toList();
+        List<KrSwingCandidate> maxVolume =
+                minVolume.stream()
+                        .filter(candidate -> candidate.volumeRatio() <= maxVolumeRatio)
+                        .toList();
+        List<KrSwingCandidate> result = maxVolume.stream().limit(limit).toList();
+        log.info(
+                "[자동매매][후보 퍼널/모멘텀] 원본={}, 상승률하한통과={}, 상승률상한통과={}, 거래량하한통과={}, 거래량상한통과={}, 상위제한후={}",
+                source.size(),
+                minChange.size(),
+                maxChange.size(),
+                minVolume.size(),
+                maxVolume.size(),
+                result.size());
+        return result;
     }
 
     private boolean swingScreenNeedsRefresh() {

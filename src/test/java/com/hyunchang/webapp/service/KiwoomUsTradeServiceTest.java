@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
 import java.math.BigDecimal;
@@ -20,6 +21,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 class KiwoomUsTradeServiceTest {
+
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     @Test
     void relativeVolumeIsAdjustedForElapsedRegularSessionTime() {
@@ -72,6 +75,45 @@ class KiwoomUsTradeServiceTest {
         assertThrows(RuntimeException.class, () -> service.getDepositDetail().block());
 
         verify(state).recordApiFailure(anyString(), anyString(), anyInt());
+    }
+
+    @Test
+    void accountHoldingUsesSpecificExchangeNameWhenCountryLabelComesFirst() throws Exception {
+        KiwoomUsTradeService service = service(mock(KiwoomUsAutoTradeState.class), "{}");
+
+        var holdings =
+                service.holdings(
+                        JSON.readTree(
+                                """
+                                {"result_list":[{
+                                  "stex_tp":"미국", "stex_nm":"NASDAQ", "stk_cd":"NVDA",
+                                  "poss_qty":"2", "sell_alowq":"2", "now_pric":"180.25"
+                                }]}
+                                """));
+
+        assertEquals(1, holdings.size());
+        assertEquals("ND", holdings.getFirst().exchange());
+    }
+
+    @Test
+    void rankedStockUsesSpecificExchangeFieldInsteadOfAggregateCountry() {
+        KiwoomUsAutoTradeState state = mock(KiwoomUsAutoTradeState.class);
+        KiwoomUsTradeService service =
+                service(
+                        state,
+                        """
+                        {"return_code":0,"result_list":[{
+                          "rank":"1", "stex_tp":"미국", "ovrs_excg_cd":"NY",
+                          "stk_cd":"JPM", "stk_nm":"JPMorgan", "cur_prc":"300",
+                          "flu_rt":"2.5", "acc_trde_qty":"100", "pred_trde_qty":"50",
+                          "trde_prica":"30000"
+                        }]}
+                        """);
+
+        var ranked = service.getTradeValueTop().block();
+
+        assertEquals(1, ranked.size());
+        assertEquals("NY", ranked.getFirst().exchange());
     }
 
     private KiwoomUsTradeService service(KiwoomUsAutoTradeState state, String responseBody) {

@@ -359,7 +359,7 @@ public class KiwoomUsTradeService {
             if (symbol.isBlank() || quantity <= 0) continue;
             result.add(
                     new Holding(
-                            normalizeExchange(text(row, "stex_tp", "stex_nm")),
+                            exchangeFrom(row, symbol),
                             symbol,
                             text(row, "frgn_stk_nm", "stk_nm", "stk_enm"),
                             quantity,
@@ -394,7 +394,7 @@ public class KiwoomUsTradeService {
             result.add(
                     new RankedStock(
                             integer(row, "rank"),
-                            normalizeExchange(text(row, "stex_tp")),
+                            exchangeFrom(row, symbol),
                             symbol,
                             text(row, "stk_nm", "stk_enm"),
                             price,
@@ -562,6 +562,37 @@ public class KiwoomUsTradeService {
                 default -> "NA";
             };
         throw new IllegalArgumentException("지원하지 않는 미국 거래소 구분입니다: " + value);
+    }
+
+    /**
+     * 키움의 일부 미국 순위·계좌 응답은 {@code stex_tp=미국}처럼 국가명을 먼저 보내고 실제 거래소는 별도 필드에 담는다. 첫 번째 비어 있지 않은 값만 고르면
+     * 전체 파싱이 중단되므로, 알려진 거래소 필드를 모두 검사해 ND/NY/NA로 확정한다.
+     */
+    private String exchangeFrom(JsonNode row, String symbol) {
+        String[] fields = {
+            "stex_cd",
+            "stex_code",
+            "stex_nm",
+            "ovrs_excg_cd",
+            "ovrs_excg_nm",
+            "excg_cd",
+            "exch_cd",
+            "exchange",
+            "stex_tp"
+        };
+        Map<String, String> observed = new LinkedHashMap<>();
+        for (String field : fields) {
+            String raw = text(row, field);
+            if (raw.isBlank()) continue;
+            observed.put(field, raw);
+            try {
+                return normalizeExchange(raw);
+            } catch (IllegalArgumentException ignored) {
+                // "미국", "US", "0" 같은 국가/전체시장 표시는 건너뛰고 다음 필드를 확인한다.
+            }
+        }
+        throw new IllegalArgumentException(
+                "미국주식 거래소를 확인할 수 없습니다: symbol=" + symbol + ", exchangeFields=" + observed);
     }
 
     private String text(JsonNode node, String... fields) {

@@ -1,7 +1,7 @@
 -- 국내 자동매매 보수형 전략 적용 전 운영 DB에서 1회 실행합니다.
 ALTER TABLE kiwoom_strategy_settings
-  ADD COLUMN swing_max_volume_ratio DOUBLE NOT NULL DEFAULT 5,
-  ADD COLUMN min_market_cap_won BIGINT NOT NULL DEFAULT 300000000000,
+  ADD COLUMN swing_max_volume_ratio DOUBLE NOT NULL DEFAULT 8,
+  ADD COLUMN min_market_cap_won BIGINT NOT NULL DEFAULT 200000000000,
   ADD COLUMN min_trading_value_won BIGINT NOT NULL DEFAULT 10000000000,
   ADD COLUMN max_spread_percent DOUBLE NOT NULL DEFAULT 0.3,
   ADD COLUMN max_price_above_ma20_percent DOUBLE NOT NULL DEFAULT 10,
@@ -13,13 +13,13 @@ ALTER TABLE kiwoom_strategy_settings
 
 UPDATE kiwoom_strategy_settings
 SET risk_loop_enabled = b'1',
-    auto_execute_min_confidence = 90,
+    auto_execute_min_confidence = 85,
     max_buy_deposit_percent = 5,
     swing_min_change_percent = 2,
     swing_max_change_percent = 5,
     swing_min_volume_ratio = 1.5,
-    swing_max_volume_ratio = 5,
-    min_market_cap_won = 300000000000,
+    swing_max_volume_ratio = 8,
+    min_market_cap_won = 200000000000,
     min_trading_value_won = 10000000000,
     max_spread_percent = 0.3,
     max_price_above_ma20_percent = 10,

@@ -8,7 +8,9 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -24,14 +26,17 @@ import com.hyunchang.webapp.service.ai.AiProviderChain;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import com.hyunchang.webapp.service.prompt.AiPromptService;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
@@ -56,11 +61,15 @@ class KiwoomStrategyServiceTest {
     private KiwoomProperties props;
     private KiwoomStrategySettings settings;
     private KiwoomStrategyService service;
+    private MockedStatic<KiwoomMarketHours> marketHours;
     private final ObjectMapper mapper = new ObjectMapper();
     private final ObjectNode emptyNode = mapper.createObjectNode();
 
     @BeforeEach
     void setUp() {
+        marketHours = mockStatic(KiwoomMarketHours.class, CALLS_REAL_METHODS);
+        marketHours.when(KiwoomMarketHours::isEntryWindow).thenReturn(true);
+
         props = new KiwoomProperties();
         props.getStrategy().setMaxOrderAmount(10_000_000);
         props.getStrategy().setCooldownMinutes(0);
@@ -152,6 +161,11 @@ class KiwoomStrategyServiceTest {
                                 ReflectionTestUtils.setField(proposal, "id", 1L);
                             return proposal;
                         });
+    }
+
+    @AfterEach
+    void closeMarketHours() {
+        marketHours.close();
     }
 
     private com.fasterxml.jackson.databind.JsonNode depositNode(long amount) {

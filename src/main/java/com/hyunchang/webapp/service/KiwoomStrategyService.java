@@ -179,6 +179,7 @@ public class KiwoomStrategyService {
                     new HashMap<>();
             List<ShortSwingCandidateService.KrCandidateCatalyst> catalystCandidates =
                     new ArrayList<>();
+            Map<String, Integer> qualityRejections = new LinkedHashMap<>();
             for (ShortSwingCandidateService.KrCandidateCatalyst candidate : screenedCandidates) {
                 KiwoomCandidateQualityService.CandidateQuality quality =
                         candidateQuality.evaluate(candidate.candidate(), settings.current());
@@ -186,6 +187,7 @@ public class KiwoomStrategyService {
                 if (quality.accepted()) {
                     catalystCandidates.add(candidate);
                 } else {
+                    qualityRejections.merge(quality.gate(), 1, Integer::sum);
                     String detail =
                             candidate.candidate().name()
                                     + "("
@@ -206,6 +208,18 @@ public class KiwoomStrategyService {
                             quality.detail());
                 }
             }
+            Map<ShortSwingCandidateService.CatalystStatus, Integer> catalystStatusCounts =
+                    new EnumMap<>(ShortSwingCandidateService.CatalystStatus.class);
+            for (ShortSwingCandidateService.KrCandidateCatalyst candidate : screenedCandidates) {
+                catalystStatusCounts.merge(candidate.status(), 1, Integer::sum);
+            }
+            log.info(
+                    "[자동매매][후보 퍼널/품질·촉매] 모멘텀후={}, 품질통과={}, 품질탈락={}, 품질탈락사유={}, 촉매상태={}",
+                    screenedCandidates.size(),
+                    catalystCandidates.size(),
+                    screenedCandidates.size() - catalystCandidates.size(),
+                    qualityRejections,
+                    catalystStatusCounts);
             Map<String, KrxOpenApiService.KrSwingCandidate> swingCandidates =
                     indexByCode(
                             catalystCandidates.stream()
@@ -516,7 +530,7 @@ public class KiwoomStrategyService {
                 + (s.getMinMarketCapWon() / 100_000_000L)
                 + "억원 이상, 거래대금 "
                 + (s.getMinTradingValueWon() / 100_000_000L)
-                + "억원 이상, 스프레드 "
+                + "억원(종가 기준·장중 시간보정), 스프레드 "
                 + s.getMaxSpreadPercent()
                 + "% 이하, 매수시간 09:30~14:00, 재검토 "
                 + s.getCandidateReevaluationMinutes()
@@ -847,7 +861,10 @@ public class KiwoomStrategyService {
                 && candidate.volumeRatio() >= current.getSwingMinVolumeRatio()
                 && candidate.volumeRatio() <= current.getSwingMaxVolumeRatio()
                 && candidate.marketCap() >= current.getMinMarketCapWon()
-                && candidate.tradingValue() >= current.getMinTradingValueWon();
+                && candidate.tradingValue()
+                        >= KiwoomCandidateQualityService.intradayTradingValueThreshold(
+                                current.getMinTradingValueWon(),
+                                java.time.LocalTime.now(KiwoomMarketHours.KST));
     }
 
     private Map<String, Integer> heldSectorCounts(List<KiwoomTradeService.Holding> holdings) {

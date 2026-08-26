@@ -1,7 +1,9 @@
 package com.hyunchang.webapp.service;
 
 import com.hyunchang.webapp.entity.KiwoomStrategySettings;
+import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -30,17 +32,38 @@ public class KiwoomCandidateQualityService {
                     "시가총액",
                     String.format(
                             "%,d원 < %,d원", candidate.marketCap(), settings.getMinMarketCapWon()));
-        if (candidate.tradingValue() < settings.getMinTradingValueWon())
+        long requiredTradingValue =
+                intradayTradingValueThreshold(
+                        settings.getMinTradingValueWon(), LocalTime.now(KiwoomMarketHours.KST));
+        if (candidate.tradingValue() < requiredTradingValue)
             return CandidateQuality.rejected(
                     candidate.bareCode(),
                     "거래대금",
                     String.format(
-                            "%,d원 < %,d원",
-                            candidate.tradingValue(), settings.getMinTradingValueWon()));
+                            "%,d원 < 장중 시간보정 %,d원 (종가 기준 %,d원)",
+                            candidate.tradingValue(),
+                            requiredTradingValue,
+                            settings.getMinTradingValueWon()));
         try {
             Technical technical = technical(candidate.bareCode());
             if (!technical.complete())
-                return CandidateQuality.missing(candidate.bareCode(), "21거래일 수정주가 일봉 또는 업종코드");
+                return CandidateQuality.missing(
+                        candidate.bareCode(),
+                        "수정주가 일봉 부족/무효: 유효="
+                                + technical.candleCount()
+                                + "개, 필요=21개, MA5="
+                                + format(technical.ma5())
+                                + ", MA20="
+                                + format(technical.ma20())
+                                + ", ATR="
+                                + format(technical.atrPercent())
+                                + "%");
+            String sectorCode = technical.sectorCode();
+            if (sectorCode == null || sectorCode.isBlank()) {
+                // ka10081은 종목에 따라 업종 필드를 보내지 않는다. 가격 데이터가 정상인데 업종만
+                // 비었다는 이유로 후보를 제거하지 않고, 시장 단위의 보수적인 그룹으로 대체한다.
+                sectorCode = "MARKET:" + candidate.market();
+            }
             if (candidate.closePrice() <= technical.ma20())
                 return CandidateQuality.rejected(candidate.bareCode(), "20일선", "현재가가 20일선 이하");
             if (technical.ma5() <= technical.ma20())
@@ -75,7 +98,7 @@ public class KiwoomCandidateQualityService {
                                 quote.spreadPercent(), settings.getMaxSpreadPercent()));
             return CandidateQuality.accepted(
                     candidate.bareCode(),
-                    technical.sectorCode(),
+                    sectorCode,
                     technical.ma5(),
                     technical.ma20(),
                     technical.atrPercent(),
@@ -127,7 +150,8 @@ public class KiwoomCandidateQualityService {
     }
 
     static Technical calculateTechnical(List<KiwoomTradeService.DailyCandle> candles) {
-        if (candles == null || candles.size() < 21) return new Technical(false, "", 0, 0, 0, 0);
+        int candleCount = candles == null ? 0 : candles.size();
+        if (candleCount < 21) return new Technical(false, "", 0, 0, 0, 0, candleCount);
         double ma5 =
                 candles.subList(0, 5).stream()
                         .mapToLong(KiwoomTradeService.DailyCandle::close)
@@ -164,12 +188,24 @@ public class KiwoomCandidateQualityService {
                         .findFirst()
                         .orElse("");
         return new Technical(
-                ma5 > 0 && ma20 > 0 && previousMa20 > 0 && atrPercent > 0 && !sector.isBlank(),
+                ma5 > 0 && ma20 > 0 && previousMa20 > 0 && atrPercent > 0,
                 sector,
                 ma5,
                 ma20,
                 previousMa20,
-                atrPercent);
+                atrPercent,
+                candleCount);
+    }
+
+    /** 종가 기준 최소 거래대금을 장중 누적 거래량 곡선에 맞춰 보정한다. */
+    static long intradayTradingValueThreshold(long fullSessionThreshold, LocalTime time) {
+        if (fullSessionThreshold <= 0) return 0;
+        double fraction = KrxOpenApiService.expectedCumulativeVolumeFraction(time);
+        return Math.max(1L, Math.round(fullSessionThreshold * fraction));
+    }
+
+    private static String format(double value) {
+        return String.format("%.2f", value);
     }
 
     public record CandidateQuality(
@@ -228,7 +264,8 @@ public class KiwoomCandidateQualityService {
             double ma5,
             double ma20,
             double previousMa20,
-            double atrPercent) {}
+            double atrPercent,
+            int candleCount) {}
 
     private record CachedTechnical(long capturedAt, Technical value) {}
 }

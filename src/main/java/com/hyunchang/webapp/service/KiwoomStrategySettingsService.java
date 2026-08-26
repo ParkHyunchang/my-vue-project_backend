@@ -17,7 +17,9 @@ public class KiwoomStrategySettingsService {
     private static final int DEFAULT_CANDIDATE_REEVALUATION_MINUTES = 60;
     private static final double DEFAULT_SWING_MIN_CHANGE_PERCENT = 2.0;
     private static final double DEFAULT_SWING_MAX_CHANGE_PERCENT = 8.0;
-    private static final double DEFAULT_SWING_MIN_VOLUME_RATIO = 2.0;
+    private static final double DEFAULT_SWING_MIN_VOLUME_RATIO = 1.5;
+    private static final double DEFAULT_SWING_MAX_VOLUME_RATIO = 8.0;
+    private static final long DEFAULT_MIN_MARKET_CAP_WON = 200_000_000_000L;
     private final KiwoomStrategySettingsRepository repo;
     private final KiwoomProperties props;
     private final AiPromptService prompts;
@@ -38,6 +40,15 @@ public class KiwoomStrategySettingsService {
         if (repo.existsById(1L)) {
             KiwoomStrategySettings existing = current();
             boolean changed = false;
+            if (isLegacyConservativeEntryProfile(existing)) {
+                existing.setAutoExecuteMinConfidence(85);
+                existing.setSwingMaxChangePercent(DEFAULT_SWING_MAX_CHANGE_PERCENT);
+                existing.setSwingMaxVolumeRatio(DEFAULT_SWING_MAX_VOLUME_RATIO);
+                existing.setMinMarketCapWon(DEFAULT_MIN_MARKET_CAP_WON);
+                changed = true;
+                log.info(
+                        "[자동매매][설정 자동 마이그레이션] 기존 보수형 진입값을 균형형으로 갱신: 신뢰도=85%, 상승률상한=8%, 거래량상한=8배, 최소시총=2000억원");
+            }
             if (existing.getCandidateReevaluationMinutes() <= 0) {
                 existing.setCandidateReevaluationMinutes(DEFAULT_CANDIDATE_REEVALUATION_MINUTES);
                 changed = true;
@@ -59,11 +70,11 @@ public class KiwoomStrategySettingsService {
                 changed = true;
             }
             if (existing.getSwingMaxVolumeRatio() <= 0) {
-                existing.setSwingMaxVolumeRatio(5.0);
+                existing.setSwingMaxVolumeRatio(DEFAULT_SWING_MAX_VOLUME_RATIO);
                 changed = true;
             }
             if (existing.getMinMarketCapWon() <= 0) {
-                existing.setMinMarketCapWon(300_000_000_000L);
+                existing.setMinMarketCapWon(DEFAULT_MIN_MARKET_CAP_WON);
                 changed = true;
             }
             if (existing.getMinTradingValueWon() <= 0) {
@@ -120,8 +131,8 @@ public class KiwoomStrategySettingsService {
         s.setSwingMinChangePercent(DEFAULT_SWING_MIN_CHANGE_PERCENT);
         s.setSwingMaxChangePercent(DEFAULT_SWING_MAX_CHANGE_PERCENT);
         s.setSwingMinVolumeRatio(DEFAULT_SWING_MIN_VOLUME_RATIO);
-        s.setSwingMaxVolumeRatio(5.0);
-        s.setMinMarketCapWon(300_000_000_000L);
+        s.setSwingMaxVolumeRatio(DEFAULT_SWING_MAX_VOLUME_RATIO);
+        s.setMinMarketCapWon(DEFAULT_MIN_MARKET_CAP_WON);
         s.setMinTradingValueWon(10_000_000_000L);
         s.setMaxSpreadPercent(0.3);
         s.setMaxPriceAboveMa20Percent(10.0);
@@ -142,6 +153,15 @@ public class KiwoomStrategySettingsService {
         s.setDailyStopLossLimit(2);
         s.setRequireCatalystForAutoBuy(true);
         repo.save(s);
+    }
+
+    private boolean isLegacyConservativeEntryProfile(KiwoomStrategySettings settings) {
+        return settings.getAutoExecuteMinConfidence() == 90
+                && Double.compare(settings.getSwingMaxChangePercent(), 5.0) == 0
+                && Double.compare(settings.getSwingMinVolumeRatio(), 1.5) == 0
+                && Double.compare(settings.getSwingMaxVolumeRatio(), 5.0) == 0
+                && settings.getMinMarketCapWon() == 300_000_000_000L
+                && settings.getMinTradingValueWon() == 10_000_000_000L;
     }
 
     public KiwoomStrategySettings current() {
