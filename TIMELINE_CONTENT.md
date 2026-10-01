@@ -12,7 +12,7 @@ Both entities inherit `TimelineContent` in the backend.
 
 ## Database rollout
 
-Apply `alter_history_description_text.sql` to the target MySQL database before deploying with `ddl-auto=validate`. With `ddl-auto=update`, verify the resulting history.description column is TEXT after startup. The SQL preserves existing descriptions. This change does not execute SQL against a deployed database.
+The backend now runs `TimelineDescriptionMigration` on startup. It inspects the actual MySQL description column types for history and dating, widens CHAR/VARCHAR/TINYTEXT to TEXT, and verifies the result. Existing TEXT/MEDIUMTEXT/LONGTEXT columns are left unchanged. Failure stops startup rather than silently accepting an incompatible schema. The database user needs ALTER permission. Do not rely on Hibernate ddl-auto=update to widen an existing VARCHAR column. For manual recovery (or if schema validation prevents startup), apply `alter_history_description_text.sql` directly. Repository edits alone do not change the deployed database; deploy the new backend to run the migration.
 
 Verification query:
 
