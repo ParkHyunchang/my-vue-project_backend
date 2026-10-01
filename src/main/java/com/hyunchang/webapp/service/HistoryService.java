@@ -42,6 +42,7 @@ public class HistoryService {
     }
 
     private void validateHistory(History history) {
+        history.validateContent();
         if (history.getTitle() == null || history.getTitle().trim().isEmpty()) {
             throw new IllegalArgumentException("제목은 필수 입력값입니다.");
         }

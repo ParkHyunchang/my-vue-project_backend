@@ -2,7 +2,6 @@ package com.hyunchang.webapp.entity;
 
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonIgnore;
-import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.FetchType;
 import jakarta.persistence.GeneratedValue;
@@ -16,7 +15,7 @@ import java.time.LocalDate;
 
 @Entity
 @Table(indexes = {@Index(name = "idx_history_date", columnList = "date")})
-public class History {
+public class History extends TimelineContent {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -34,12 +33,8 @@ public class History {
 
     private String dateType; // "single" 또는 "range"
     private String category;
-    private String description;
     private String location;
     private String image; // 기존 단일 이미지 필드 (호환성 유지)
-
-    @Column(columnDefinition = "TEXT")
-    private String images; // 다중 이미지 지원을 위한 JSON 문자열 필드
 
     @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
@@ -80,14 +75,6 @@ public class History {
         this.category = category;
     }
 
-    public String getDescription() {
-        return description;
-    }
-
-    public void setDescription(String description) {
-        this.description = description;
-    }
-
     public String getLocation() {
         return location;
     }
@@ -110,14 +97,6 @@ public class History {
 
     public void setUser(User user) {
         this.user = user;
-    }
-
-    public String getImages() {
-        return images;
-    }
-
-    public void setImages(String images) {
-        this.images = images;
     }
 
     public LocalDate getStartDate() {

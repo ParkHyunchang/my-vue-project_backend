@@ -51,6 +51,7 @@ public class DatingService {
     }
 
     private void validateDating(Dating dating) {
+        dating.validateContent();
         if (dating.getTitle() == null || dating.getTitle().trim().isEmpty()) {
             throw new IllegalArgumentException("제목은 필수 입력값입니다.");
         }
