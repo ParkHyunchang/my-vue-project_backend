@@ -61,6 +61,7 @@ public class KiwoomUsAutoTradeService {
     private final AtomicReference<List<Candidate>> lastCandidates =
             new AtomicReference<>(List.of());
     private final AtomicReference<AccountSnapshot> lastAccountSnapshot = new AtomicReference<>();
+    private LocalDateTime holdingsSyncedAt;
 
     public KiwoomUsAutoTradeService(
             KiwoomProperties properties,
@@ -207,11 +208,38 @@ public class KiwoomUsAutoTradeService {
                 active.stream().filter(KiwoomUsAccountHolding::isManagedByAutoTrade).count();
         BigDecimal automatedCapital = cash.availableUsd().add(managedEvaluation);
         KiwoomUsStrategySettings settings = settingsService.current();
-        BigDecimal perOrderLimit =
-                orderLimit(
-                        cash.availableUsd().subtract(openBuyReserveUsd()).max(BigDecimal.ZERO),
-                        automatedCapital,
-                        settings);
+        List<KiwoomUsTradeProposal> openOrders = proposalRepository.findByStatusIn(OPEN_STATUSES);
+        BigDecimal reservedUsd = openBuyReserveUsd(openOrders);
+        BigDecimal unreservedUsd = cash.availableUsd().subtract(reservedUsd).max(BigDecimal.ZERO);
+        BigDecimal perOrderLimit = orderLimit(unreservedUsd, automatedCapital, settings);
+        long pendingPositions =
+                openOrders.stream()
+                        .filter(p -> p.getAction() == KiwoomUsTradeProposal.Action.BUY)
+                        .map(KiwoomUsTradeProposal::getSymbol)
+                        .distinct()
+                        .filter(
+                                symbol ->
+                                        active.stream()
+                                                .noneMatch(h -> symbol.equals(h.getSymbol())))
+                        .count();
+        BuyingPower buyingPower =
+                new BuyingPower(
+                        settings.getSignalMode(),
+                        settings.getMaxOrderPercent(),
+                        settings.getMaxPositions(),
+                        settings.getRiskPerTradePercent(),
+                        reservedUsd,
+                        unreservedUsd,
+                        percentage(
+                                settings.getSignalMode() == SignalMode.TREND
+                                        ? automatedCapital
+                                        : unreservedUsd,
+                                effectiveOrderPercent(settings)),
+                        settings.getSignalMode() == SignalMode.TREND
+                                ? percentage(automatedCapital, settings.getRiskPerTradePercent())
+                                : null,
+                        (int) pendingPositions,
+                        holdingsSyncedAt);
         KrwOrderServiceStatus krwOrderServiceStatus;
         try {
             krwOrderServiceStatus = trade.getKrwOrderServiceStatus().block(API_TIMEOUT);
@@ -233,7 +261,8 @@ public class KiwoomUsAutoTradeService {
                         krwOrderServiceStatus,
                         true,
                         "",
-                        LocalDateTime.now());
+                        LocalDateTime.now(),
+                        buyingPower);
         lastAccountSnapshot.set(snapshot);
         return snapshot;
     }
@@ -265,6 +294,7 @@ public class KiwoomUsAutoTradeService {
                         new KrwOrderServiceStatus("UNKNOWN", "확인 대기", notice),
                         false,
                         notice,
+                        null,
                         null);
             }
             return new AccountSnapshot(
@@ -279,7 +309,8 @@ public class KiwoomUsAutoTradeService {
                     cached.krwOrderServiceStatus(),
                     false,
                     notice,
-                    cached.capturedAt());
+                    cached.capturedAt(),
+                    cached.buyingPower());
         }
     }
 
@@ -1212,6 +1243,7 @@ public class KiwoomUsAutoTradeService {
                 holdingRepository.save(entity);
             }
         }
+        holdingsSyncedAt = LocalDateTime.now();
     }
 
     private void reconcileHoldingOwnership(KiwoomUsAccountHolding entity) {
@@ -1452,7 +1484,11 @@ public class KiwoomUsAutoTradeService {
     }
 
     private BigDecimal openBuyReserveUsd() {
-        return proposalRepository.findByStatusIn(OPEN_STATUSES).stream()
+        return openBuyReserveUsd(proposalRepository.findByStatusIn(OPEN_STATUSES));
+    }
+
+    private BigDecimal openBuyReserveUsd(List<KiwoomUsTradeProposal> openOrders) {
+        return openOrders.stream()
                 .filter(p -> p.getAction() == KiwoomUsTradeProposal.Action.BUY)
                 .filter(p -> p.getLimitPrice() != null && p.getLimitPrice().signum() > 0)
                 .map(
@@ -1538,6 +1574,18 @@ public class KiwoomUsAutoTradeService {
         }
     }
 
+    public record BuyingPower(
+            SignalMode signalMode,
+            double maxOrderPercent,
+            int maxPositions,
+            double riskPerTradePercent,
+            BigDecimal reservedUsd,
+            BigDecimal unreservedUsd,
+            BigDecimal allocationLimitUsd,
+            BigDecimal riskBudgetUsd,
+            int pendingPositionCount,
+            LocalDateTime holdingsSyncedAt) {}
+
     public record AccountSnapshot(
             UsdCash cash,
             BigDecimal stockEvaluationUsd,
@@ -1550,7 +1598,8 @@ public class KiwoomUsAutoTradeService {
             KrwOrderServiceStatus krwOrderServiceStatus,
             boolean fresh,
             String notice,
-            LocalDateTime capturedAt) {}
+            LocalDateTime capturedAt,
+            BuyingPower buyingPower) {}
 
     public record DecisionResult(
             String status, String message, int candidateCount, Long proposalId) {}

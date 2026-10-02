@@ -63,6 +63,71 @@ class KiwoomUsExecutionSafetyTest {
     }
 
     @Test
+    void summaryExplainsTheSameReservedCashAndCapitalUsedForSizing() throws Exception {
+        var balance = json.readTree("{\"tot_evlt_amt\":\"1500\"}");
+        when(trade.getDepositDetail()).thenReturn(Mono.just(balance));
+        when(trade.getBalance()).thenReturn(Mono.just(balance));
+        when(trade.usdCash(balance))
+                .thenReturn(
+                        new KiwoomUsTradeService.UsdCash(
+                                new BigDecimal("1000"), "USD", BigDecimal.ZERO, true, ""));
+        when(trade.totalEvaluation(balance)).thenReturn(new BigDecimal("1500"));
+        when(trade.getKrwOrderServiceStatus())
+                .thenReturn(
+                        Mono.just(
+                                new KiwoomUsTradeService.KrwOrderServiceStatus(
+                                        "CANCELED", "해지됨", "")));
+        var mixed = new KiwoomUsAccountHolding();
+        mixed.setSymbol("MIXED");
+        mixed.sync("mixed", 10, 10, new BigDecimal("100"), new BigDecimal("100"), 0);
+        mixed.reconcileManagedQuantity(5, 0);
+        var manual = new KiwoomUsAccountHolding();
+        manual.setSymbol("MANUAL");
+        manual.sync("manual", 5, 5, new BigDecimal("100"), new BigDecimal("100"), 0);
+        when(holdings.findByActiveTrueOrderByIdAsc()).thenReturn(List.of(mixed, manual));
+        var pending = buy(2);
+        pending.setLimitPrice(new BigDecimal("100"));
+        when(proposals.findByStatusIn(any())).thenReturn(List.of(pending));
+        var configured = new KiwoomUsStrategySettings();
+        configured.setMaxOrderPercent(10);
+        configured.setRiskPerTradePercent(0.5);
+        when(settings.current()).thenReturn(configured);
+
+        for (var mode : KiwoomUsStrategySettings.SignalMode.values()) {
+            configured.setSignalMode(mode);
+            var snapshot = service.accountSummary();
+            assertEquals(0, new BigDecimal("500").compareTo(snapshot.managedEvaluationUsd()));
+            assertEquals(0, new BigDecimal("1500").compareTo(snapshot.automatedCapitalUsd()));
+            assertEquals(1, snapshot.managedPositionCount());
+            assertEquals(2, snapshot.positionCount());
+            assertEquals(0, new BigDecimal("200").compareTo(snapshot.buyingPower().reservedUsd()));
+            assertEquals(
+                    0, new BigDecimal("800").compareTo(snapshot.buyingPower().unreservedUsd()));
+            assertEquals(1, snapshot.buyingPower().pendingPositionCount());
+            assertNull(snapshot.buyingPower().holdingsSyncedAt());
+            assertEquals(
+                    0,
+                    new BigDecimal(mode == KiwoomUsStrategySettings.SignalMode.TREND ? "150" : "80")
+                            .compareTo(snapshot.perOrderLimitUsd()));
+            if (mode == KiwoomUsStrategySettings.SignalMode.TREND)
+                assertEquals(
+                        0, new BigDecimal("7.5").compareTo(snapshot.buyingPower().riskBudgetUsd()));
+            else assertNull(snapshot.buyingPower().riskBudgetUsd());
+        }
+        configured.setMaxOrderPercent(100);
+        configured.setSignalMode(KiwoomUsStrategySettings.SignalMode.TREND);
+        var capped = service.accountSummary();
+        assertEquals(0, new BigDecimal("792").compareTo(capped.perOrderLimitUsd()));
+        verify(holdings, never()).save(any());
+
+        when(trade.getDepositDetail())
+                .thenReturn(Mono.error(new IllegalStateException("572070: 수도결제중입니다")));
+        var cached = service.accountSummary();
+        assertFalse(cached.fresh());
+        assertEquals(capped.buyingPower(), cached.buyingPower());
+    }
+
+    @Test
     void canceledRemainderIsNeverInventedAsFilledShares() throws Exception {
         var p = buy(10);
         brokerRows(

@@ -65,7 +65,8 @@ class KiwoomUsSignalModeTest {
                         null,
                         true,
                         "",
-                        LocalDateTime.now());
+                        LocalDateTime.now(),
+                        null);
         var stock =
                 new KiwoomUsTradeService.RankedStock(
                         1,

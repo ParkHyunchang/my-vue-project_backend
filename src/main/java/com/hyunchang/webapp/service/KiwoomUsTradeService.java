@@ -16,12 +16,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 /** Kiwoom US REST adapter. Write requests are deliberately never retried. */
@@ -37,6 +39,9 @@ public class KiwoomUsTradeService {
     private final KiwoomUsAutoTradeState state;
     private final WebClient webClient;
     private long nextRequestAt;
+    private final Map<String, ExchangeLookup> exchangeCache = new ConcurrentHashMap<>();
+
+    private record ExchangeLookup(LocalDate date, String exchange) {}
 
     public KiwoomUsTradeService(
             KiwoomProperties properties,
@@ -54,7 +59,65 @@ public class KiwoomUsTradeService {
     }
 
     public Mono<JsonNode> getBalance() {
-        return readPages("ust21070", "/api/us/acnt", Map.of("stex_tp", "", "stk_cd", ""), 0);
+        return readPages("ust21070", "/api/us/acnt", Map.of("stex_tp", "", "stk_cd", ""), 0)
+                .flatMap(this::resolveHoldingExchanges);
+    }
+
+    /** ust21070 officially returns country labels such as "미국" in stex_nm. */
+    private Mono<JsonNode> resolveHoldingExchanges(JsonNode balance) {
+        return Flux.fromIterable(balance.path("result_list"))
+                .filter(row -> integer(row, "poss_qty") > 0 && !text(row, "stk_cd").isBlank())
+                .concatMap(
+                        row -> {
+                            String symbol = normalizeSymbol(text(row, "stk_cd"));
+                            try {
+                                exchangeFrom(row, symbol);
+                                return Mono.just(row);
+                            } catch (IllegalArgumentException missingExchange) {
+                                return lookupExchange(symbol)
+                                        .map(
+                                                exchange -> {
+                                                    ((ObjectNode) row).put("stex_cd", exchange);
+                                                    return row;
+                                                });
+                            }
+                        })
+                .then(Mono.just(balance));
+    }
+
+    private Mono<String> lookupExchange(String symbol) {
+        return Mono.defer(
+                () -> {
+                    LocalDate today = KiwoomUsMarketHours.today();
+                    exchangeCache
+                            .entrySet()
+                            .removeIf(entry -> !entry.getValue().date().equals(today));
+                    ExchangeLookup cached = exchangeCache.get(symbol);
+                    if (cached != null) return Mono.just(cached.exchange());
+                    return read("usa10098", "/api/us/stkinfo", Map.of("stk_cd", symbol))
+                            .map(
+                                    response -> {
+                                        Set<String> exchanges = new HashSet<>();
+                                        JsonNode rows = response.path("list");
+                                        if (!rows.isArray())
+                                            throw new IllegalStateException(
+                                                    "거래소 조회 응답 형식 오류: " + symbol);
+                                        for (JsonNode row : rows) {
+                                            if (!symbol.equalsIgnoreCase(text(row, "stk_cd")))
+                                                continue;
+                                            // Only an exact symbol and an explicit broker exchange
+                                            // code are trusted.
+                                            exchanges.add(normalizeExchange(text(row, "stex_tp")));
+                                        }
+                                        if (exchanges.size() != 1)
+                                            throw new IllegalStateException(
+                                                    "거래소 조회 결과를 확정할 수 없습니다: " + symbol);
+                                        String exchange = exchanges.iterator().next();
+                                        exchangeCache.put(
+                                                symbol, new ExchangeLookup(today, exchange));
+                                        return exchange;
+                                    });
+                });
     }
 
     public Mono<JsonNode> getOpenOrders() {

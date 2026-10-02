@@ -119,7 +119,8 @@ class KiwoomUsAutoTradeServiceTest {
                         null,
                         true,
                         "",
-                        LocalDateTime.now());
+                        LocalDateTime.now(),
+                        null);
         List<KiwoomUsTradeService.RankedStock> ranked =
                 List.of(
                         ranked("PASS", "1.50", 2, 150, 100),
@@ -194,7 +195,8 @@ class KiwoomUsAutoTradeServiceTest {
                         null,
                         true,
                         "",
-                        LocalDateTime.now());
+                        LocalDateTime.now(),
+                        null);
 
         var result =
                 service.filterCandidates(

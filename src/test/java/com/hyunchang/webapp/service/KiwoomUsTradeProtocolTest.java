@@ -49,6 +49,123 @@ class KiwoomUsTradeProtocolTest {
     }
 
     @Test
+    void countryOnlyHoldingResolvesThroughOfficialLookupAndReusesSameDayResult() {
+        String balance =
+                """
+                {"return_code":0,"result_list":[{"stk_cd":"JEPQ","stex_nm":"미국",
+                "poss_qty":"5","sell_alowq":"5","now_pric":"60","evlt_amt":"300"}]}
+                """;
+        var trade =
+                service(
+                        response(balance, "N", ""),
+                        response(
+                                """
+                        {"return_code":0,"list":[{"stk_cd":"JEPQ","stex_tp":"ND"}]}
+                        """,
+                                "N",
+                                ""),
+                        response(balance, "N", ""));
+        var first = trade.holdings(trade.getBalance().block());
+        var second = trade.holdings(trade.getBalance().block());
+        assertEquals("ND", first.getFirst().exchange());
+        assertEquals(5, second.getFirst().quantity());
+        assertEquals(new BigDecimal("300"), second.getFirst().evaluationAmount());
+        assertEquals(
+                List.of("ust21070", "usa10098", "ust21070"),
+                requests.stream().map(r -> r.headers().getFirst("api-id")).toList());
+        assertEquals("/api/us/stkinfo", requests.get(1).url().getPath());
+    }
+
+    @Test
+    void knownExchangeAndZeroQuantityNeedNoLookup() {
+        var trade =
+                service(
+                        response(
+                                """
+                {"return_code":0,"result_list":[
+                {"stk_cd":"JPM","stex_nm":"NYSE","poss_qty":"2"},
+                {"stk_cd":"OLD","stex_nm":"미국","poss_qty":"0"}]}
+                """,
+                                "N",
+                                ""));
+        assertEquals("NY", trade.holdings(trade.getBalance().block()).getFirst().exchange());
+        assertEquals(1, requests.size());
+    }
+
+    @Test
+    void unrelatedAmbiguousOrMalformedLookupCannotReturnPartialHoldings() {
+        for (String rows :
+                List.of(
+                        "[{\"stk_cd\":\"OTHER\",\"stex_tp\":\"ND\"}]",
+                        "[{\"stk_cd\":\"JEPQ\",\"stex_tp\":\"ND\"},{\"stk_cd\":\"JEPQ\",\"stex_tp\":\"NY\"}]",
+                        "[]",
+                        "null")) {
+            requests.clear();
+            var trade =
+                    service(
+                            response(
+                                    """
+                    {"return_code":0,"result_list":[
+                    {"stk_cd":"JPM","stex_nm":"NYSE","poss_qty":"1"},
+                    {"stk_cd":"JEPQ","stex_nm":"미국","poss_qty":"5"}]}
+                    """,
+                                    "N",
+                                    ""),
+                            response("{\"return_code\":0,\"list\":" + rows + "}", "N", ""));
+            assertThrows(IllegalStateException.class, () -> trade.getBalance().block());
+        }
+    }
+
+    @Test
+    void failedLookupIsNotCachedAndNextBalanceCanRecover() {
+        String balance =
+                """
+                {"return_code":0,"result_list":[{"stk_cd":"JEPQ","stex_nm":"미국","poss_qty":"5"}]}
+                """;
+        var trade =
+                service(
+                        response(balance, "N", ""),
+                        response(
+                                "{\"return_code\":123,\"return_msg\":\"temporary failure\"}",
+                                "N",
+                                ""),
+                        response(balance, "N", ""),
+                        response(
+                                "{\"return_code\":0,\"list\":[{\"stk_cd\":\"JEPQ\",\"stex_tp\":\"ND\"}]}",
+                                "N",
+                                ""));
+        assertThrows(RuntimeException.class, () -> trade.getBalance().block());
+        assertEquals("ND", trade.holdings(trade.getBalance().block()).getFirst().exchange());
+        assertEquals(4, requests.size());
+    }
+
+    @Test
+    void exchangeCacheExpiresOnNextEasternDate() {
+        String balance =
+                """
+                {"return_code":0,"result_list":[{"stk_cd":"TEST","stex_nm":"미국","poss_qty":"1"}]}
+                """;
+        var trade =
+                service(
+                        response(balance, "N", ""),
+                        response(
+                                "{\"return_code\":0,\"list\":[{\"stk_cd\":\"TEST\",\"stex_tp\":\"ND\"}]}",
+                                "N",
+                                ""),
+                        response(balance, "N", ""),
+                        response(
+                                "{\"return_code\":0,\"list\":[{\"stk_cd\":\"TEST\",\"stex_tp\":\"NY\"}]}",
+                                "N",
+                                ""));
+        try (var hours = mockStatic(KiwoomUsMarketHours.class)) {
+            hours.when(KiwoomUsMarketHours::today).thenReturn(LocalDate.of(2026, 10, 2));
+            assertEquals("ND", trade.holdings(trade.getBalance().block()).getFirst().exchange());
+            hours.when(KiwoomUsMarketHours::today).thenReturn(LocalDate.of(2026, 10, 3));
+            assertEquals("NY", trade.holdings(trade.getBalance().block()).getFirst().exchange());
+        }
+    }
+
+    @Test
     void balanceAggregatesEveryPageAndForwardsContinuationHeaders() {
         var trade =
                 service(
