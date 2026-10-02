@@ -16,10 +16,12 @@ public class KiwoomUsFundamentalService {
     private static final Duration STALE_FALLBACK_FOR = Duration.ofDays(7);
 
     private final YahooFinanceService yahoo;
+    private final KiwoomUsReferenceStore store;
     private final Map<String, FundamentalSnapshot> cache = new ConcurrentHashMap<>();
 
-    public KiwoomUsFundamentalService(YahooFinanceService yahoo) {
+    public KiwoomUsFundamentalService(YahooFinanceService yahoo, KiwoomUsReferenceStore store) {
         this.yahoo = yahoo;
+        this.store = store;
     }
 
     public Optional<FundamentalSnapshot> find(String symbol) {
@@ -27,6 +29,17 @@ public class KiwoomUsFundamentalService {
         if (key.isBlank()) return Optional.empty();
         LocalDateTime now = LocalDateTime.now();
         FundamentalSnapshot cached = cache.get(key);
+        if (cached == null) {
+            cached =
+                    store.read("fundamental-" + key, FundamentalSnapshot.class)
+                            .filter(
+                                    value ->
+                                            value.capturedAt() != null
+                                                    && positive(value.effectivePe())
+                                                    && Double.isFinite(value.roePercent()))
+                            .orElse(null);
+            if (cached != null) cache.put(key, cached);
+        }
         if (cached != null && cached.capturedAt().plus(FRESH_FOR).isAfter(now)) {
             return Optional.of(cached);
         }
@@ -39,6 +52,7 @@ public class KiwoomUsFundamentalService {
         }
         if (refreshed != null) {
             cache.put(key, refreshed);
+            store.write("fundamental-" + key, refreshed);
             return Optional.of(refreshed);
         }
         if (cached != null && cached.capturedAt().plus(STALE_FALLBACK_FOR).isAfter(now)) {
@@ -55,10 +69,12 @@ public class KiwoomUsFundamentalService {
         JsonNode financial = root.path("financialData");
         double forwardPe = firstNumber(summary.path("forwardPE"), stats.path("forwardPE"));
         double trailingPe = number(summary.path("trailingPE"));
-        double roe = number(financial.path("returnOnEquity"));
-        if (!Double.isNaN(roe) && Math.abs(roe) <= 2) roe *= 100;
+        JsonNode roeNode = financial.path("returnOnEquity");
+        double roe = number(roeNode);
+        // Yahoo raw/numeric returnOnEquity is a ratio, including ratios above 2.
+        if (!roeNode.isTextual() || !roeNode.asText().contains("%")) roe *= 100;
         double effectivePe = positive(forwardPe) ? forwardPe : trailingPe;
-        if (!positive(effectivePe) || Double.isNaN(roe)) return null;
+        if (!positive(effectivePe) || !Double.isFinite(roe)) return null;
         return new FundamentalSnapshot(forwardPe, trailingPe, roe, capturedAt);
     }
 
@@ -83,7 +99,7 @@ public class KiwoomUsFundamentalService {
     }
 
     private boolean positive(double value) {
-        return !Double.isNaN(value) && value > 0;
+        return Double.isFinite(value) && value > 0;
     }
 
     private String normalize(String symbol) {

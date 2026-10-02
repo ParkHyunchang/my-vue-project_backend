@@ -1,16 +1,27 @@
 package com.hyunchang.webapp.entity;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.PrePersist;
 import jakarta.persistence.PreUpdate;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 @Entity
 @Table(name = "kiwoom_us_strategy_settings")
 public class KiwoomUsStrategySettings {
+    public enum SignalMode {
+        LEGACY,
+        OBSERVE,
+        TREND
+    }
+
     @Id private Long id = 1L;
     @JsonIgnore private boolean autoExecute = true;
     private double maxOrderUsd = 200;
@@ -32,6 +43,16 @@ public class KiwoomUsStrategySettings {
     private int maxHoldingDays = 5;
     private int symbolCooldownDays = 5;
     private double dailyLossLimitPercent = 3;
+
+    @Enumerated(EnumType.STRING)
+    @JdbcTypeCode(SqlTypes.VARCHAR)
+    @Column(length = 16)
+    private SignalMode signalMode = SignalMode.OBSERVE;
+
+    private double minRelativeStrengthPercent = 0;
+    private double riskPerTradePercent = 0.5;
+    private double atrStopMultiplier = 2;
+    private double maxEntryExtensionAtr = 1;
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -210,5 +231,45 @@ public class KiwoomUsStrategySettings {
 
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public SignalMode getSignalMode() {
+        return signalMode == null ? SignalMode.OBSERVE : signalMode;
+    }
+
+    public void setSignalMode(SignalMode value) {
+        signalMode = value;
+    }
+
+    public double getMinRelativeStrengthPercent() {
+        return minRelativeStrengthPercent;
+    }
+
+    public void setMinRelativeStrengthPercent(double value) {
+        minRelativeStrengthPercent = value;
+    }
+
+    public double getRiskPerTradePercent() {
+        return riskPerTradePercent;
+    }
+
+    public void setRiskPerTradePercent(double value) {
+        riskPerTradePercent = value;
+    }
+
+    public double getAtrStopMultiplier() {
+        return atrStopMultiplier;
+    }
+
+    public void setAtrStopMultiplier(double value) {
+        atrStopMultiplier = value;
+    }
+
+    public double getMaxEntryExtensionAtr() {
+        return maxEntryExtensionAtr;
+    }
+
+    public void setMaxEntryExtensionAtr(double value) {
+        maxEntryExtensionAtr = value;
     }
 }

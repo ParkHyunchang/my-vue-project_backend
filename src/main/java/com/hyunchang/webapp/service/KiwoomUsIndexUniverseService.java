@@ -21,6 +21,21 @@ public class KiwoomUsIndexUniverseService {
     private static final Duration MAX_CACHE_AGE = Duration.ofDays(7);
     private volatile Universe universe;
     private volatile String lastError = "아직 지수 구성종목을 불러오지 않았습니다.";
+    private final KiwoomUsReferenceStore store;
+
+    public KiwoomUsIndexUniverseService(KiwoomUsReferenceStore store) {
+        this.store = store;
+        universe =
+                store.read("index-universe", Universe.class)
+                        .filter(
+                                value ->
+                                        value.updatedAt() != null
+                                                && value.sp500() != null
+                                                && value.sp500().size() >= 450
+                                                && value.nasdaq100() != null
+                                                && value.nasdaq100().size() >= 90)
+                        .orElse(null);
+    }
 
     @Scheduled(fixedDelay = 86_400_000, initialDelay = 5_000)
     public void scheduledRefresh() {
@@ -77,6 +92,7 @@ public class KiwoomUsIndexUniverseService {
                             union.size(),
                             LocalDateTime.now());
             lastError = "";
+            store.write("index-universe", universe);
         } catch (IOException | RuntimeException error) {
             lastError =
                     error.getMessage() == null
@@ -132,7 +148,7 @@ public class KiwoomUsIndexUniverseService {
         return symbol == null ? "" : symbol.trim().toUpperCase(Locale.ROOT).replace('-', '.');
     }
 
-    private record Universe(
+    record Universe(
             Set<String> sp500, Set<String> nasdaq100, int unionSize, LocalDateTime updatedAt) {}
 
     public record UniverseStatus(

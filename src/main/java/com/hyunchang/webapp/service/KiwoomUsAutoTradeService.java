@@ -5,6 +5,7 @@ import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.entity.KiwoomUsAccountHolding;
 import com.hyunchang.webapp.entity.KiwoomUsStrategyRun;
 import com.hyunchang.webapp.entity.KiwoomUsStrategySettings;
+import com.hyunchang.webapp.entity.KiwoomUsStrategySettings.SignalMode;
 import com.hyunchang.webapp.entity.KiwoomUsTradeProposal;
 import com.hyunchang.webapp.repository.KiwoomUsAccountHoldingRepository;
 import com.hyunchang.webapp.repository.KiwoomUsStrategyRunRepository;
@@ -19,15 +20,16 @@ import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicReference;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -37,7 +39,6 @@ import reactor.core.publisher.Mono;
 @Service
 public class KiwoomUsAutoTradeService {
     private static final Duration API_TIMEOUT = Duration.ofSeconds(15);
-    private static final int CANCEL_DISAPPEARANCE_CONFIRMATIONS = 2;
     private static final Set<KiwoomUsTradeProposal.Status> OPEN_STATUSES =
             Set.of(
                     KiwoomUsTradeProposal.Status.ORDERED,
@@ -50,6 +51,7 @@ public class KiwoomUsAutoTradeService {
     private final KiwoomUsStrategySettingsService settingsService;
     private final KiwoomUsFundamentalService fundamentals;
     private final KiwoomUsIndexUniverseService indexUniverse;
+    private final KiwoomUsTechnicalSignalService technicalSignals;
     private final KiwoomUsAutoTradeState state;
     private final KiwoomUsAccountHoldingRepository holdingRepository;
     private final KiwoomUsTradeProposalRepository proposalRepository;
@@ -59,7 +61,6 @@ public class KiwoomUsAutoTradeService {
     private final AtomicReference<List<Candidate>> lastCandidates =
             new AtomicReference<>(List.of());
     private final AtomicReference<AccountSnapshot> lastAccountSnapshot = new AtomicReference<>();
-    private final Map<String, Integer> cancelDisappearanceCounts = new ConcurrentHashMap<>();
 
     public KiwoomUsAutoTradeService(
             KiwoomProperties properties,
@@ -67,6 +68,7 @@ public class KiwoomUsAutoTradeService {
             KiwoomUsStrategySettingsService settingsService,
             KiwoomUsFundamentalService fundamentals,
             KiwoomUsIndexUniverseService indexUniverse,
+            KiwoomUsTechnicalSignalService technicalSignals,
             KiwoomUsAutoTradeState state,
             KiwoomUsAccountHoldingRepository holdingRepository,
             KiwoomUsTradeProposalRepository proposalRepository,
@@ -78,6 +80,7 @@ public class KiwoomUsAutoTradeService {
         this.settingsService = settingsService;
         this.fundamentals = fundamentals;
         this.indexUniverse = indexUniverse;
+        this.technicalSignals = technicalSignals;
         this.state = state;
         this.holdingRepository = holdingRepository;
         this.proposalRepository = proposalRepository;
@@ -98,10 +101,14 @@ public class KiwoomUsAutoTradeService {
         if (!properties.isConfigured() || !KiwoomUsMarketHours.isOpen()) return;
         try {
             reconcileOrders();
+        } catch (RuntimeException error) {
+            log("ERROR", null, "주문 동기화 실패(독립적인 보유종목 매도 감시는 유지): " + safe(error));
+        }
+        try {
             syncHoldings();
             evaluateExits();
         } catch (RuntimeException error) {
-            log("ERROR", null, "계좌/주문 동기화 실패: " + safe(error));
+            log("ERROR", null, "잔고/매도 감시 실패(오래된 잔고로 주문하지 않음): " + safe(error));
         }
     }
 
@@ -173,10 +180,14 @@ public class KiwoomUsAutoTradeService {
     }
 
     public AccountSnapshot refreshAccountSnapshot() {
+        return captureAccountSnapshot(true);
+    }
+
+    private synchronized AccountSnapshot captureAccountSnapshot(boolean updateHoldings) {
         JsonNode deposit = trade.getDepositDetail().block(API_TIMEOUT);
         JsonNode balance = trade.getBalance().block(API_TIMEOUT);
         UsdCash cash = trade.usdCash(deposit);
-        syncHoldings(balance);
+        if (updateHoldings) syncHoldings(balance);
         List<KiwoomUsAccountHolding> active = holdingRepository.findByActiveTrueOrderByIdAsc();
         BigDecimal stockEvaluation = trade.totalEvaluation(balance);
         BigDecimal managedEvaluation =
@@ -189,13 +200,18 @@ public class KiwoomUsAutoTradeService {
                                                 : holding.getCurrentPrice()
                                                         .multiply(
                                                                 BigDecimal.valueOf(
-                                                                        holding.getQuantity())))
+                                                                        holding
+                                                                                .getManagedQuantity())))
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
         long managedPositions =
                 active.stream().filter(KiwoomUsAccountHolding::isManagedByAutoTrade).count();
         BigDecimal automatedCapital = cash.availableUsd().add(managedEvaluation);
         KiwoomUsStrategySettings settings = settingsService.current();
-        BigDecimal perOrderLimit = percentage(cash.availableUsd(), effectiveOrderPercent(settings));
+        BigDecimal perOrderLimit =
+                orderLimit(
+                        cash.availableUsd().subtract(openBuyReserveUsd()).max(BigDecimal.ZERO),
+                        automatedCapital,
+                        settings);
         KrwOrderServiceStatus krwOrderServiceStatus;
         try {
             krwOrderServiceStatus = trade.getKrwOrderServiceStatus().block(API_TIMEOUT);
@@ -225,7 +241,8 @@ public class KiwoomUsAutoTradeService {
     /** 화면 조회용. 키움 일일 결제 처리 중에는 주문 판단과 분리해 마지막 정상값만 표시한다. */
     public AccountSnapshot accountSummary() {
         try {
-            return refreshAccountSnapshot();
+            // A screen read must not race ahead of execution reconciliation and claim ownership.
+            return captureAccountSnapshot(false);
         } catch (RuntimeException error) {
             if (!KiwoomUsTradeService.isTemporaryAccountSettlementError(error)) throw error;
             AccountSnapshot cached = lastAccountSnapshot.get();
@@ -270,7 +287,7 @@ public class KiwoomUsAutoTradeService {
         return trade.usdCash(trade.getDepositDetail().block(API_TIMEOUT));
     }
 
-    public void syncHoldings() {
+    public synchronized void syncHoldings() {
         syncHoldings(trade.getBalance().block(API_TIMEOUT));
     }
 
@@ -300,6 +317,14 @@ public class KiwoomUsAutoTradeService {
         if (state.isEmergencyStopped()) throw new IllegalStateException("API 오류 안전정지가 걸려 있습니다.");
     }
 
+    public void validateRestart() {
+        boolean unresolved =
+                proposalRepository.findByStatusIn(OPEN_STATUSES).stream()
+                        .anyMatch(p -> p.getStatus() == KiwoomUsTradeProposal.Status.UNKNOWN);
+        if (unresolved)
+            throw new IllegalStateException("주문 결과 불확실(UNKNOWN) 내역을 확인한 뒤 신규 매수를 재개하세요.");
+    }
+
     CandidateScreeningResult filterCandidates(
             List<RankedStock> ranked, KiwoomUsStrategySettings settings, AccountSnapshot account) {
         return filterCandidates(
@@ -314,9 +339,19 @@ public class KiwoomUsAutoTradeService {
         List<RankedStock> source = ranked == null ? List.of() : ranked;
         Set<String> held = new HashSet<>();
         for (KiwoomUsAccountHolding holding : holdings()) held.add(holding.getSymbol());
+        List<KiwoomUsTradeProposal> openOrders = proposalRepository.findByStatusIn(OPEN_STATUSES);
+        Set<String> pendingBuys = new HashSet<>();
+        for (var order : openOrders)
+            if (order.getAction() == KiwoomUsTradeProposal.Action.BUY)
+                pendingBuys.add(order.getSymbol());
         LocalDateTime cooldown = LocalDateTime.now().minusDays(settings.getSymbolCooldownDays());
         BigDecimal cashLimit = account.perOrderLimitUsd();
-        boolean riskCapacity = account.managedPositionCount() < settings.getMaxPositions();
+        boolean riskCapacity =
+                account.managedPositionCount()
+                                + pendingBuys.stream()
+                                        .filter(symbol -> !held.contains(symbol))
+                                        .count()
+                        < settings.getMaxPositions();
 
         List<RankedStock> liquid = new ArrayList<>();
         for (RankedStock stock : source) {
@@ -337,7 +372,10 @@ public class KiwoomUsAutoTradeService {
 
         List<RankedStock> momentum = new ArrayList<>();
         for (RankedStock stock : indexed) {
-            if (stock.changePercent() >= settings.getMinChangePercent()
+            if (stock.changePercent()
+                            >= (settings.getSignalMode() == SignalMode.TREND
+                                    ? 0
+                                    : settings.getMinChangePercent())
                     && stock.changePercent() <= settings.getMaxChangePercent()) {
                 momentum.add(stock);
             } else {
@@ -468,7 +506,8 @@ public class KiwoomUsAutoTradeService {
         List<SpreadQualified> notHeld = new ArrayList<>();
         for (SpreadQualified item : affordable) {
             RankedStock stock = item.quality().volume().stock();
-            if (!held.contains(stock.symbol())) notHeld.add(item);
+            if (!held.contains(stock.symbol()) && !pendingBuys.contains(stock.symbol()))
+                notHeld.add(item);
             else reject(stock, "미보유", "이미 보유 중인 종목입니다.");
         }
 
@@ -476,14 +515,20 @@ public class KiwoomUsAutoTradeService {
         for (SpreadQualified item : notHeld) {
             RankedStock stock = item.quality().volume().stock();
             boolean recentlyBought =
-                    proposalRepository.existsBySymbolAndActionAndOrderedAtAfter(
-                            stock.symbol(), KiwoomUsTradeProposal.Action.BUY, cooldown);
+                    proposalRepository
+                                    .existsBySymbolAndActionAndFilledQuantityGreaterThanAndOrderedAtAfter(
+                                            stock.symbol(),
+                                            KiwoomUsTradeProposal.Action.BUY,
+                                            0,
+                                            cooldown)
+                            || proposalRepository
+                                    .existsBySymbolAndActionAndStatusInAndOrderedAtAfter(
+                                            stock.symbol(),
+                                            KiwoomUsTradeProposal.Action.BUY,
+                                            Set.of(KiwoomUsTradeProposal.Status.CANCELED),
+                                            LocalDateTime.now().minusMinutes(2));
             if (!recentlyBought) cooldownPassed.add(item);
-            else
-                reject(
-                        stock,
-                        "재매수 제한",
-                        "최근 " + settings.getSymbolCooldownDays() + "일 이내 매수 이력이 있습니다.");
+            else reject(stock, "재매수 제한", "최근 체결 매수의 재진입 제한 또는 미체결 취소 후 2분 대기 중입니다.");
         }
 
         List<Candidate> result = new ArrayList<>();
@@ -491,6 +536,37 @@ public class KiwoomUsAutoTradeService {
             for (SpreadQualified item : cooldownPassed) {
                 RankedStock stock = item.quality().volume().stock();
                 var fundamental = item.quality().fundamental();
+                KiwoomUsTechnicalSignalService.Signal signal = null;
+                if (settings.getSignalMode() != SignalMode.LEGACY) {
+                    signal =
+                            technicalSignals.evaluate(
+                                    stock.exchange(), stock.symbol(), item.quote(), settings);
+                    log(
+                            "TECHNICAL_SIGNAL",
+                            null,
+                            stockLabel(stock)
+                                    + " ["
+                                    + settings.getSignalMode()
+                                    + "] "
+                                    + signal.reason()
+                                    + "; 상대강도="
+                                    + signal.relativeStrengthPercent());
+                    if (settings.getSignalMode() == SignalMode.TREND && !signal.accepted()) {
+                        reject(stock, "시장·상대강도·돌파", signal.reason());
+                        continue;
+                    }
+                    if (settings.getSignalMode() == SignalMode.TREND
+                            && riskQuantity(
+                                            item.quote().ask(),
+                                            cashLimit,
+                                            account.automatedCapitalUsd(),
+                                            signal.stopPercent(),
+                                            settings)
+                                    < 1) {
+                        reject(stock, "거래당 위험", "위험 예산으로 1주를 살 수 없습니다.");
+                        continue;
+                    }
+                }
                 result.add(
                         new Candidate(
                                 stock.rank(),
@@ -503,9 +579,13 @@ public class KiwoomUsAutoTradeService {
                                 fundamental == null ? null : fundamental.effectivePe(),
                                 fundamental == null ? null : fundamental.roePercent(),
                                 item.quote().spreadPercent(),
-                                candidateScore(stock, item, settings),
+                                candidateScore(stock, item, settings)
+                                        + (settings.getSignalMode() == SignalMode.TREND
+                                                ? Math.min(30, signal.relativeStrengthPercent())
+                                                : 0),
                                 stock.tradedValue(),
-                                indexUniverse.membershipLabel(stock.symbol())));
+                                indexUniverse.membershipLabel(stock.symbol()),
+                                signal));
             }
         } else {
             for (SpreadQualified item : cooldownPassed) {
@@ -536,6 +616,7 @@ public class KiwoomUsAutoTradeService {
                         affordable.size(),
                         notHeld.size(),
                         cooldownPassed.size(),
+                        riskCapacity ? cooldownPassed.size() : 0,
                         result.size(),
                         cashLimit);
         return new CandidateScreeningResult(List.copyOf(result), stats);
@@ -570,8 +651,30 @@ public class KiwoomUsAutoTradeService {
                 / 100.0;
     }
 
-    private KiwoomUsTradeProposal submitBuy(
+    private synchronized KiwoomUsTradeProposal submitBuy(
             Candidate candidate, KiwoomUsStrategySettings settings) {
+        validateDecisionReady();
+        if (!state.isAutoTrading()) throw new IllegalStateException("신규 매수가 중지되었습니다.");
+        reconcileOrders();
+        AccountSnapshot latestAccount = refreshAccountSnapshot();
+        Set<String> occupied = new HashSet<>();
+        for (var holding : holdings()) {
+            if (holding.getSymbol().equals(candidate.symbol()))
+                throw new IllegalStateException("이미 보유한 종목입니다.");
+            if (holding.isManagedByAutoTrade()) occupied.add(holding.getSymbol());
+        }
+        for (var order : proposalRepository.findByStatusIn(OPEN_STATUSES)) {
+            if (order.getStatus() == KiwoomUsTradeProposal.Status.UNKNOWN)
+                throw new IllegalStateException("확인되지 않은 주문이 있어 신규 매수를 차단합니다.");
+            if (order.getAction() == KiwoomUsTradeProposal.Action.BUY)
+                occupied.add(order.getSymbol());
+        }
+        if (occupied.contains(candidate.symbol()) || occupied.size() >= settings.getMaxPositions())
+            throw new IllegalStateException("미체결 포함 보유종목 한도 또는 중복 주문입니다.");
+        if (state.checkDailyLoss(
+                latestAccount.automatedCapitalUsd().doubleValue(),
+                settings.getDailyLossLimitPercent()))
+            throw new IllegalStateException("일일 손실 한도 도달");
         long dailyBuys = dailyBuys();
         if (dailyBuys >= settings.getDailyMaxBuys())
             throw new IllegalStateException("오늘 미국주식 매수 횟수 한도에 도달했습니다.");
@@ -583,9 +686,38 @@ public class KiwoomUsAutoTradeService {
         }
         BigDecimal unreservedUsd =
                 latestCash.availableUsd().subtract(openBuyReserveUsd()).max(BigDecimal.ZERO);
-        BigDecimal orderBudget = percentage(unreservedUsd, effectiveOrderPercent(settings));
-        int quantity = orderBudget.divide(candidate.price(), 0, RoundingMode.DOWN).intValue();
+        BigDecimal orderBudget =
+                orderLimit(unreservedUsd, latestAccount.automatedCapitalUsd(), settings);
+        OrderBookQuote quote =
+                trade.getOrderBook(candidate.exchange(), candidate.symbol()).block(API_TIMEOUT);
+        if (quote == null || quote.spreadPercent() > settings.getMaxSpreadPercent())
+            throw new IllegalStateException("주문 직전 호가 스프레드 조건 미충족");
+        BigDecimal price = quote.ask();
+        if (price.subtract(candidate.price())
+                        .abs()
+                        .divide(candidate.price(), 6, RoundingMode.HALF_UP)
+                        .doubleValue()
+                > 0.005) throw new IllegalStateException("후보 선정 후 가격이 0.5% 이상 변해 재평가합니다.");
+        KiwoomUsTechnicalSignalService.Signal signal = candidate.technicalSignal();
+        if (settings.getSignalMode() == SignalMode.TREND) {
+            signal =
+                    technicalSignals.evaluate(
+                            candidate.exchange(), candidate.symbol(), quote, settings);
+            if (!signal.accepted())
+                throw new IllegalStateException("주문 직전 매수 근거 미충족: " + signal.reason());
+        }
+        int quantity =
+                settings.getSignalMode() == SignalMode.TREND
+                        ? riskQuantity(
+                                price,
+                                orderBudget,
+                                latestAccount.automatedCapitalUsd(),
+                                signal.stopPercent(),
+                                settings)
+                        : orderBudget.divide(price, 0, RoundingMode.DOWN).intValue();
         if (quantity < 1) throw new IllegalStateException("D+0 USD 외화예수금으로 1주를 살 수 없습니다.");
+        validateDecisionReady();
+        if (!state.isAutoTrading()) throw new IllegalStateException("주문 준비 중 신규 매수가 중지되었습니다.");
 
         KiwoomUsTradeProposal proposal = new KiwoomUsTradeProposal();
         proposal.setAction(KiwoomUsTradeProposal.Action.BUY);
@@ -593,8 +725,21 @@ public class KiwoomUsAutoTradeService {
         proposal.setSymbol(candidate.symbol());
         proposal.setStockName(candidate.name());
         proposal.setQuantity(quantity);
-        proposal.setLimitPrice(candidate.price());
-        proposal.setReason("매수 조건 통과; 자금원=" + KiwoomUsTradeService.USD_CASH_SOURCE);
+        proposal.setLimitPrice(price);
+        if (settings.getSignalMode() == SignalMode.TREND)
+            proposal.setPlannedStopLossPercent(signal.stopPercent());
+        proposal.setReason(
+                "["
+                        + settings.getSignalMode()
+                        + "] "
+                        + (settings.getSignalMode() == SignalMode.TREND
+                                ? signal.reason()
+                                : "기존 조건 통과")
+                        + (settings.getSignalMode() == SignalMode.OBSERVE && signal != null
+                                ? "; 관찰=" + signal.reason()
+                                : "")
+                        + "; 자금원="
+                        + KiwoomUsTradeService.USD_CASH_SOURCE);
         proposal = proposalRepository.save(proposal);
         try {
             JsonNode response =
@@ -604,7 +749,7 @@ public class KiwoomUsAutoTradeService {
                                             candidate.exchange(),
                                             candidate.symbol(),
                                             quantity,
-                                            candidate.price(),
+                                            price,
                                             false))
                             .block(API_TIMEOUT);
             String orderNo = text(response, "ord_no", "order_no");
@@ -628,7 +773,7 @@ public class KiwoomUsAutoTradeService {
                             + " "
                             + quantity
                             + "주 × $"
-                            + candidate.price()
+                            + price
                             + " (USD 예수금만 사용, 주문번호 "
                             + orderNo
                             + ")");
@@ -651,24 +796,41 @@ public class KiwoomUsAutoTradeService {
         }
     }
 
-    private void evaluateExits() {
+    private synchronized void evaluateExits() {
         KiwoomUsStrategySettings settings = settingsService.current();
         for (KiwoomUsAccountHolding holding : holdings()) {
-            if (!holding.isManagedByAutoTrade() || holding.getSellableQuantity() <= 0) continue;
-            double pnl = holding.getProfitLossPercent();
+            if (!holding.isManagedByAutoTrade() || holding.getManagedQuantity() <= 0) continue;
+            if (holding.getSyncedAt() == null
+                    || holding.getSyncedAt().isBefore(LocalDateTime.now().minusSeconds(90)))
+                continue;
+            double stopPercent =
+                    holding.getPlannedStopLossPercent() == null
+                            ? settings.getStopLossPercent()
+                            : Math.min(
+                                    settings.getStopLossPercent(),
+                                    holding.getPlannedStopLossPercent());
+            double pnl = holding.managedProfitLossPercent();
+            if (!Double.isFinite(pnl)) {
+                log(
+                        "DATA_MISSING",
+                        null,
+                        holding.getSymbol() + " 자동매매 취득단가 확인 필요: 혼합 보유를 계좌 평균가로 청산하지 않습니다.");
+                continue;
+            }
             Optional<KiwoomUsTradeProposal> openSell = findOpenSell(holding.getSymbol());
             if (openSell.isPresent()) {
                 KiwoomUsTradeProposal proposal = openSell.get();
-                if (pnl <= -settings.getStopLossPercent()
+                if (pnl <= -stopPercent
                         && proposal.getStatus() != KiwoomUsTradeProposal.Status.CANCEL_REQUESTED) {
                     requestOrderCancellation(proposal, "손절 전환을 위한 기존 매도 취소");
                 }
                 continue;
             }
+            if (holding.getSellableQuantity() <= 0) continue;
             String reason = null;
             boolean market = false;
-            int quantity = holding.getSellableQuantity();
-            if (pnl <= -settings.getStopLossPercent()) {
+            int quantity = Math.min(holding.getSellableQuantity(), holding.getManagedQuantity());
+            if (pnl <= -stopPercent) {
                 reason = "손절 " + format(pnl) + "%";
                 market = true;
             } else if (pnl >= settings.getTakeProfitPercent2()) {
@@ -676,7 +838,8 @@ public class KiwoomUsAutoTradeService {
             } else if (pnl >= settings.getTakeProfitPercent()
                     && !holding.isFirstTakeProfitCompleted()) {
                 reason = "1차 익절 " + format(pnl) + "%";
-                quantity = Math.max(1, quantity / 2);
+                quantity = Math.min(quantity, holding.remainingFirstTakeProfitQuantity());
+                holdingRepository.save(holding);
             } else if (holding.getPositionOpenedAt() != null
                     && holding.getPositionOpenedAt()
                             .isBefore(
@@ -684,7 +847,7 @@ public class KiwoomUsAutoTradeService {
                 reason = "최대 보유기간 " + settings.getMaxHoldingDays() + "일 도달";
                 market = true;
             }
-            if (reason != null) submitSell(holding, quantity, market, reason);
+            if (reason != null && quantity > 0) submitSell(holding, quantity, market, reason);
         }
     }
 
@@ -759,7 +922,7 @@ public class KiwoomUsAutoTradeService {
                 actionLabel + " 주문 결과 불확실 " + proposal.getSymbol() + ": 키움 주문·체결 내역을 확인하세요.");
     }
 
-    public void reconcileOrders() {
+    public synchronized void reconcileOrders() {
         List<KiwoomUsTradeProposal> open = proposalRepository.findByStatusIn(OPEN_STATUSES);
         if (open.isEmpty()) return;
         JsonNode fills = trade.getTodayFills().block(API_TIMEOUT);
@@ -768,17 +931,36 @@ public class KiwoomUsAutoTradeService {
         List<JsonNode> openRecords = new ArrayList<>();
         collectObjects(fills, fillRecords);
         collectObjects(unfilled, openRecords);
+        LocalDate earliest =
+                open.stream()
+                        .map(KiwoomUsTradeProposal::getOrderedAt)
+                        .filter(java.util.Objects::nonNull)
+                        .map(this::tradingDate)
+                        .min(LocalDate::compareTo)
+                        .orElse(KiwoomUsMarketHours.today());
+        List<JsonNode> historicalRecords = new ArrayList<>();
+        if (earliest.isBefore(KiwoomUsMarketHours.today())) {
+            // Never match yesterday's order number against today's order with the same number.
+            collectObjects(
+                    trade.getOrderHistory(earliest, KiwoomUsMarketHours.today()).block(API_TIMEOUT),
+                    historicalRecords);
+        }
         for (KiwoomUsTradeProposal proposal : open) {
             if (proposal.getBrokerOrderNo() == null || proposal.getBrokerOrderNo().isBlank())
                 continue;
-            List<JsonNode> matchedFills = matchingRecords(fillRecords, proposal);
-            List<JsonNode> matchedOpenRecords = matchingRecords(openRecords, proposal);
+            boolean currentDay =
+                    proposal.getOrderedAt() != null
+                            && tradingDate(proposal.getOrderedAt())
+                                    .equals(KiwoomUsMarketHours.today());
+            List<JsonNode> matchedFills =
+                    matchingRecords(currentDay ? fillRecords : historicalRecords, proposal);
+            List<JsonNode> matchedOpenRecords =
+                    currentDay ? matchingRecords(openRecords, proposal) : List.of();
             List<JsonNode> matchedRecords = new ArrayList<>(matchedFills);
             matchedRecords.addAll(matchedOpenRecords);
 
             applyBrokerFillState(proposal, matchedRecords);
             if (proposal.getStatus() == KiwoomUsTradeProposal.Status.FILLED) {
-                cancelDisappearanceCounts.remove(proposal.getBrokerOrderNo());
                 continue;
             }
 
@@ -793,17 +975,13 @@ public class KiwoomUsAutoTradeService {
             boolean matchedOpenOrder = !matchedOpenRecords.isEmpty();
             if (proposal.getStatus() == KiwoomUsTradeProposal.Status.CANCEL_REQUESTED) {
                 if (matchedOpenOrder) {
-                    cancelDisappearanceCounts.remove(proposal.getBrokerOrderNo());
                     if (proposal.getCancelRequestedAt() != null
                             && proposal.getCancelRequestedAt()
                                     .isBefore(LocalDateTime.now().minusSeconds(60))) {
                         requestOrderCancellation(proposal, "미완료 취소 재요청");
                     }
-                } else if (cancelDisappearanceCounts.merge(
-                                proposal.getBrokerOrderNo(), 1, Integer::sum)
-                        >= CANCEL_DISAPPEARANCE_CONFIRMATIONS) {
-                    confirmCancellation(proposal, "취소 요청 후 미체결 목록에서 2회 연속 사라진 취소 완료로 확정했습니다.");
                 }
+                // Disappearance alone is not cancellation evidence: a late fill may follow.
                 continue;
             }
             if (matchedOpenOrder
@@ -862,9 +1040,24 @@ public class KiwoomUsAutoTradeService {
     }
 
     private boolean matchesOrder(JsonNode record, KiwoomUsTradeProposal proposal) {
+        String date = text(record, "ord_dt");
+        if (!date.isBlank()
+                && proposal.getOrderedAt() != null
+                && !date.equals(
+                        tradingDate(proposal.getOrderedAt())
+                                .format(DateTimeFormatter.BASIC_ISO_DATE))) return false;
+        String symbol = text(record, "stk_cd");
+        if (!symbol.isBlank() && !symbol.equals(proposal.getSymbol())) return false;
         String orderNo = proposal.getBrokerOrderNo();
         return orderNo.equals(text(record, "ord_no", "order_no"))
                 || orderNo.equals(text(record, "orig_ord_no", "org_ord_no", "ori_ord_no"));
+    }
+
+    private LocalDate tradingDate(LocalDateTime timestamp) {
+        return timestamp
+                .atZone(ZoneId.systemDefault())
+                .withZoneSameInstant(KiwoomUsMarketHours.ET)
+                .toLocalDate();
     }
 
     private void applyBrokerFillState(
@@ -874,6 +1067,8 @@ public class KiwoomUsAutoTradeService {
         BigDecimal averagePrice = null;
         boolean quantityReported = false;
         for (JsonNode record : matchedRecords) {
+            // A cancellation/amendment row's quantities belong to a different order.
+            if (!proposal.getBrokerOrderNo().equals(text(record, "ord_no", "order_no"))) continue;
             Integer reportedFilled = nullableInteger(record, "cntr_qty", "filled_qty", "exec_qty");
             Integer reportedRemaining =
                     nullableInteger(
@@ -883,14 +1078,13 @@ public class KiwoomUsAutoTradeService {
                             "unfilled_qty",
                             "ord_remn_qty",
                             "oso_qty");
-            Integer reportedOrdered = nullableInteger(record, "ord_qty", "order_qty", "qty");
             if (reportedFilled != null) {
                 filled = Math.max(filled, reportedFilled);
                 quantityReported = true;
             }
             if (reportedRemaining != null) {
-                int ordered = reportedOrdered == null ? proposal.getQuantity() : reportedOrdered;
-                filled = Math.max(filled, Math.max(0, ordered - reportedRemaining));
+                // Remaining zero can mean cancelled. Only explicit cumulative fills establish
+                // ownership.
                 remaining =
                         remaining == null
                                 ? reportedRemaining
@@ -899,29 +1093,16 @@ public class KiwoomUsAutoTradeService {
             }
             BigDecimal reportedPrice =
                     decimal(record, "cntr_uv", "cntr_prc", "avg_cntr_pric", "exec_pric");
-            if (reportedPrice.signum() > 0) averagePrice = reportedPrice;
+            if (reportedPrice.signum() > 0 && reportedFilled != null && reportedFilled >= filled)
+                averagePrice = reportedPrice;
         }
         if (!quantityReported) return;
         filled = Math.min(proposal.getQuantity(), filled);
-        if (remaining == null) remaining = Math.max(0, proposal.getQuantity() - filled);
+        remaining = Math.max(0, proposal.getQuantity() - filled);
 
         KiwoomUsTradeProposal.Status before = proposal.getStatus();
-        int beforeFilled = proposal.getFilledQuantity();
         proposal.syncFill(filled, remaining, averagePrice);
         proposalRepository.save(proposal);
-        if (proposal.getAction() == KiwoomUsTradeProposal.Action.SELL
-                && proposal.getReason() != null
-                && proposal.getReason().startsWith("1차 익절")
-                && beforeFilled == 0
-                && proposal.getFilledQuantity() > 0) {
-            holdingRepository
-                    .findByExchangeAndSymbol(proposal.getExchange(), proposal.getSymbol())
-                    .ifPresent(
-                            holding -> {
-                                holding.markFirstTakeProfitCompleted();
-                                holdingRepository.save(holding);
-                            });
-        }
         if (before != KiwoomUsTradeProposal.Status.FILLED
                 && proposal.getStatus() == KiwoomUsTradeProposal.Status.FILLED) {
             String type =
@@ -942,8 +1123,18 @@ public class KiwoomUsAutoTradeService {
 
     private boolean isCancellationConfirmation(JsonNode record, KiwoomUsTradeProposal proposal) {
         if (!matchesOrder(record, proposal)) return false;
+        String status = text(record, "ord_stat", "ord_stt", "order_status").toUpperCase();
+        if (status.contains("요청")
+                || status.contains("거부")
+                || status.contains("REQUEST")
+                || status.contains("PENDING")
+                || status.contains("REJECT")) return false;
+        if (integer(record, "cncl_qty") > 0
+                && integer(record, "cncl_qty") + proposal.getFilledQuantity()
+                        >= proposal.getQuantity()) return true;
         for (String field :
                 List.of(
+                        "ord_stat",
                         "ord_stt",
                         "order_status",
                         "io_tp_nm",
@@ -953,7 +1144,16 @@ public class KiwoomUsAutoTradeService {
                         "mdfy_cncl",
                         "acpt_tp")) {
             String value = text(record, field).trim().toUpperCase();
-            if (value.contains("취소")
+            if (value.contains("취소요청")
+                    || value.contains("취소 요청")
+                    || value.contains("거부")
+                    || value.contains("REQUEST")
+                    || value.contains("PENDING")
+                    || value.contains("REJECT")) continue;
+            if (value.equals("취소")
+                    || value.contains("취소완료")
+                    || value.contains("취소 완료")
+                    || value.contains("취소확인")
                     || value.contains("CANCELLED")
                     || value.contains("CANCELED")
                     || value.equals("CANCEL")) return true;
@@ -964,7 +1164,6 @@ public class KiwoomUsAutoTradeService {
     private void confirmCancellation(KiwoomUsTradeProposal proposal, String evidence) {
         proposal.canceled();
         proposalRepository.save(proposal);
-        cancelDisappearanceCounts.remove(proposal.getBrokerOrderNo());
         log(
                 "ORDER_CANCELED",
                 proposal.getId(),
@@ -977,7 +1176,7 @@ public class KiwoomUsAutoTradeService {
                         + ")");
     }
 
-    private void syncHoldings(JsonNode balance) {
+    private synchronized void syncHoldings(JsonNode balance) {
         List<Holding> brokerHoldings = trade.holdings(balance);
         Set<String> present = new HashSet<>();
         for (Holding source : brokerHoldings) {
@@ -987,7 +1186,6 @@ public class KiwoomUsAutoTradeService {
                     holdingRepository
                             .findByExchangeAndSymbol(source.exchange(), source.symbol())
                             .orElseGet(KiwoomUsAccountHolding::new);
-            boolean wasActive = entity.isActive();
             entity.setExchange(source.exchange());
             entity.setSymbol(source.symbol());
             entity.sync(
@@ -997,25 +1195,105 @@ public class KiwoomUsAutoTradeService {
                     source.averagePrice(),
                     source.currentPrice(),
                     source.profitLossPercent());
-            if (!wasActive
-                    && proposalRepository.existsBySymbolAndActionAndStatusInAndOrderedAtAfter(
-                            source.symbol(),
-                            KiwoomUsTradeProposal.Action.BUY,
-                            Set.of(
-                                    KiwoomUsTradeProposal.Status.PARTIALLY_FILLED,
-                                    KiwoomUsTradeProposal.Status.PARTIALLY_FILLED_CANCELED,
-                                    KiwoomUsTradeProposal.Status.FILLED),
-                            LocalDateTime.now().minusDays(1))) {
-                entity.markManagedByAutoTrade();
-            }
+            reconcileHoldingOwnership(entity);
             holdingRepository.save(entity);
         }
         for (KiwoomUsAccountHolding entity : holdingRepository.findByActiveTrueOrderByIdAsc()) {
             if (!present.contains(entity.getExchange() + ":" + entity.getSymbol())) {
+                entity.sync(
+                        entity.getStockName(),
+                        0,
+                        0,
+                        entity.getAveragePrice(),
+                        entity.getCurrentPrice(),
+                        entity.getProfitLossPercent());
+                reconcileHoldingOwnership(entity);
                 entity.deactivate();
                 holdingRepository.save(entity);
             }
         }
+    }
+
+    private void reconcileHoldingOwnership(KiwoomUsAccountHolding entity) {
+        List<KiwoomUsTradeProposal> history =
+                proposalRepository.findByExchangeAndSymbolOrderByIdAsc(
+                        entity.getExchange(), entity.getSymbol());
+        long buys = 0, sells = 0;
+        long bookQuantity = 0;
+        BigDecimal bookCost = BigDecimal.ZERO;
+        boolean knownCost = true;
+        KiwoomUsTradeProposal lastBuy = null;
+        int firstProfitFilled = 0, firstProfitTarget = 0;
+        for (var proposal : history) {
+            if (proposal.getFilledQuantity() <= 0) continue;
+            if (proposal.getAction() == KiwoomUsTradeProposal.Action.BUY) {
+                buys += proposal.getFilledQuantity();
+                lastBuy = proposal;
+                if (belongsToClosedPosition(entity, proposal)) continue;
+                BigDecimal fillPrice = proposal.getAverageFillPrice();
+                if (bookQuantity == 0) knownCost = true;
+                if (fillPrice == null || fillPrice.signum() <= 0) knownCost = false;
+                else
+                    bookCost =
+                            bookCost.add(
+                                    fillPrice.multiply(
+                                            BigDecimal.valueOf(proposal.getFilledQuantity())));
+                bookQuantity += proposal.getFilledQuantity();
+                entity.setPlannedStopLossPercent(proposal.getPlannedStopLossPercent());
+            } else {
+                sells += proposal.getFilledQuantity();
+                if (belongsToClosedPosition(entity, proposal)) continue;
+                long reduced = Math.min(bookQuantity, proposal.getFilledQuantity());
+                if (bookQuantity > 0)
+                    bookCost =
+                            bookCost.multiply(BigDecimal.valueOf(bookQuantity - reduced))
+                                    .divide(
+                                            BigDecimal.valueOf(bookQuantity),
+                                            8,
+                                            RoundingMode.HALF_UP);
+                bookQuantity -= reduced;
+                if (proposal.getReason() != null
+                        && proposal.getReason().startsWith("1차 익절")
+                        && proposal.getOrderedAt() != null
+                        && !proposal.getOrderedAt().isBefore(entity.getPositionOpenedAt())) {
+                    if (firstProfitTarget == 0) firstProfitTarget = proposal.getQuantity();
+                    firstProfitFilled += proposal.getFilledQuantity();
+                }
+            }
+        }
+        if (!entity.hasOwnershipCounters()
+                && !entity.isManagedByAutoTrade()
+                && lastBuy != null
+                && lastBuy.getOrderedAt() != null
+                && lastBuy.getOrderedAt().isBefore(entity.getPositionOpenedAt().minusMinutes(15))) {
+            // An old unmatched automatic buy may have been manually sold before this holding.
+            entity.initializeUnmanagedBaseline(buys, sells);
+            log(
+                    "OWNERSHIP_REVIEW",
+                    lastBuy.getId(),
+                    entity.getSymbol() + " 과거 체결과 현재 보유의 연결 확인 필요: 임의 자동관리 편입을 보류합니다.");
+        }
+        long outstandingSells =
+                history.stream()
+                        .filter(
+                                p ->
+                                        p.getAction() == KiwoomUsTradeProposal.Action.SELL
+                                                && OPEN_STATUSES.contains(p.getStatus()))
+                        .mapToLong(KiwoomUsTradeProposal::getRemainingQuantity)
+                        .sum();
+        entity.reconcileManagedQuantity(buys, sells, outstandingSells);
+        entity.setManagedAveragePrice(
+                knownCost && bookQuantity > 0
+                        ? bookCost.divide(BigDecimal.valueOf(bookQuantity), 4, RoundingMode.HALF_UP)
+                        : null);
+        entity.reconcileFirstTakeProfit(firstProfitFilled, firstProfitTarget);
+    }
+
+    private boolean belongsToClosedPosition(
+            KiwoomUsAccountHolding holding, KiwoomUsTradeProposal proposal) {
+        return holding.getLastClosedAt() != null
+                && (proposal.getOrderedAt() == null
+                        || !proposal.getOrderedAt().isAfter(holding.getLastClosedAt()));
     }
 
     private Optional<KiwoomUsTradeProposal> findOpenSell(String symbol) {
@@ -1035,6 +1313,7 @@ public class KiwoomUsAutoTradeService {
                         KiwoomUsTradeProposal.Status.ORDERED,
                         KiwoomUsTradeProposal.Status.PARTIALLY_FILLED,
                         KiwoomUsTradeProposal.Status.PARTIALLY_FILLED_CANCELED,
+                        KiwoomUsTradeProposal.Status.CANCEL_REQUESTED,
                         KiwoomUsTradeProposal.Status.FILLED,
                         KiwoomUsTradeProposal.Status.UNKNOWN)) {
             total +=
@@ -1148,6 +1427,30 @@ public class KiwoomUsAutoTradeService {
                 settings.getMaxOrderPercent(), KiwoomUsTradeService.USD_ONLY_MAX_SPEND_PERCENT);
     }
 
+    private BigDecimal orderLimit(
+            BigDecimal cash, BigDecimal capital, KiwoomUsStrategySettings settings) {
+        BigDecimal base = settings.getSignalMode() == SignalMode.TREND ? capital : cash;
+        return percentage(base.max(BigDecimal.ZERO), effectiveOrderPercent(settings))
+                .min(cash.max(BigDecimal.ZERO).multiply(KiwoomUsTradeService.USD_ONLY_SPEND_RATIO));
+    }
+
+    static int riskQuantity(
+            BigDecimal price,
+            BigDecimal budget,
+            BigDecimal capital,
+            double stopPercent,
+            KiwoomUsStrategySettings settings) {
+        if (price.signum() <= 0 || !Double.isFinite(stopPercent) || stopPercent <= 0) return 0;
+        BigDecimal riskBudget =
+                capital.max(BigDecimal.ZERO)
+                        .multiply(BigDecimal.valueOf(settings.getRiskPerTradePercent() / 100));
+        BigDecimal perShareRisk = price.multiply(BigDecimal.valueOf(stopPercent / 100));
+        return riskBudget
+                .divide(perShareRisk, 0, RoundingMode.DOWN)
+                .min(budget.max(BigDecimal.ZERO).divide(price, 0, RoundingMode.DOWN))
+                .intValue();
+    }
+
     private BigDecimal openBuyReserveUsd() {
         return proposalRepository.findByStatusIn(OPEN_STATUSES).stream()
                 .filter(p -> p.getAction() == KiwoomUsTradeProposal.Action.BUY)
@@ -1174,7 +1477,8 @@ public class KiwoomUsAutoTradeService {
             double spreadPercent,
             double score,
             BigDecimal tradedValue,
-            String indexMembership) {}
+            String indexMembership,
+            KiwoomUsTechnicalSignalService.Signal technicalSignal) {}
 
     private record VolumeQualified(RankedStock stock, double relativeVolume) {}
 
@@ -1200,6 +1504,7 @@ public class KiwoomUsAutoTradeService {
             int notHeldCount,
             int cooldownCount,
             int capacityCount,
+            int signalCount,
             BigDecimal perOrderLimitUsd) {
         String auditMessage() {
             StringBuilder message = new StringBuilder("후보 필터 단계별 잔존/탈락: 원본=").append(inputCount);
@@ -1216,7 +1521,8 @@ public class KiwoomUsAutoTradeService {
             appendStage(message, "미보유", affordableCount, notHeldCount);
             appendStage(message, "재매수제한", notHeldCount, cooldownCount);
             appendStage(message, "보유한도", cooldownCount, capacityCount);
-            message.append(" → 최종=").append(capacityCount);
+            appendStage(message, "매수신호·위험예산", capacityCount, signalCount);
+            message.append(" → 최종=").append(signalCount);
             return message.toString();
         }
 

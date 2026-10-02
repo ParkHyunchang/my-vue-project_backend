@@ -15,6 +15,11 @@ public interface KiwoomUsTradeProposalRepository
 
     Optional<KiwoomUsTradeProposal> findByBrokerOrderNo(String value);
 
+    List<KiwoomUsTradeProposal> findByExchangeAndSymbolOrderByIdAsc(String exchange, String symbol);
+
+    boolean existsBySymbolAndActionAndFilledQuantityGreaterThanAndOrderedAtAfter(
+            String symbol, KiwoomUsTradeProposal.Action action, int quantity, LocalDateTime after);
+
     long countByActionAndStatusAndOrderedAtAfter(
             KiwoomUsTradeProposal.Action action,
             KiwoomUsTradeProposal.Status status,

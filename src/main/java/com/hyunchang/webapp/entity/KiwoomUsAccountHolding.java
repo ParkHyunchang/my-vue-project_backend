@@ -38,8 +38,20 @@ public class KiwoomUsAccountHolding {
     private double profitLossPercent;
     private boolean active;
     private boolean managedByAutoTrade;
+    private int managedQuantity;
+    private Long accountedBuyQuantity;
+    private Long accountedSellQuantity;
+    private long pendingQuantityReduction;
+    private Double plannedStopLossPercent;
+
+    @Column(precision = 19, scale = 4)
+    private BigDecimal managedAveragePrice;
+
+    private int firstTakeProfitTargetQuantity;
+    private int firstTakeProfitFilledQuantity;
     private boolean firstTakeProfitCompleted;
     private LocalDateTime positionOpenedAt;
+    private LocalDateTime lastClosedAt;
     private LocalDateTime syncedAt;
 
     public void sync(
@@ -107,8 +119,97 @@ public class KiwoomUsAccountHolding {
         return managedByAutoTrade;
     }
 
+    public int getManagedQuantity() {
+        return Math.min(quantity, managedQuantity);
+    }
+
+    public Double getPlannedStopLossPercent() {
+        return plannedStopLossPercent;
+    }
+
+    public void setPlannedStopLossPercent(Double value) {
+        plannedStopLossPercent = value;
+    }
+
+    public boolean hasOwnershipCounters() {
+        return accountedBuyQuantity != null && accountedSellQuantity != null;
+    }
+
+    public void initializeUnmanagedBaseline(long buys, long sells) {
+        accountedBuyQuantity = buys;
+        accountedSellQuantity = sells;
+    }
+
+    public void setManagedAveragePrice(BigDecimal value) {
+        managedAveragePrice = value;
+    }
+
+    public BigDecimal getManagedAveragePrice() {
+        return managedAveragePrice;
+    }
+
+    public double managedProfitLossPercent() {
+        BigDecimal basis = managedAveragePrice;
+        if (basis == null && managedQuantity == quantity) basis = averagePrice;
+        if (basis == null
+                || basis.signum() <= 0
+                || currentPrice == null
+                || currentPrice.signum() <= 0) return Double.NaN;
+        return currentPrice
+                        .divide(basis, 10, java.math.RoundingMode.HALF_UP)
+                        .subtract(BigDecimal.ONE)
+                        .doubleValue()
+                * 100;
+    }
+
+    public int remainingFirstTakeProfitQuantity() {
+        if (firstTakeProfitTargetQuantity == 0)
+            firstTakeProfitTargetQuantity = Math.max(1, managedQuantity / 2);
+        return Math.max(0, firstTakeProfitTargetQuantity - firstTakeProfitFilledQuantity);
+    }
+
+    public void reconcileFirstTakeProfit(int filled, int initialTarget) {
+        if (firstTakeProfitTargetQuantity == 0 && initialTarget > 0)
+            firstTakeProfitTargetQuantity = initialTarget;
+        firstTakeProfitFilledQuantity = filled;
+        firstTakeProfitCompleted =
+                firstTakeProfitTargetQuantity > 0 && filled >= firstTakeProfitTargetQuantity;
+    }
+
+    /** Cumulative confirmed fills make replay idempotent, including delayed/partial fills. */
+    public void reconcileManagedQuantity(long buys, long sells) {
+        reconcileManagedQuantity(buys, sells, 0);
+    }
+
+    public void reconcileManagedQuantity(long buys, long sells, long outstandingAutomaticSells) {
+        long owned;
+        if (accountedBuyQuantity == null || accountedSellQuantity == null) {
+            owned = Math.max(0, buys - sells);
+        } else {
+            long newSells = Math.max(0, sells - accountedSellQuantity);
+            long alreadyObserved = Math.min(pendingQuantityReduction, newSells);
+            pendingQuantityReduction -= alreadyObserved;
+            owned =
+                    (long) managedQuantity
+                            + Math.max(0, buys - accountedBuyQuantity)
+                            - (newSells - alreadyObserved);
+        }
+        // A manual reduction is respected and will not be reclaimed on the next refresh.
+        // Only an outstanding automatic sell can explain a delayed sell fill.
+        // Manual reductions must not become credits against unrelated future sells.
+        pendingQuantityReduction =
+                Math.min(
+                        Math.max(0, outstandingAutomaticSells),
+                        pendingQuantityReduction + Math.max(0, owned - quantity));
+        managedQuantity = (int) Math.min(quantity, Math.max(0, owned));
+        accountedBuyQuantity = buys;
+        accountedSellQuantity = sells;
+        managedByAutoTrade = managedQuantity > 0;
+    }
+
     public void markManagedByAutoTrade() {
         managedByAutoTrade = true;
+        managedQuantity = quantity;
     }
 
     public boolean isFirstTakeProfitCompleted() {
@@ -120,17 +221,27 @@ public class KiwoomUsAccountHolding {
     }
 
     public void deactivate() {
+        lastClosedAt = LocalDateTime.now();
         active = false;
         managedByAutoTrade = false;
+        managedQuantity = 0;
         firstTakeProfitCompleted = false;
         quantity = 0;
         sellableQuantity = 0;
         positionOpenedAt = null;
+        plannedStopLossPercent = null;
+        managedAveragePrice = null;
+        firstTakeProfitTargetQuantity = 0;
+        firstTakeProfitFilledQuantity = 0;
         syncedAt = LocalDateTime.now();
     }
 
     public LocalDateTime getPositionOpenedAt() {
         return positionOpenedAt;
+    }
+
+    public LocalDateTime getLastClosedAt() {
+        return lastClosedAt;
     }
 
     public LocalDateTime getSyncedAt() {

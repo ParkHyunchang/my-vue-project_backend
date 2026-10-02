@@ -96,6 +96,7 @@ class KiwoomUsAutoTradeServiceTest {
                         mock(KiwoomUsStrategySettingsService.class),
                         mock(KiwoomUsFundamentalService.class),
                         indexUniverse,
+                        mock(KiwoomUsTechnicalSignalService.class),
                         mock(KiwoomUsAutoTradeState.class),
                         holdings,
                         proposals,
@@ -104,6 +105,7 @@ class KiwoomUsAutoTradeServiceTest {
                         mock(KiwoomUsEventService.class));
         KiwoomUsStrategySettings settings = new KiwoomUsStrategySettings();
         settings.setFundamentalFilterEnabled(false);
+        settings.setSignalMode(KiwoomUsStrategySettings.SignalMode.LEGACY);
         KiwoomUsAutoTradeService.AccountSnapshot account =
                 new KiwoomUsAutoTradeService.AccountSnapshot(
                         null,
@@ -171,6 +173,7 @@ class KiwoomUsAutoTradeServiceTest {
                         mock(KiwoomUsStrategySettingsService.class),
                         fundamentals,
                         indexUniverse,
+                        mock(KiwoomUsTechnicalSignalService.class),
                         mock(KiwoomUsAutoTradeState.class),
                         holdings,
                         proposals,
@@ -226,6 +229,7 @@ class KiwoomUsAutoTradeServiceTest {
                 mock(KiwoomUsStrategySettingsService.class),
                 mock(KiwoomUsFundamentalService.class),
                 mock(KiwoomUsIndexUniverseService.class),
+                mock(KiwoomUsTechnicalSignalService.class),
                 mock(KiwoomUsAutoTradeState.class),
                 mock(KiwoomUsAccountHoldingRepository.class),
                 mock(KiwoomUsTradeProposalRepository.class),

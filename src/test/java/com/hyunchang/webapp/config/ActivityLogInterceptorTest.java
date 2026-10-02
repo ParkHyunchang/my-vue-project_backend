@@ -53,7 +53,8 @@ class ActivityLogInterceptorTest {
 
     @Test
     void successfulUploadsRemainQuiet(CapturedOutput output) {
-        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/uploads/images/ok.jpg");
+        MockHttpServletRequest request =
+                new MockHttpServletRequest("GET", "/uploads/images/ok.jpg");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         interceptor.preHandle(request, response, this);

@@ -79,6 +79,7 @@ public class KiwoomUsAutoTradeController {
                 "marketHoursPolicy", "신규매수는 10:00~15:00 ET, 매도감시·체결동기화는 정규장 09:30~16:00 ET에만 실행");
         result.put("calendarPolicy", "NYSE 2026~2028 휴장일·13:00 ET 조기폐장 반영; 미등록 연도는 안전하게 주문 차단");
         result.put("emergencyStopped", state.isEmergencyStopped());
+        result.put("dailyLossTriggered", state.isDailyLossTriggered());
         result.put("consecutiveApiFailures", state.getConsecutiveApiFailures());
         result.put(
                 "lastApiFailureAt",
@@ -94,6 +95,8 @@ public class KiwoomUsAutoTradeController {
                 "candidateUniversePolicy",
                 "당일 거래대금 상위 50위 중 S&P 500 또는 NASDAQ-100 편입 종목만 허용; PER·ROE, 시간보정 RVOL, 실시간 호가 스프레드 적용");
         result.put("indexUniverse", indexUniverse.status());
+        result.put("signalMode", settings.current().getSignalMode());
+        result.put("strategyValidation", "새 추세 전략은 기본 비교 관찰 모드입니다. 지수 초과수익 검증은 별도로 필요합니다.");
         return result;
     }
 
@@ -170,6 +173,11 @@ public class KiwoomUsAutoTradeController {
         result.put("1차 익절률(%)", number(value.getTakeProfitPercent()));
         result.put("2차 익절률(%)", number(value.getTakeProfitPercent2()));
         result.put("일일 손실한도(%)", number(value.getDailyLossLimitPercent()));
+        result.put("매수 판단 방식", value.getSignalMode().name());
+        result.put("최소 지수 상대강도(%p)", number(value.getMinRelativeStrengthPercent()));
+        result.put("거래당 위험(%)", number(value.getRiskPerTradePercent()));
+        result.put("ATR 손절배수", number(value.getAtrStopMultiplier()));
+        result.put("돌파 이격 ATR", number(value.getMaxEntryExtensionAtr()));
         return result;
     }
 
@@ -185,6 +193,7 @@ public class KiwoomUsAutoTradeController {
                     .body(Map.of("message", "키움 운영계좌 설정과 KIWOOM_US_TRADE_ENABLED=true가 필요합니다."));
         }
         if (request.enabled()) {
+            service.validateRestart();
             KiwoomUsTradeService.UsdCash cash = service.refreshUsdCash();
             if (!cash.usdOnlyBuyAllowed()) {
                 audit.log("USD_CASH_BLOCK", null, cash.blockReason());
@@ -223,6 +232,7 @@ public class KiwoomUsAutoTradeController {
     @PostMapping("/sync")
     public Map<String, Object> sync() {
         service.reconcileOrders();
+        service.syncHoldings();
         KiwoomUsAutoTradeService.AccountSnapshot snapshot = service.accountSummary();
         return Map.of("success", true, "snapshot", snapshot);
     }

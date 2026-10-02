@@ -1,15 +1,21 @@
 package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
 import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.math.BigDecimal;
 import java.time.Duration;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -48,19 +54,151 @@ public class KiwoomUsTradeService {
     }
 
     public Mono<JsonNode> getBalance() {
-        return read("ust21070", "/api/us/acnt", Map.of("stex_tp", "", "stk_cd", ""));
+        return readPages("ust21070", "/api/us/acnt", Map.of("stex_tp", "", "stk_cd", ""), 0);
     }
 
     public Mono<JsonNode> getOpenOrders() {
-        return read(
+        return readPages(
                 "ust21050",
                 "/api/us/acnt",
-                Map.of("ord_dt", "", "slby_tp", "0", "stex_tp", "", "stk_cd", ""));
+                Map.of("ord_dt", "", "slby_tp", "0", "stex_tp", "", "stk_cd", ""),
+                0);
     }
 
     public Mono<JsonNode> getTodayFills() {
-        return read(
-                "ust21510", "/api/us/acnt", Map.of("slby_tp", "0", "stex_tp", "", "stk_cd", ""));
+        return readPages(
+                "ust21510", "/api/us/acnt", Map.of("slby_tp", "0", "stex_tp", "", "stk_cd", ""), 0);
+    }
+
+    public Mono<JsonNode> getOrderHistory(LocalDate from, LocalDate to) {
+        return readPages(
+                "ust21180",
+                "/api/us/acnt",
+                Map.of(
+                        "strt_dt",
+                        from.format(DateTimeFormatter.BASIC_ISO_DATE),
+                        "end_dt",
+                        to.format(DateTimeFormatter.BASIC_ISO_DATE),
+                        "slby_tp",
+                        "0",
+                        "stex_tp",
+                        "",
+                        "stk_cd",
+                        "",
+                        "oppo_trde_tp",
+                        "%"),
+                0);
+    }
+
+    /** Official usa06012: adjusted USD daily OHLC; excludes unfinished ET session. */
+    public Mono<List<DailyBar>> getDailyBars(String exchange, String symbol) {
+        return readPages(
+                        "usa06012",
+                        "/api/us/chart",
+                        Map.of(
+                                "stex_tp",
+                                normalizeExchange(exchange),
+                                "stk_cd",
+                                normalizeSymbol(symbol),
+                                "strt_dt",
+                                KiwoomUsMarketHours.today()
+                                        .format(DateTimeFormatter.BASIC_ISO_DATE),
+                                "upd_stkpc_tp",
+                                "1",
+                                "exrt_appl_tp",
+                                "0"),
+                        100)
+                .map(this::dailyBars);
+    }
+
+    List<DailyBar> dailyBars(JsonNode response) {
+        Map<LocalDate, DailyBar> bars = new LinkedHashMap<>();
+        for (JsonNode row : response.path("result_list")) {
+            LocalDate date = LocalDate.parse(text(row, "dt"), DateTimeFormatter.BASIC_ISO_DATE);
+            if (!date.isBefore(KiwoomUsMarketHours.today())) continue;
+            DailyBar bar =
+                    new DailyBar(
+                            date,
+                            decimal(row, "open_pric").doubleValue(),
+                            decimal(row, "high_pric").doubleValue(),
+                            decimal(row, "low_pric").doubleValue(),
+                            decimal(row, "cur_prc").doubleValue(),
+                            decimal(row, "acc_trde_qty").longValue());
+            if (!bar.valid()) throw new IllegalStateException("유효하지 않은 미국 일봉: " + date);
+            bars.put(date, bar);
+        }
+        return bars.values().stream().sorted(Comparator.comparing(DailyBar::date)).toList();
+    }
+
+    private Mono<JsonNode> readPages(String apiId, String path, Map<String, ?> body, int rowLimit) {
+        return Mono.defer(
+                        () ->
+                                readPages(
+                                        apiId,
+                                        path,
+                                        body,
+                                        "",
+                                        "",
+                                        null,
+                                        new HashSet<>(),
+                                        0,
+                                        rowLimit))
+                .doOnSuccess(ignored -> state.recordApiSuccess(apiId))
+                .doOnError(
+                        error -> {
+                            if (!"usa06012".equals(apiId)
+                                    && !isTemporaryAccountSettlementError(error))
+                                state.recordApiFailure(
+                                        apiId,
+                                        apiId + ": " + error.getMessage(),
+                                        properties.getUs().getMaxConsecutiveApiFailures());
+                        });
+    }
+
+    private Mono<JsonNode> readPages(
+            String apiId,
+            String path,
+            Map<String, ?> body,
+            String continuation,
+            String nextKey,
+            ObjectNode collected,
+            Set<String> keys,
+            int page,
+            int rowLimit) {
+        return requestPage(apiId, path, body, continuation, nextKey, true)
+                .flatMap(
+                        entity -> {
+                            JsonNode response = entity.getBody();
+                            // ust21180's published example spells this result_lsit; accept both
+                            // contracts.
+                            if ("ust21180".equals(apiId)
+                                    && response instanceof ObjectNode object
+                                    && !response.has("result_list")
+                                    && response.path("result_lsit").isArray())
+                                object.set("result_list", response.get("result_lsit"));
+                            if (response == null || !response.path("result_list").isArray())
+                                return Mono.error(
+                                        new IllegalStateException("불완전한 목록 응답: " + apiId));
+                            ObjectNode result =
+                                    collected == null
+                                            ? ((ObjectNode) response).deepCopy()
+                                            : collected;
+                            if (collected != null)
+                                result.withArray("result_list")
+                                        .addAll(
+                                                (com.fasterxml.jackson.databind.node.ArrayNode)
+                                                        response.get("result_list"));
+                            boolean more = "Y".equalsIgnoreCase(firstHeader(entity, "cont-yn"));
+                            if (!more
+                                    || (rowLimit > 0
+                                            && result.path("result_list").size() >= rowLimit))
+                                return Mono.just(result);
+                            String key = firstHeader(entity, "next-key");
+                            if (key.isBlank() || !keys.add(key) || page >= 19)
+                                return Mono.error(new IllegalStateException("연속조회 미완료: " + apiId));
+                            return readPages(
+                                    apiId, path, body, "Y", key, result, keys, page + 1, rowLimit);
+                        });
     }
 
     public Mono<List<RankedStock>> getTradeValueTop() {
@@ -483,6 +621,16 @@ public class KiwoomUsTradeService {
 
     private Mono<JsonNode> requestOnce(
             String apiId, String path, Map<String, ?> body, boolean retryToken) {
+        return requestPage(apiId, path, body, "", "", retryToken).map(ResponseEntity::getBody);
+    }
+
+    private Mono<ResponseEntity<JsonNode>> requestPage(
+            String apiId,
+            String path,
+            Map<String, ?> body,
+            String continuation,
+            String nextKey,
+            boolean retryToken) {
         return authService
                 .getAccessToken()
                 .flatMap(
@@ -495,20 +643,42 @@ public class KiwoomUsTradeService {
                                                         .contentType(MediaType.APPLICATION_JSON)
                                                         .header("authorization", "Bearer " + token)
                                                         .header("api-id", apiId)
+                                                        .headers(
+                                                                headers -> {
+                                                                    if (!continuation.isBlank())
+                                                                        headers.set(
+                                                                                "cont-yn",
+                                                                                continuation);
+                                                                    if (!nextKey.isBlank())
+                                                                        headers.set(
+                                                                                "next-key",
+                                                                                nextKey);
+                                                                })
                                                         .bodyValue(body)
                                                         .retrieve()
-                                                        .bodyToMono(JsonNode.class))
+                                                        .toEntity(JsonNode.class))
                                         .flatMap(
-                                                response -> {
+                                                entity -> {
+                                                    JsonNode response = entity.getBody();
+                                                    if (response == null
+                                                            || !response.has("return_code"))
+                                                        return Mono.error(
+                                                                new IllegalStateException(
+                                                                        "키움 응답 형식 오류: " + apiId));
                                                     if (retryToken && invalidToken(response)) {
                                                         authService.invalidateAccessToken(token);
-                                                        return requestOnce(
-                                                                apiId, path, body, false);
+                                                        return requestPage(
+                                                                apiId,
+                                                                path,
+                                                                body,
+                                                                continuation,
+                                                                nextKey,
+                                                                false);
                                                     }
                                                     int code =
                                                             response.path("return_code").asInt(0);
                                                     return code == 0
-                                                            ? Mono.just(response)
+                                                            ? Mono.just(entity)
                                                             : Mono.error(
                                                                     new KiwoomApiException(
                                                                             "키움 미국주식 API 오류("
@@ -735,4 +905,22 @@ public class KiwoomUsTradeService {
     }
 
     private record RankPage(JsonNode body, String continuation, String nextKey) {}
+
+    public record DailyBar(
+            LocalDate date, double open, double high, double low, double close, long volume) {
+        public boolean valid() {
+            return date != null
+                    && Double.isFinite(open)
+                    && Double.isFinite(high)
+                    && Double.isFinite(low)
+                    && Double.isFinite(close)
+                    && low > 0
+                    && high >= low
+                    && open >= low
+                    && open <= high
+                    && close >= low
+                    && close <= high
+                    && volume >= 0;
+        }
+    }
 }

@@ -57,6 +57,8 @@ public class KiwoomUsTradeProposal {
     @Column(precision = 19, scale = 4)
     private BigDecimal averageFillPrice;
 
+    private Double plannedStopLossPercent;
+
     private int filledQuantity;
     private int remainingQuantity;
     private String brokerOrderNo;
@@ -93,9 +95,9 @@ public class KiwoomUsTradeProposal {
         filledQuantity = Math.max(filledQuantity, filled);
         remainingQuantity = Math.max(0, remaining);
         if (price != null && price.signum() > 0) averageFillPrice = price;
-        if (remainingQuantity == 0 && filledQuantity > 0) {
+        if (filledQuantity >= quantity && quantity > 0) {
             status = Status.FILLED;
-        } else if (status != Status.CANCEL_REQUESTED) {
+        } else if (status != Status.CANCEL_REQUESTED && status != Status.UNKNOWN) {
             status = filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED;
         }
     }
@@ -175,6 +177,14 @@ public class KiwoomUsTradeProposal {
 
     public BigDecimal getAverageFillPrice() {
         return averageFillPrice;
+    }
+
+    public Double getPlannedStopLossPercent() {
+        return plannedStopLossPercent;
+    }
+
+    public void setPlannedStopLossPercent(Double value) {
+        plannedStopLossPercent = value;
     }
 
     public int getFilledQuantity() {

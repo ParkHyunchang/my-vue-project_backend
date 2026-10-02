@@ -100,6 +100,14 @@ public final class KiwoomUsMarketHours {
         return LocalDate.now(ET);
     }
 
+    public static LocalDate previousTradingDay(LocalDate date) {
+        LocalDate previous = date.minusDays(1);
+        for (int i = 0; i < 14; i++, previous = previous.minusDays(1)) {
+            if (isTradingDay(previous)) return previous;
+        }
+        throw new IllegalStateException("이전 미국 거래일을 확인할 수 없습니다.");
+    }
+
     public static LocalDateTime now() {
         return LocalDateTime.now(ET);
     }
