@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
+import com.hyunchang.webapp.util.KiwoomApiRateLimiter;
 import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.math.BigDecimal;
 import java.time.Duration;
@@ -38,7 +39,6 @@ public class KiwoomUsTradeService {
     private final KiwoomAuthService authService;
     private final KiwoomUsAutoTradeState state;
     private final WebClient webClient;
-    private long nextRequestAt;
     private final Map<String, ExchangeLookup> exchangeCache = new ConcurrentHashMap<>();
 
     private record ExchangeLookup(LocalDate date, String exchange) {}
@@ -758,10 +758,8 @@ public class KiwoomUsTradeService {
                 || response.path("return_msg").asText("").contains("8005");
     }
 
-    private synchronized Mono<Void> requestDelay() {
-        long now = System.currentTimeMillis();
-        long delay = Math.max(0, nextRequestAt - now);
-        nextRequestAt = Math.max(now, nextRequestAt) + properties.getMinRequestIntervalMs();
+    private Mono<Void> requestDelay() {
+        long delay = KiwoomApiRateLimiter.reserveDelayMs(properties.getMinRequestIntervalMs());
         return delay == 0 ? Mono.empty() : Mono.delay(Duration.ofMillis(delay)).then();
     }
 

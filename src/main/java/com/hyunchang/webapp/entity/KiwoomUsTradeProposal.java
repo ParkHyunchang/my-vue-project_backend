@@ -122,6 +122,15 @@ public class KiwoomUsTradeProposal {
         if (orderedAt == null) orderedAt = LocalDateTime.now();
     }
 
+    public void recoverBrokerOrder(String orderNo, String response) {
+        if (status != Status.UNKNOWN || orderNo == null || orderNo.isBlank())
+            throw new IllegalStateException("미확인 주문만 증권사 주문번호를 복구할 수 있습니다.");
+        brokerOrderNo = orderNo.trim();
+        brokerResponse = response;
+        status = filledQuantity > 0 ? Status.PARTIALLY_FILLED : Status.ORDERED;
+        if (orderedAt == null) orderedAt = LocalDateTime.now();
+    }
+
     public Long getId() {
         return id;
     }

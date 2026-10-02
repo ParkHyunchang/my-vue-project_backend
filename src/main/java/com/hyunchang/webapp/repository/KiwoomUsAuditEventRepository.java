@@ -5,5 +5,5 @@ import java.util.List;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface KiwoomUsAuditEventRepository extends JpaRepository<KiwoomUsAuditEvent, Long> {
-    List<KiwoomUsAuditEvent> findTop100ByOrderByIdDesc();
+    List<KiwoomUsAuditEvent> findTop300ByOrderByIdDesc();
 }

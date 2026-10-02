@@ -22,6 +22,6 @@ public class KiwoomUsAuditService {
     }
 
     public List<KiwoomUsAuditEvent> recent() {
-        return repository.findTop100ByOrderByIdDesc();
+        return repository.findTop300ByOrderByIdDesc();
     }
 }

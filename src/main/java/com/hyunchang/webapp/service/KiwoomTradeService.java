@@ -3,6 +3,7 @@ package com.hyunchang.webapp.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
+import com.hyunchang.webapp.util.KiwoomApiRateLimiter;
 import com.hyunchang.webapp.util.KiwoomMarketHours;
 import java.time.Duration;
 import java.time.LocalDate;
@@ -29,7 +30,6 @@ public class KiwoomTradeService {
     private final KiwoomAuthService authService;
     private final KiwoomAutoTradeState state;
     private final WebClient webClient;
-    private long nextRequestAt;
     private volatile long nextEmptyBalanceLogAt;
 
     public KiwoomTradeService(
@@ -596,10 +596,8 @@ public class KiwoomTradeService {
         return Mono.just(response);
     }
 
-    private synchronized Mono<Void> requestDelay() {
-        long now = System.currentTimeMillis();
-        long delay = Math.max(0, nextRequestAt - now);
-        nextRequestAt = Math.max(now, nextRequestAt) + properties.getMinRequestIntervalMs();
+    private Mono<Void> requestDelay() {
+        long delay = KiwoomApiRateLimiter.reserveDelayMs(properties.getMinRequestIntervalMs());
         return delay == 0 ? Mono.empty() : Mono.delay(Duration.ofMillis(delay)).then();
     }
 

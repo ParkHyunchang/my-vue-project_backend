@@ -12,7 +12,7 @@ public class KiwoomProperties {
     private String accountNo;
     private boolean tradeEnabled;
     private long refreshBeforeSeconds = 300;
-    private long minRequestIntervalMs = 250;
+    private long minRequestIntervalMs = 350;
     private int maxConsecutiveApiFailures = 3;
     private Strategy strategy = new Strategy();
     private Us us = new Us();
@@ -283,7 +283,7 @@ public class KiwoomProperties {
     }
 
     public void setMinRequestIntervalMs(long minRequestIntervalMs) {
-        this.minRequestIntervalMs = minRequestIntervalMs;
+        this.minRequestIntervalMs = Math.max(350, Math.min(10_000, minRequestIntervalMs));
     }
 
     public int getMaxConsecutiveApiFailures() {

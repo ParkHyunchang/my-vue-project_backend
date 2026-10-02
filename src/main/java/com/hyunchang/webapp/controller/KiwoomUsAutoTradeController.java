@@ -81,6 +81,10 @@ public class KiwoomUsAutoTradeController {
         result.put("emergencyStopped", state.isEmergencyStopped());
         result.put("dailyLossTriggered", state.isDailyLossTriggered());
         result.put("consecutiveApiFailures", state.getConsecutiveApiFailures());
+        result.put("apiMinRequestIntervalMs", properties.getMinRequestIntervalMs());
+        result.put("apiRatePolicy", "국내·미국 REST 요청 통합 최소 350ms 간격");
+        result.put("unresolvedUnknownOrders", service.unresolvedUnknownOrders());
+        result.put("operationalHealth", service.operationalHealth());
         result.put(
                 "lastApiFailureAt",
                 state.getLastApiFailureAt() == null ? "" : state.getLastApiFailureAt().toString());
@@ -240,6 +244,7 @@ public class KiwoomUsAutoTradeController {
         try {
             service.reconcileOrders();
         } catch (RuntimeException error) {
+            service.recordOrderReconcileError(error);
             String message =
                     "주문 대사 실패: "
                             + (error.getMessage() == null
