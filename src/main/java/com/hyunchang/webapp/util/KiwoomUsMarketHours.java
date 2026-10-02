@@ -108,6 +108,18 @@ public final class KiwoomUsMarketHours {
         throw new IllegalStateException("이전 미국 거래일을 확인할 수 없습니다.");
     }
 
+    /** Entry date excluded; ET holidays/weekends do not consume a holding session. */
+    public static int elapsedTradingDays(LocalDate entry, LocalDate today) {
+        if (entry == null || today == null || today.isBefore(entry))
+            throw new IllegalArgumentException("보유 거래일 계산에 유효한 날짜가 필요합니다.");
+        if (entry.getYear() < 2026 || today.getYear() > 2028)
+            throw new IllegalStateException("등록되지 않은 거래일 달력입니다.");
+        int days = 0;
+        for (LocalDate date = entry.plusDays(1); !date.isAfter(today); date = date.plusDays(1))
+            if (isTradingDay(date)) days++;
+        return days;
+    }
+
     public static LocalDateTime now() {
         return LocalDateTime.now(ET);
     }

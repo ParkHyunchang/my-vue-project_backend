@@ -1,6 +1,8 @@
 package com.hyunchang.webapp.entity;
 
+import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
@@ -8,7 +10,10 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Objects;
 
 @Entity
 @Table(
@@ -53,6 +58,78 @@ public class KiwoomUsAccountHolding {
     private LocalDateTime positionOpenedAt;
     private LocalDateTime lastClosedAt;
     private LocalDateTime syncedAt;
+    @Embedded private KiwoomUsTrendExitPlan trendExitPlan;
+    private Long trendEntryProposalId;
+    private LocalDate trendStartedOn;
+
+    @Column(precision = 19, scale = 4)
+    private BigDecimal trendHighWaterPrice;
+
+    @Column(precision = 19, scale = 4)
+    private BigDecimal trendStopPrice;
+
+    public KiwoomUsTrendExitPlan getTrendExitPlan() {
+        return trendExitPlan;
+    }
+
+    public LocalDate getTrendStartedOn() {
+        return trendStartedOn;
+    }
+
+    public BigDecimal getTrendHighWaterPrice() {
+        return trendHighWaterPrice;
+    }
+
+    public BigDecimal getTrendStopPrice() {
+        return trendStopPrice;
+    }
+
+    public void restoreTrendExitPlan(KiwoomUsTradeProposal buy) {
+        if (buy.getTrendExitPlan() == null) return;
+        if (trendExitPlan != null && Objects.equals(trendEntryProposalId, buy.getId())) return;
+        trendExitPlan = buy.getTrendExitPlan().copy();
+        trendEntryProposalId = buy.getId();
+        // First observed confirmed fill: never count manual holding age as strategy holding age.
+        trendStartedOn =
+                buy.getFirstFilledAt() == null
+                        ? null
+                        : buy.getFirstFilledAt()
+                                .atZone(ZoneId.systemDefault())
+                                .withZoneSameInstant(KiwoomUsMarketHours.ET)
+                                .toLocalDate();
+        trendHighWaterPrice = null;
+        trendStopPrice = null;
+    }
+
+    public void updateTrendStop() {
+        if (trendExitPlan == null
+                || !trendExitPlan.isValid()
+                || managedAveragePrice == null
+                || managedAveragePrice.signum() <= 0
+                || currentPrice == null
+                || currentPrice.signum() <= 0)
+            throw new IllegalStateException("추세 청산 계획·자동매매 원가·시세 확인 필요");
+        BigDecimal risk = BigDecimal.valueOf(trendExitPlan.getTrendRiskPerShare());
+        BigDecimal initialStop = managedAveragePrice.subtract(risk);
+        trendHighWaterPrice =
+                (trendHighWaterPrice == null ? managedAveragePrice : trendHighWaterPrice)
+                        .max(currentPrice);
+        trendStopPrice = (trendStopPrice == null ? initialStop : trendStopPrice).max(initialStop);
+        if (trendHighWaterPrice.compareTo(
+                        managedAveragePrice.add(
+                                risk.multiply(
+                                        BigDecimal.valueOf(
+                                                trendExitPlan.getTrendTrailActivationR()))))
+                >= 0) {
+            BigDecimal trailing =
+                    trendHighWaterPrice.subtract(
+                            BigDecimal.valueOf(
+                                    trendExitPlan.getTrendEntryAtr()
+                                            * trendExitPlan.getTrendTrailAtrMultiplier()));
+            trendStopPrice = trendStopPrice.max(trailing);
+        }
+        trendStopPrice = trendStopPrice.setScale(4, java.math.RoundingMode.DOWN);
+    }
 
     public void sync(
             String name, int qty, int sellable, BigDecimal avg, BigDecimal current, double pnl) {
@@ -231,6 +308,11 @@ public class KiwoomUsAccountHolding {
         positionOpenedAt = null;
         plannedStopLossPercent = null;
         managedAveragePrice = null;
+        trendExitPlan = null;
+        trendEntryProposalId = null;
+        trendStartedOn = null;
+        trendHighWaterPrice = null;
+        trendStopPrice = null;
         firstTakeProfitTargetQuantity = 0;
         firstTakeProfitFilledQuantity = 0;
         syncedAt = LocalDateTime.now();

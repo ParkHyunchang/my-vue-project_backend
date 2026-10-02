@@ -1,6 +1,7 @@
 package com.hyunchang.webapp.entity;
 
 import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
@@ -58,6 +59,8 @@ public class KiwoomUsTradeProposal {
     private BigDecimal averageFillPrice;
 
     private Double plannedStopLossPercent;
+    @Embedded private KiwoomUsTrendExitPlan trendExitPlan;
+    private LocalDateTime firstFilledAt;
 
     private int filledQuantity;
     private int remainingQuantity;
@@ -92,6 +95,7 @@ public class KiwoomUsTradeProposal {
     }
 
     public void syncFill(int filled, int remaining, BigDecimal price) {
+        if (filled > 0 && firstFilledAt == null) firstFilledAt = LocalDateTime.now();
         filledQuantity = Math.max(filledQuantity, filled);
         remainingQuantity = Math.max(0, remaining);
         if (price != null && price.signum() > 0) averageFillPrice = price;
@@ -181,6 +185,18 @@ public class KiwoomUsTradeProposal {
 
     public Double getPlannedStopLossPercent() {
         return plannedStopLossPercent;
+    }
+
+    public KiwoomUsTrendExitPlan getTrendExitPlan() {
+        return trendExitPlan;
+    }
+
+    public void setTrendExitPlan(KiwoomUsTrendExitPlan plan) {
+        trendExitPlan = plan;
+    }
+
+    public LocalDateTime getFirstFilledAt() {
+        return firstFilledAt;
     }
 
     public void setPlannedStopLossPercent(Double value) {

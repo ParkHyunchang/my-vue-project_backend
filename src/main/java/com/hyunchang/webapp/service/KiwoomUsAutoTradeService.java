@@ -403,11 +403,9 @@ public class KiwoomUsAutoTradeService {
 
         List<RankedStock> momentum = new ArrayList<>();
         for (RankedStock stock : indexed) {
-            if (stock.changePercent()
-                            >= (settings.getSignalMode() == SignalMode.TREND
-                                    ? 0
-                                    : settings.getMinChangePercent())
-                    && stock.changePercent() <= settings.getMaxChangePercent()) {
+            if (settings.getSignalMode() == SignalMode.TREND
+                    || (stock.changePercent() >= settings.getMinChangePercent()
+                            && stock.changePercent() <= settings.getMaxChangePercent())) {
                 momentum.add(stock);
             } else {
                 reject(
@@ -610,10 +608,9 @@ public class KiwoomUsAutoTradeService {
                                 fundamental == null ? null : fundamental.effectivePe(),
                                 fundamental == null ? null : fundamental.roePercent(),
                                 item.quote().spreadPercent(),
-                                candidateScore(stock, item, settings)
-                                        + (settings.getSignalMode() == SignalMode.TREND
-                                                ? Math.min(30, signal.relativeStrengthPercent())
-                                                : 0),
+                                settings.getSignalMode() == SignalMode.TREND
+                                        ? trendCandidateScore(signal, item.quote(), settings)
+                                        : candidateScore(stock, item, settings),
                                 stock.tradedValue(),
                                 indexUniverse.membershipLabel(stock.symbol()),
                                 signal));
@@ -651,6 +648,22 @@ public class KiwoomUsAutoTradeService {
                         result.size(),
                         cashLimit);
         return new CandidateScreeningResult(List.copyOf(result), stats);
+    }
+
+    /** Trend ranking never reuses the legacy daily-change midpoint or PER/ROE score. */
+    static double trendCandidateScore(
+            KiwoomUsTechnicalSignalService.Signal signal,
+            OrderBookQuote quote,
+            KiwoomUsStrategySettings settings) {
+        double strength = Math.max(0, Math.min(30, signal.relativeStrengthPercent()));
+        double extension =
+                Math.max(0, (quote.ask().doubleValue() - signal.breakoutPrice()) / signal.atr());
+        double score =
+                strength * 2
+                        + Math.max(0, 1 - extension / settings.getMaxEntryExtensionAtr()) * 25
+                        + Math.max(0, 1 - quote.spreadPercent() / settings.getMaxSpreadPercent())
+                                * 15;
+        return Math.round(score * 100) / 100.0;
     }
 
     private double candidateScore(
@@ -757,8 +770,16 @@ public class KiwoomUsAutoTradeService {
         proposal.setStockName(candidate.name());
         proposal.setQuantity(quantity);
         proposal.setLimitPrice(price);
-        if (settings.getSignalMode() == SignalMode.TREND)
+        if (settings.getSignalMode() == SignalMode.TREND) {
             proposal.setPlannedStopLossPercent(signal.stopPercent());
+            proposal.setTrendExitPlan(
+                    new com.hyunchang.webapp.entity.KiwoomUsTrendExitPlan(
+                            signal.atr(),
+                            price.doubleValue() * signal.stopPercent() / 100,
+                            settings.getTrailingStopAtrMultiplier(),
+                            settings.getTrailingActivationR(),
+                            settings.getMaxHoldingTradingDays()));
+        }
         proposal.setReason(
                 "["
                         + settings.getSignalMode()
@@ -834,6 +855,10 @@ public class KiwoomUsAutoTradeService {
             if (holding.getSyncedAt() == null
                     || holding.getSyncedAt().isBefore(LocalDateTime.now().minusSeconds(90)))
                 continue;
+            if (holding.getTrendExitPlan() != null) {
+                evaluateTrendExit(holding);
+                continue;
+            }
             double stopPercent =
                     holding.getPlannedStopLossPercent() == null
                             ? settings.getStopLossPercent()
@@ -880,6 +905,47 @@ public class KiwoomUsAutoTradeService {
             }
             if (reason != null && quantity > 0) submitSell(holding, quantity, market, reason);
         }
+    }
+
+    private void evaluateTrendExit(KiwoomUsAccountHolding holding) {
+        try {
+            holding.updateTrendStop();
+            holdingRepository.save(holding);
+        } catch (RuntimeException error) {
+            log("DATA_MISSING", null, holding.getSymbol() + " 추세 청산 보류: " + safe(error));
+            return;
+        }
+        boolean stopped = holding.getCurrentPrice().compareTo(holding.getTrendStopPrice()) <= 0;
+        boolean expired = false;
+        if (!stopped) {
+            try {
+                expired =
+                        KiwoomUsMarketHours.elapsedTradingDays(
+                                        holding.getTrendStartedOn(), KiwoomUsMarketHours.today())
+                                >= holding.getTrendExitPlan().getTrendMaxHoldingTradingDays();
+            } catch (RuntimeException error) {
+                log("DATA_MISSING", null, holding.getSymbol() + " 보유기간 청산 계산 보류: " + safe(error));
+            }
+        }
+        Optional<KiwoomUsTradeProposal> openSell = findOpenSell(holding.getSymbol());
+        if (openSell.isPresent()) {
+            // A pending/unknown sell must be reconciled first; never duplicate it.
+            if (stopped
+                    && openSell.get().getLimitPrice() != null
+                    && openSell.get().getStatus() != KiwoomUsTradeProposal.Status.CANCEL_REQUESTED
+                    && openSell.get().getStatus() != KiwoomUsTradeProposal.Status.UNKNOWN)
+                requestOrderCancellation(openSell.get(), "추세 손절 전환을 위한 기존 지정가 매도 취소");
+            return;
+        }
+        int quantity = Math.min(holding.getSellableQuantity(), holding.getManagedQuantity());
+        if (quantity <= 0 || (!stopped && !expired)) return;
+        String reason =
+                stopped
+                        ? "ATR 추세 손절: 감시 가격 $" + holding.getTrendStopPrice()
+                        : "추세 보유기간 "
+                                + holding.getTrendExitPlan().getTrendMaxHoldingTradingDays()
+                                + "거래일 경과";
+        submitSell(holding, quantity, true, reason);
     }
 
     private void submitSell(
@@ -1255,6 +1321,7 @@ public class KiwoomUsAutoTradeService {
         BigDecimal bookCost = BigDecimal.ZERO;
         boolean knownCost = true;
         KiwoomUsTradeProposal lastBuy = null;
+        KiwoomUsTradeProposal currentPositionBuy = null;
         int firstProfitFilled = 0, firstProfitTarget = 0;
         for (var proposal : history) {
             if (proposal.getFilledQuantity() <= 0) continue;
@@ -1262,6 +1329,7 @@ public class KiwoomUsAutoTradeService {
                 buys += proposal.getFilledQuantity();
                 lastBuy = proposal;
                 if (belongsToClosedPosition(entity, proposal)) continue;
+                currentPositionBuy = proposal;
                 BigDecimal fillPrice = proposal.getAverageFillPrice();
                 if (bookQuantity == 0) knownCost = true;
                 if (fillPrice == null || fillPrice.signum() <= 0) knownCost = false;
@@ -1318,6 +1386,8 @@ public class KiwoomUsAutoTradeService {
                 knownCost && bookQuantity > 0
                         ? bookCost.divide(BigDecimal.valueOf(bookQuantity), 4, RoundingMode.HALF_UP)
                         : null);
+        if (entity.getManagedQuantity() > 0 && currentPositionBuy != null)
+            entity.restoreTrendExitPlan(currentPositionBuy);
         entity.reconcileFirstTakeProfit(firstProfitFilled, firstProfitTarget);
     }
 

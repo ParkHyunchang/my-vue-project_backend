@@ -52,6 +52,10 @@ class KiwoomUsSignalModeTest {
     }
 
     private KiwoomUsAutoTradeService.CandidateScreeningResult screen() {
+        return screen(3);
+    }
+
+    private KiwoomUsAutoTradeService.CandidateScreeningResult screen(double change) {
         var account =
                 new KiwoomUsAutoTradeService.AccountSnapshot(
                         null,
@@ -74,7 +78,7 @@ class KiwoomUsSignalModeTest {
                         "TEST",
                         "Test",
                         BigDecimal.TEN,
-                        3,
+                        change,
                         150,
                         100,
                         new BigDecimal("100000000"));
@@ -91,6 +95,32 @@ class KiwoomUsSignalModeTest {
         assertEquals(1, result.stats().capacityCount());
         assertEquals(0, result.stats().signalCount());
         assertTrue(result.stats().auditMessage().contains("매수신호·위험예산=0(탈락 1)"));
+    }
+
+    @Test
+    void trendIgnoresLegacyDailyChangeThresholdsAndScoring() {
+        settings.setSignalMode(SignalMode.TREND);
+        when(signals.evaluate(anyString(), anyString(), any(), any()))
+                .thenReturn(
+                        new KiwoomUsTechnicalSignalService.Signal(
+                                true,
+                                true,
+                                "breakout",
+                                5.0,
+                                10.0,
+                                3.0,
+                                5.0,
+                                0.1,
+                                9.95,
+                                2.0,
+                                java.time.LocalDate.of(2026, 10, 1)));
+        var first = screen(15).candidates().getFirst();
+        settings.setMinChangePercent(20);
+        settings.setMaxChangePercent(21);
+        var second = screen(-1).candidates().getFirst();
+        assertEquals(first.score(), second.score());
+        settings.setSignalMode(SignalMode.OBSERVE);
+        assertTrue(screen(15).candidates().isEmpty());
     }
 
     @Test

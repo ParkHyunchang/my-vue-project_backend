@@ -53,6 +53,9 @@ public class KiwoomUsStrategySettings {
     private double riskPerTradePercent = 0.5;
     private double atrStopMultiplier = 2;
     private double maxEntryExtensionAtr = 1;
+    private double trailingStopAtrMultiplier = 2;
+    private double trailingActivationR = 1;
+    private int maxHoldingTradingDays = 5;
     private LocalDateTime updatedAt;
 
     @PrePersist
@@ -267,6 +270,30 @@ public class KiwoomUsStrategySettings {
 
     public double getMaxEntryExtensionAtr() {
         return maxEntryExtensionAtr;
+    }
+
+    public double getTrailingStopAtrMultiplier() {
+        return trailingStopAtrMultiplier;
+    }
+
+    public void setTrailingStopAtrMultiplier(double value) {
+        trailingStopAtrMultiplier = value;
+    }
+
+    public double getTrailingActivationR() {
+        return trailingActivationR;
+    }
+
+    public void setTrailingActivationR(double value) {
+        trailingActivationR = value;
+    }
+
+    public int getMaxHoldingTradingDays() {
+        return maxHoldingTradingDays;
+    }
+
+    public void setMaxHoldingTradingDays(int value) {
+        maxHoldingTradingDays = value;
     }
 
     public void setMaxEntryExtensionAtr(double value) {

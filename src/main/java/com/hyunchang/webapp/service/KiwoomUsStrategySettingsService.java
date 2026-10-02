@@ -41,9 +41,24 @@ public class KiwoomUsStrategySettingsService {
             changed = true;
         }
         if (created) {
+            // New installations use the completed trend strategy. Existing DB choices are
+            // preserved.
+            s.setSignalMode(KiwoomUsStrategySettings.SignalMode.TREND);
             s.setMaxPositions(properties.getUs().getMaxPositions());
             s.setDailyMaxBuys(properties.getUs().getDailyMaxBuys());
             s.setDailyLossLimitPercent(properties.getUs().getDailyLossLimitPercent());
+        }
+        if (s.getTrailingStopAtrMultiplier() <= 0) {
+            s.setTrailingStopAtrMultiplier(2);
+            changed = true;
+        }
+        if (s.getTrailingActivationR() <= 0) {
+            s.setTrailingActivationR(1);
+            changed = true;
+        }
+        if (s.getMaxHoldingTradingDays() <= 0) {
+            s.setMaxHoldingTradingDays(5);
+            changed = true;
         }
         if (changed) repository.save(s);
     }
@@ -80,6 +95,9 @@ public class KiwoomUsStrategySettingsService {
         s.setRiskPerTradePercent(clamp(incoming.getRiskPerTradePercent(), 0.1, 1));
         s.setAtrStopMultiplier(clamp(incoming.getAtrStopMultiplier(), 1, 4));
         s.setMaxEntryExtensionAtr(clamp(incoming.getMaxEntryExtensionAtr(), 0.1, 2));
+        s.setTrailingStopAtrMultiplier(clamp(incoming.getTrailingStopAtrMultiplier(), 1, 5));
+        s.setTrailingActivationR(clamp(incoming.getTrailingActivationR(), 0.5, 5));
+        s.setMaxHoldingTradingDays((int) clamp(incoming.getMaxHoldingTradingDays(), 1, 30));
         return repository.save(s);
     }
 

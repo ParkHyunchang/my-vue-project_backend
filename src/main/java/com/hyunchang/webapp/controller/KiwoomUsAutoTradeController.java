@@ -178,6 +178,9 @@ public class KiwoomUsAutoTradeController {
         result.put("거래당 위험(%)", number(value.getRiskPerTradePercent()));
         result.put("ATR 손절배수", number(value.getAtrStopMultiplier()));
         result.put("돌파 이격 ATR", number(value.getMaxEntryExtensionAtr()));
+        result.put("추적 손절 ATR 배수", number(value.getTrailingStopAtrMultiplier()));
+        result.put("추적 시작 R", number(value.getTrailingActivationR()));
+        result.put("추세 최대 보유 거래일", String.valueOf(value.getMaxHoldingTradingDays()));
         return result;
     }
 
