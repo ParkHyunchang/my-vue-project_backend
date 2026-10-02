@@ -193,6 +193,8 @@ public class KiwoomUsAutoTradeController {
                     .body(Map.of("message", "키움 운영계좌 설정과 KIWOOM_US_TRADE_ENABLED=true가 필요합니다."));
         }
         if (request.enabled()) {
+            if (!properties.getUs().isStrategyEnabled())
+                return ResponseEntity.status(409).body(Map.of("message", "미국주식 전략이 비활성화되어 있습니다."));
             service.validateRestart();
             KiwoomUsTradeService.UsdCash cash = service.refreshUsdCash();
             if (!cash.usdOnlyBuyAllowed()) {
@@ -231,10 +233,22 @@ public class KiwoomUsAutoTradeController {
 
     @PostMapping("/sync")
     public Map<String, Object> sync() {
-        service.reconcileOrders();
+        List<String> warnings = new ArrayList<>();
+        try {
+            service.reconcileOrders();
+        } catch (RuntimeException error) {
+            String message =
+                    "주문 대사 실패: "
+                            + (error.getMessage() == null
+                                    ? error.getClass().getSimpleName()
+                                    : error.getMessage())
+                            + ". 잔고만 갱신하며 미확인 주문 상태는 유지합니다.";
+            warnings.add(message);
+            audit.log("ERROR", null, message);
+        }
         service.syncHoldings();
         KiwoomUsAutoTradeService.AccountSnapshot snapshot = service.accountSummary();
-        return Map.of("success", true, "snapshot", snapshot);
+        return Map.of("success", warnings.isEmpty(), "snapshot", snapshot, "warnings", warnings);
     }
 
     @PostMapping("/index-universe/refresh")

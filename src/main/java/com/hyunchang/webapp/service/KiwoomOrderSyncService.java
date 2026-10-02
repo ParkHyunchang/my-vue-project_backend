@@ -472,7 +472,7 @@ public class KiwoomOrderSyncService {
             updated += cancelStaleBuyOrders(unfilledOrderNumbers);
             return new SyncResult(records.size(), updated, "주문 상태 동기화 완료");
         } catch (Exception e) {
-            return new SyncResult(0, 0, "주문 상태 동기화 실패: " + trim(e.getMessage()));
+            return new SyncResult(0, 0, "주문 상태 동기화 실패: " + trim(e.getMessage()), false);
         }
     }
 
@@ -859,7 +859,11 @@ public class KiwoomOrderSyncService {
         return value == null ? "unknown" : value.substring(0, Math.min(500, value.length()));
     }
 
-    public record SyncResult(int records, int updated, String message) {}
+    public record SyncResult(int records, int updated, String message, boolean success) {
+        public SyncResult(int records, int updated, String message) {
+            this(records, updated, message, true);
+        }
+    }
 
     record PreMarketRecoveryResult(
             boolean success, boolean busy, int records, int expired, String message) {

@@ -58,7 +58,11 @@ public class KiwoomUsStrategySettingsService {
         s.setMaxPositions((int) clamp(incoming.getMaxPositions(), 1, 20));
         s.setDailyMaxBuys((int) clamp(incoming.getDailyMaxBuys(), 1, 20));
         s.setMinChangePercent(clamp(incoming.getMinChangePercent(), 0, 20));
-        s.setMaxChangePercent(clamp(incoming.getMaxChangePercent(), s.getMinChangePercent(), 30));
+        double minimumChange =
+                incoming.getSignalMode() == KiwoomUsStrategySettings.SignalMode.TREND
+                        ? 0
+                        : s.getMinChangePercent();
+        s.setMaxChangePercent(clamp(incoming.getMaxChangePercent(), minimumChange, 30));
         s.setMinVolumeRatio(clamp(incoming.getMinVolumeRatio(), 0.5, 5));
         s.setFundamentalFilterEnabled(incoming.isFundamentalFilterEnabled());
         s.setMaxForwardPe(clamp(incoming.getMaxForwardPe(), 5, 100));

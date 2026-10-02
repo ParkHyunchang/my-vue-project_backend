@@ -82,6 +82,16 @@ class KiwoomOrderSyncServiceTest {
     }
 
     @Test
+    void brokerFailureIsExplicitlyReportedEvenWithZeroUpdates() {
+        when(trade.getUnfilledOrders())
+                .thenReturn(Mono.error(new IllegalStateException("timeout")));
+        var result = service.sync();
+        org.junit.jupiter.api.Assertions.assertFalse(result.success());
+        assertEquals(0, result.updated());
+        assertTrue(result.message().contains("동기화 실패"));
+    }
+
+    @Test
     void omittedExecutionFieldsDoNotTurnAnOrderIntoFilled() throws Exception {
         JsonNode ambiguous = objectMapper.readTree("{\"ord_no\":\"0357151\",\"ord_qty\":\"6\"}");
         stubResponses(ambiguous);
