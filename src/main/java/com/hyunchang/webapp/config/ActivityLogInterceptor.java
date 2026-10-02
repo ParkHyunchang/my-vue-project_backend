@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.config;
 
+import jakarta.servlet.RequestDispatcher;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.util.List;
@@ -37,7 +38,9 @@ public class ActivityLogInterceptor implements HandlerInterceptor {
     @Override
     public boolean preHandle(
             HttpServletRequest request, HttpServletResponse response, Object handler) {
-        request.setAttribute(START_TIME_ATTR, System.currentTimeMillis());
+        if (request.getAttribute(START_TIME_ATTR) == null) {
+            request.setAttribute(START_TIME_ATTR, System.currentTimeMillis());
+        }
         return true;
     }
 
@@ -57,12 +60,20 @@ public class ActivityLogInterceptor implements HandlerInterceptor {
         }
 
         String method = request.getMethod();
-        String path = request.getRequestURI();
+        // /error 재디스패치에서도 실제로 실패한 요청 경로를 기록한다.
+        Object errorRequestUri = request.getAttribute(RequestDispatcher.ERROR_REQUEST_URI);
+        String path =
+                errorRequestUri instanceof String originalPath
+                        ? originalPath
+                        : request.getRequestURI();
 
         // 감사 전용 엔드포인트는 자체적으로 [CATEGORY] VIEW 로그를 남기므로 [ACTION] 중복 기록 생략
         if (path.startsWith("/api/audit/")) return;
 
-        if ("GET".equalsIgnoreCase(method) && isNoisyPath(path)) return;
+        // 이미지/폴링 요청도 실패하면 진단할 수 있도록 남긴다.
+        if (response.getStatus() < 400 && "GET".equalsIgnoreCase(method) && isNoisyPath(path)) {
+            return;
+        }
 
         Long start = (Long) request.getAttribute(START_TIME_ATTR);
         long elapsed = start != null ? System.currentTimeMillis() - start : -1L;
