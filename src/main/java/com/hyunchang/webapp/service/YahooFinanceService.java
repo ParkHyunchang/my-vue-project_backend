@@ -23,6 +23,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.StringJoiner;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -82,6 +83,10 @@ public class YahooFinanceService {
     private final Object crumbLock = new Object();
     private final TtlCache<String, JsonNode> fundamentalsCache =
             new TtlCache<>(Duration.ofMinutes(30), Duration.ofMinutes(5));
+    private final Map<String, FundamentalsDiagnostic> fundamentalsDiagnostics =
+            new ConcurrentHashMap<>();
+
+    public record FundamentalsDiagnostic(String status, String source, String detail) {}
 
     public YahooFinanceService(RestTemplate restTemplate, ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
@@ -694,6 +699,15 @@ public class YahooFinanceService {
                 log.debug(
                         "Yahoo fundamentals negative cache hit [{}] - retry skipped",
                         requestedSymbol);
+                FundamentalsDiagnostic previous = fundamentalsDiagnostics.get(cacheKey);
+                rememberFundamentalsDiagnostic(
+                        cacheKey,
+                        "NEGATIVE_CACHE",
+                        previous == null ? "YAHOO" : previous.source(),
+                        previous == null ? "직전 조회 실패 후 5분 재시도 대기" : previous.detail());
+            } else {
+                rememberFundamentalsDiagnostic(
+                        cacheKey, "CACHE_FRESH", "YAHOO_MEMORY", "30분 이내 Yahoo 응답 캐시");
             }
             return cached.value();
         }
@@ -704,10 +718,14 @@ public class YahooFinanceService {
             JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, false);
             if (fallback != null) {
                 fundamentalsCache.put(cacheKey, fallback);
+                rememberFundamentalsDiagnostic(
+                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V7", "인증 없이 v7 quote 조회 성공");
                 return fallback;
             }
             fundamentalsCache.putNegative(cacheKey);
-            logFundamentalsMiss(requestedSymbol, "auth unavailable and v7 fallback empty");
+            String cause = "Yahoo 인증 실패 및 v7 응답 없음";
+            rememberFundamentalsDiagnostic(cacheKey, "REQUEST_FAILED", "YAHOO_AUTH+V7", cause);
+            logFundamentalsMiss(requestedSymbol, cause);
             return null;
         }
 
@@ -737,6 +755,8 @@ public class YahooFinanceService {
                             .path(0);
             if (!result.isMissingNode() && !result.isNull()) {
                 fundamentalsCache.put(cacheKey, result);
+                rememberFundamentalsDiagnostic(
+                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V10", "quoteSummary 조회 성공");
                 return result;
             }
 
@@ -744,6 +764,8 @@ public class YahooFinanceService {
             if (fallback != null) {
                 log.debug("Yahoo quoteSummary 결과 없음 [{}] → v7/quote 폴백 사용", requestedSymbol);
                 fundamentalsCache.put(cacheKey, fallback);
+                rememberFundamentalsDiagnostic(
+                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V7", "v10 응답 없음, v7 quote 조회 성공");
                 return fallback;
             }
             failureCause = "quoteSummary empty and v7 fallback empty";
@@ -753,9 +775,11 @@ public class YahooFinanceService {
             if (fallback != null) {
                 log.debug("Yahoo quoteSummary 재무 조회 실패 [{}] → v7/quote 폴백 사용", requestedSymbol);
                 fundamentalsCache.put(cacheKey, fallback);
+                rememberFundamentalsDiagnostic(
+                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V7", "v10 조회 실패, v7 quote 조회 성공");
                 return fallback;
             }
-            failureCause = e.getMessage();
+            failureCause = safeYahooFailure(e);
             if (e instanceof HttpStatusCodeException hsce && hsce.getStatusCode().value() == 401) {
                 synchronized (crumbLock) {
                     cachedCrumb = null;
@@ -763,8 +787,25 @@ public class YahooFinanceService {
             }
         }
         fundamentalsCache.putNegative(cacheKey);
+        rememberFundamentalsDiagnostic(cacheKey, "REQUEST_FAILED", "YAHOO_V10+V7", failureCause);
         logFundamentalsMiss(requestedSymbol, failureCause);
         return null;
+    }
+
+    public FundamentalsDiagnostic getFundamentalsDiagnostic(String symbol) {
+        if (symbol == null) return null;
+        return fundamentalsDiagnostics.get(symbol.trim().toUpperCase(Locale.ROOT));
+    }
+
+    private void rememberFundamentalsDiagnostic(
+            String key, String status, String source, String detail) {
+        fundamentalsDiagnostics.put(key, new FundamentalsDiagnostic(status, source, detail));
+    }
+
+    private String safeYahooFailure(Exception error) {
+        if (error instanceof HttpStatusCodeException statusError)
+            return "HTTP " + statusError.getStatusCode().value();
+        return error.getClass().getSimpleName();
     }
 
     private void logFundamentalsMiss(String symbol, String cause) {
@@ -827,6 +868,10 @@ public class YahooFinanceService {
             putRaw(price, "marketCap", quote.path("marketCap"));
             putRaw(summaryDetail, "trailingPE", quote.path("trailingPE"));
             putRaw(summaryDetail, "forwardPE", quote.path("forwardPE"));
+            putRaw(
+                    financialData,
+                    "returnOnEquity",
+                    firstPresent(quote, "returnOnEquity", "returnOnEquityTTM"));
             putRaw(
                     summaryDetail,
                     "dividendYield",

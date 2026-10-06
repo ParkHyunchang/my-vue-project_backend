@@ -482,13 +482,17 @@ public class KiwoomUsAutoTradeService {
                 quality.add(new FundamentalQualified(item, null));
                 continue;
             }
-            Optional<KiwoomUsFundamentalService.FundamentalSnapshot> snapshot =
-                    fundamentals.find(item.stock().symbol());
-            if (snapshot.isEmpty()) {
-                dataMissing(item.stock(), "PER·ROE", "유효한 PER 또는 ROE 데이터가 없습니다.");
+            KiwoomUsFundamentalService.LookupResult lookup =
+                    fundamentals.lookup(item.stock().symbol());
+            if (lookup.snapshot() == null) {
+                dataMissing(item.stock(), "PER·ROE", lookup.auditMessage());
                 continue;
             }
-            var value = snapshot.get();
+            log(
+                    "FUNDAMENTAL_DATA",
+                    null,
+                    "종목=" + stockLabel(item.stock()) + ", " + lookup.auditMessage());
+            var value = lookup.snapshot();
             if (value.effectivePe() <= settings.getMaxForwardPe()
                     && value.roePercent() >= settings.getMinRoePercent()) {
                 quality.add(new FundamentalQualified(item, value));

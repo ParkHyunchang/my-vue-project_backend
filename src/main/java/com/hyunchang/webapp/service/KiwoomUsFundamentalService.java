@@ -25,10 +25,16 @@ public class KiwoomUsFundamentalService {
     }
 
     public Optional<FundamentalSnapshot> find(String symbol) {
+        return Optional.ofNullable(lookup(symbol).snapshot());
+    }
+
+    public LookupResult lookup(String symbol) {
         String key = normalize(symbol);
-        if (key.isBlank()) return Optional.empty();
+        if (key.isBlank())
+            return new LookupResult(null, LookupStatus.DATA_UNAVAILABLE, "INPUT", "종목코드가 비어 있습니다.");
         LocalDateTime now = LocalDateTime.now();
         FundamentalSnapshot cached = cache.get(key);
+        String cacheSource = "MEMORY";
         if (cached == null) {
             cached =
                     store.read("fundamental-" + key, FundamentalSnapshot.class)
@@ -38,37 +44,73 @@ public class KiwoomUsFundamentalService {
                                                     && positive(value.effectivePe())
                                                     && Double.isFinite(value.roePercent()))
                             .orElse(null);
-            if (cached != null) cache.put(key, cached);
+            if (cached != null) {
+                cache.put(key, cached);
+                cacheSource = "DISK";
+            }
         }
         if (cached != null && cached.capturedAt().plus(FRESH_FOR).isAfter(now)) {
-            return Optional.of(cached);
+            return new LookupResult(
+                    cached,
+                    LookupStatus.CACHE_FRESH,
+                    cacheSource,
+                    "정상 캐시 사용(나이 " + cacheAge(cached, now) + ")");
         }
 
-        FundamentalSnapshot refreshed;
+        JsonNode root;
+        String failureDetail = "";
         try {
-            refreshed = read(key, now);
-        } catch (RuntimeException ignored) {
-            refreshed = null;
+            root = yahoo.fetchFundamentals(key);
+        } catch (RuntimeException error) {
+            root = null;
+            failureDetail = "Yahoo 호출 예외=" + error.getClass().getSimpleName();
         }
+        YahooFinanceService.FundamentalsDiagnostic diagnostic =
+                yahoo.getFundamentalsDiagnostic(key);
+        FundamentalSnapshot refreshed = parse(root, now);
         if (refreshed != null) {
             cache.put(key, refreshed);
             store.write("fundamental-" + key, refreshed);
-            return Optional.of(refreshed);
+            String source = diagnostic == null ? "YAHOO" : diagnostic.source();
+            String detail = diagnostic == null ? "Yahoo 재무정보 조회 성공" : diagnostic.detail();
+            LookupStatus status =
+                    diagnostic != null && "CACHE_FRESH".equals(diagnostic.status())
+                            ? LookupStatus.CACHE_FRESH
+                            : LookupStatus.YAHOO_REFRESHED;
+            return new LookupResult(refreshed, status, source, detail);
         }
+        if (failureDetail.isBlank()) failureDetail = failureDetail(root, diagnostic);
         if (cached != null && cached.capturedAt().plus(STALE_FALLBACK_FOR).isAfter(now)) {
-            return Optional.of(cached);
+            return new LookupResult(
+                    cached,
+                    LookupStatus.CACHE_STALE_FALLBACK,
+                    cacheSource,
+                    "새 조회 사용 불가("
+                            + failureDetail
+                            + "), 이전 정상 캐시 사용(나이 "
+                            + cacheAge(cached, now)
+                            + ")");
         }
-        return Optional.empty();
+        if (cached != null)
+            return new LookupResult(
+                    null,
+                    LookupStatus.CACHE_EXPIRED,
+                    cacheSource,
+                    "정상 캐시 만료(나이 " + cacheAge(cached, now) + "), 새 조회 사용 불가=" + failureDetail);
+        return new LookupResult(
+                null,
+                root == null ? LookupStatus.REQUEST_FAILED : LookupStatus.FIELDS_MISSING,
+                diagnostic == null ? "YAHOO" : diagnostic.source(),
+                failureDetail);
     }
 
-    private FundamentalSnapshot read(String symbol, LocalDateTime capturedAt) {
-        JsonNode root = yahoo.fetchFundamentals(symbol);
+    private FundamentalSnapshot parse(JsonNode root, LocalDateTime capturedAt) {
         if (root == null) return null;
         JsonNode summary = root.path("summaryDetail");
         JsonNode stats = root.path("defaultKeyStatistics");
         JsonNode financial = root.path("financialData");
         double forwardPe = firstNumber(summary.path("forwardPE"), stats.path("forwardPE"));
-        double trailingPe = number(summary.path("trailingPE"));
+        double trailingPe = firstNumber(summary.path("trailingPE"), stats.path("trailingPE"));
         JsonNode roeNode = financial.path("returnOnEquity");
         double roe = number(roeNode);
         // Yahoo raw/numeric returnOnEquity is a ratio, including ratios above 2.
@@ -76,6 +118,36 @@ public class KiwoomUsFundamentalService {
         double effectivePe = positive(forwardPe) ? forwardPe : trailingPe;
         if (!positive(effectivePe) || !Double.isFinite(roe)) return null;
         return new FundamentalSnapshot(forwardPe, trailingPe, roe, capturedAt);
+    }
+
+    private String failureDetail(
+            JsonNode root, YahooFinanceService.FundamentalsDiagnostic diagnostic) {
+        if (root == null)
+            return diagnostic == null
+                    ? "Yahoo 응답 없음"
+                    : diagnostic.status() + "/" + diagnostic.source() + ": " + diagnostic.detail();
+        JsonNode summary = root.path("summaryDetail");
+        JsonNode stats = root.path("defaultKeyStatistics");
+        boolean peMissing =
+                !positive(
+                        firstNumber(
+                                summary.path("forwardPE"),
+                                stats.path("forwardPE"),
+                                summary.path("trailingPE"),
+                                stats.path("trailingPE")));
+        boolean roeMissing =
+                Double.isNaN(number(root.path("financialData").path("returnOnEquity")));
+        String missing =
+                peMissing && roeMissing
+                        ? "PER·ROE"
+                        : peMissing ? "PER" : roeMissing ? "ROE" : "유효값";
+        String source = diagnostic == null ? "Yahoo" : diagnostic.source();
+        return source + " 응답 성공, " + missing + " 필드 누락";
+    }
+
+    private String cacheAge(FundamentalSnapshot snapshot, LocalDateTime now) {
+        long hours = Math.max(0, Duration.between(snapshot.capturedAt(), now).toHours());
+        return hours < 24 ? hours + "시간" : (hours / 24) + "일";
     }
 
     private double firstNumber(JsonNode... nodes) {
@@ -110,6 +182,23 @@ public class KiwoomUsFundamentalService {
             double forwardPe, double trailingPe, double roePercent, LocalDateTime capturedAt) {
         public double effectivePe() {
             return !Double.isNaN(forwardPe) && forwardPe > 0 ? forwardPe : trailingPe;
+        }
+    }
+
+    public enum LookupStatus {
+        CACHE_FRESH,
+        YAHOO_REFRESHED,
+        CACHE_STALE_FALLBACK,
+        FIELDS_MISSING,
+        REQUEST_FAILED,
+        CACHE_EXPIRED,
+        DATA_UNAVAILABLE
+    }
+
+    public record LookupResult(
+            FundamentalSnapshot snapshot, LookupStatus status, String source, String detail) {
+        public String auditMessage() {
+            return "상태=" + status + ", 출처=" + source + ", " + detail;
         }
     }
 }
