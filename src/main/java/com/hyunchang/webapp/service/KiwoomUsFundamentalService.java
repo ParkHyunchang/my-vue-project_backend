@@ -142,7 +142,8 @@ public class KiwoomUsFundamentalService {
                         ? "PER·ROE"
                         : peMissing ? "PER" : roeMissing ? "ROE" : "유효값";
         String source = diagnostic == null ? "Yahoo" : diagnostic.source();
-        return source + " 응답 성공, " + missing + " 필드 누락";
+        String detail = diagnostic == null ? "" : " (" + diagnostic.detail() + ")";
+        return source + " 응답 성공, " + missing + " 필드 누락" + detail;
     }
 
     private String cacheAge(FundamentalSnapshot snapshot, LocalDateTime now) {

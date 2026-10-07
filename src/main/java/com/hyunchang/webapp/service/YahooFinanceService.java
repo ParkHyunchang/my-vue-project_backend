@@ -83,6 +83,8 @@ public class YahooFinanceService {
     private final Object crumbLock = new Object();
     private final TtlCache<String, JsonNode> fundamentalsCache =
             new TtlCache<>(Duration.ofMinutes(30), Duration.ofMinutes(5));
+    private final TtlCache<String, JsonNode> partialFundamentalsCache =
+            new TtlCache<>(Duration.ofMinutes(5), Duration.ofMinutes(5));
     private final Map<String, FundamentalsDiagnostic> fundamentalsDiagnostics =
             new ConcurrentHashMap<>();
 
@@ -711,15 +713,28 @@ public class YahooFinanceService {
             }
             return cached.value();
         }
+        TtlCache.Hit<JsonNode> partialCached = partialFundamentalsCache.lookup(cacheKey);
+        if (partialCached != null && !partialCached.negative()) {
+            rememberFundamentalsDiagnostic(
+                    cacheKey,
+                    "CACHE_PARTIAL",
+                    "YAHOO_PARTIAL_MEMORY",
+                    "5분 이내 Yahoo 부분 응답 캐시, 누락="
+                            + missingTradingFundamentals(partialCached.value()));
+            return partialCached.value();
+        }
 
         boolean authed = refreshYahooAuth();
         if (!authed) {
             log.debug("Yahoo 인증 토큰 없이 v7/quote 재무 폴백 시도 [{}]", requestedSymbol);
             JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, false);
             if (fallback != null) {
-                fundamentalsCache.put(cacheKey, fallback);
-                rememberFundamentalsDiagnostic(
-                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V7", "인증 없이 v7 quote 조회 성공");
+                cacheFundamentalsResult(
+                        cacheKey,
+                        fallback,
+                        "YAHOO_V7",
+                        "Yahoo 인증 실패, 비인증 v7 quote 조회 성공");
+                logFundamentalsFallback(requestedSymbol, "AUTH_FAILED", fallback);
                 return fallback;
             }
             fundamentalsCache.putNegative(cacheKey);
@@ -754,36 +769,39 @@ public class YahooFinanceService {
                             .path("result")
                             .path(0);
             if (!result.isMissingNode() && !result.isNull()) {
-                fundamentalsCache.put(cacheKey, result);
-                rememberFundamentalsDiagnostic(
-                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V10", "quoteSummary 조회 성공");
+                cacheFundamentalsResult(
+                        cacheKey, result, "YAHOO_V10", "quoteSummary 조회 성공");
                 return result;
             }
 
             JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, true);
             if (fallback != null) {
-                log.debug("Yahoo quoteSummary 결과 없음 [{}] → v7/quote 폴백 사용", requestedSymbol);
-                fundamentalsCache.put(cacheKey, fallback);
-                rememberFundamentalsDiagnostic(
-                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V7", "v10 응답 없음, v7 quote 조회 성공");
+                cacheFundamentalsResult(
+                        cacheKey,
+                        fallback,
+                        "YAHOO_V7",
+                        "v10 응답 없음, v7 quote 조회 성공");
+                logFundamentalsFallback(requestedSymbol, "EMPTY_RESPONSE", fallback);
                 return fallback;
             }
             failureCause = "quoteSummary empty and v7 fallback empty";
 
         } catch (RestClientException | IOException e) {
-            JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, true);
-            if (fallback != null) {
-                log.debug("Yahoo quoteSummary 재무 조회 실패 [{}] → v7/quote 폴백 사용", requestedSymbol);
-                fundamentalsCache.put(cacheKey, fallback);
-                rememberFundamentalsDiagnostic(
-                        cacheKey, "YAHOO_REFRESHED", "YAHOO_V7", "v10 조회 실패, v7 quote 조회 성공");
-                return fallback;
-            }
             failureCause = safeYahooFailure(e);
             if (e instanceof HttpStatusCodeException hsce && hsce.getStatusCode().value() == 401) {
                 synchronized (crumbLock) {
                     cachedCrumb = null;
                 }
+            }
+            JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, true);
+            if (fallback != null) {
+                cacheFundamentalsResult(
+                        cacheKey,
+                        fallback,
+                        "YAHOO_V7",
+                        "v10 조회 실패(" + failureCause + "), v7 quote 조회 성공");
+                logFundamentalsFallback(requestedSymbol, failureCause, fallback);
+                return fallback;
             }
         }
         fundamentalsCache.putNegative(cacheKey);
@@ -800,6 +818,55 @@ public class YahooFinanceService {
     private void rememberFundamentalsDiagnostic(
             String key, String status, String source, String detail) {
         fundamentalsDiagnostics.put(key, new FundamentalsDiagnostic(status, source, detail));
+    }
+
+    private void cacheFundamentalsResult(
+            String key, JsonNode value, String source, String detail) {
+        String missing = missingTradingFundamentals(value);
+        if (missing.isBlank()) {
+            fundamentalsCache.put(key, value);
+            partialFundamentalsCache.invalidate(key);
+            rememberFundamentalsDiagnostic(key, "YAHOO_REFRESHED", source, detail);
+            return;
+        }
+        partialFundamentalsCache.put(key, value);
+        rememberFundamentalsDiagnostic(
+                key, "FIELDS_MISSING", source, detail + ", 누락=" + missing);
+    }
+
+    private void logFundamentalsFallback(String symbol, String v10Cause, JsonNode fallback) {
+        String missing = missingTradingFundamentals(fallback);
+        log.info(
+                "Yahoo 재무 조회 폴백 [{}]: v10={}, v7={}, 누락={}",
+                symbol,
+                v10Cause,
+                missing.isBlank() ? "COMPLETE" : "PARTIAL",
+                missing.isBlank() ? "없음" : missing);
+    }
+
+    private String missingTradingFundamentals(JsonNode root) {
+        if (root == null || root.isMissingNode() || root.isNull()) return "PER·ROE";
+        JsonNode summary = root.path("summaryDetail");
+        JsonNode stats = root.path("defaultKeyStatistics");
+        boolean peMissing =
+                !positiveNumber(
+                        summary.path("forwardPE"),
+                        stats.path("forwardPE"),
+                        summary.path("trailingPE"),
+                        stats.path("trailingPE"));
+        boolean roeMissing =
+                !Double.isFinite(summaryNumber(root.path("financialData").path("returnOnEquity")));
+        if (peMissing && roeMissing) return "PER·ROE";
+        if (peMissing) return "PER";
+        return roeMissing ? "ROE" : "";
+    }
+
+    private boolean positiveNumber(JsonNode... nodes) {
+        for (JsonNode node : nodes) {
+            double value = summaryNumber(node);
+            if (Double.isFinite(value) && value > 0) return true;
+        }
+        return false;
     }
 
     private String safeYahooFailure(Exception error) {

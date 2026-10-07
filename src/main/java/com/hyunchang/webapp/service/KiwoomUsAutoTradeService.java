@@ -477,6 +477,7 @@ public class KiwoomUsAutoTradeService {
         }
 
         List<FundamentalQualified> quality = new ArrayList<>();
+        int fundamentalBypassCount = 0;
         for (VolumeQualified item : volume) {
             if (!settings.isFundamentalFilterEnabled()) {
                 quality.add(new FundamentalQualified(item, null));
@@ -486,6 +487,17 @@ public class KiwoomUsAutoTradeService {
                     fundamentals.lookup(item.stock().symbol());
             if (lookup.snapshot() == null) {
                 dataMissing(item.stock(), "PER·ROE", lookup.auditMessage());
+                if (settings.getSignalMode() == SignalMode.TREND) {
+                    fundamentalBypassCount++;
+                    quality.add(new FundamentalQualified(item, null));
+                    log(
+                            "FUNDAMENTAL_BYPASS",
+                            null,
+                            "종목="
+                                    + stockLabel(item.stock())
+                                    + ", TREND 전략은 재무 데이터 누락을 종목 탈락으로 처리하지 않고 기술 신호 평가를 계속합니다. 사유="
+                                    + lookup.auditMessage());
+                }
                 continue;
             }
             log(
@@ -682,6 +694,7 @@ public class KiwoomUsAutoTradeService {
                         momentum.size(),
                         volume.size(),
                         quality.size(),
+                        fundamentalBypassCount,
                         spread.size(),
                         affordable.size(),
                         notHeld.size(),
@@ -1768,6 +1781,7 @@ public class KiwoomUsAutoTradeService {
             int momentumCount,
             int volumeCount,
             int fundamentalCount,
+            int fundamentalBypassCount,
             int spreadCount,
             int affordableCount,
             int notHeldCount,
@@ -1782,6 +1796,8 @@ public class KiwoomUsAutoTradeService {
             appendStage(message, "등락률", indexCount, momentumCount);
             appendStage(message, "시간보정거래량", momentumCount, volumeCount);
             appendStage(message, "PER·ROE", volumeCount, fundamentalCount);
+            if (fundamentalBypassCount > 0)
+                message.append("(재무자료 누락 우회 ").append(fundamentalBypassCount).append(')');
             appendStage(message, "스프레드", fundamentalCount, spreadCount);
             appendStage(message, "주문가능가격", spreadCount, affordableCount);
             message.append("(한도=$")
