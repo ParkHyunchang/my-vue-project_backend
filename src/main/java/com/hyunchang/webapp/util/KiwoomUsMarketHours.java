@@ -10,9 +10,16 @@ import java.time.ZoneId;
 import java.util.Map;
 import java.util.Set;
 
-/** 미국 정규장 판정. DST는 America/New_York가 처리하며 미등록 연도는 안전하게 주문을 닫는다. */
+/** 키움이 지원하는 미국 주간·프리·정규·애프터 세션 판정. 미등록 연도는 안전하게 주문을 닫는다. */
 public final class KiwoomUsMarketHours {
     public static final ZoneId ET = ZoneId.of("America/New_York");
+    public static final ZoneId KST = ZoneId.of("Asia/Seoul");
+    private static final LocalTime DAY_START = LocalTime.of(20, 0);
+    private static final LocalTime DAY_END = LocalTime.of(3, 45);
+    private static final LocalTime PRE_MARKET_START = LocalTime.of(4, 0);
+    private static final LocalTime REGULAR_START = LocalTime.of(9, 30);
+    private static final LocalTime AFTER_HOURS_END = LocalTime.of(18, 0);
+    private static final LocalTime EARLY_CLOSE_AFTER_HOURS_END = LocalTime.of(17, 0);
     private static final Set<LocalDate> CLOSED =
             Set.of(
                     LocalDate.parse("2026-01-01"),
@@ -59,6 +66,24 @@ public final class KiwoomUsMarketHours {
 
     private KiwoomUsMarketHours() {}
 
+    public enum Session {
+        CLOSED("장 운영시간 아님"),
+        DAY("주간거래"),
+        PRE_MARKET("프리마켓"),
+        REGULAR("정규장"),
+        AFTER_HOURS("애프터마켓");
+
+        private final String label;
+
+        Session(String label) {
+            this.label = label;
+        }
+
+        public String label() {
+            return label;
+        }
+    }
+
     public static boolean isTradingDay(LocalDate date) {
         return date.getYear() >= 2026
                 && date.getYear() <= 2028
@@ -68,20 +93,36 @@ public final class KiwoomUsMarketHours {
     }
 
     public static boolean isOpen() {
-        LocalDateTime now = LocalDateTime.now(ET);
-        if (!isTradingDay(now.toLocalDate())) return false;
-        LocalTime close = EARLY_CLOSE.getOrDefault(now.toLocalDate(), LocalTime.of(16, 0));
-        return !now.toLocalTime().isBefore(LocalTime.of(9, 30))
-                && now.toLocalTime().isBefore(close);
+        return currentSession() != Session.CLOSED;
     }
 
     public static boolean isEntryWindow() {
-        LocalDateTime now = LocalDateTime.now(ET);
-        if (!isTradingDay(now.toLocalDate())) return false;
-        LocalTime close = EARLY_CLOSE.getOrDefault(now.toLocalDate(), LocalTime.of(16, 0));
-        LocalTime entryClose = close.minusHours(1);
-        return !now.toLocalTime().isBefore(LocalTime.of(10, 0))
-                && now.toLocalTime().isBefore(entryClose);
+        return isOpen();
+    }
+
+    public static boolean isRegularSession() {
+        return currentSession() == Session.REGULAR;
+    }
+
+    public static Session currentSession() {
+        return sessionAt(LocalDateTime.now(ET));
+    }
+
+    static Session sessionAt(LocalDateTime easternNow) {
+        LocalDate tradingDate = tradingDate(easternNow);
+        if (!isTradingDay(tradingDate)) return Session.CLOSED;
+        LocalTime time = easternNow.toLocalTime();
+        if (!time.isBefore(DAY_START) || time.isBefore(DAY_END)) return Session.DAY;
+        if (time.isBefore(PRE_MARKET_START)) return Session.CLOSED;
+        if (time.isBefore(REGULAR_START)) return Session.PRE_MARKET;
+        LocalTime regularClose =
+                EARLY_CLOSE.getOrDefault(tradingDate, LocalTime.of(16, 0));
+        if (time.isBefore(regularClose)) return Session.REGULAR;
+        LocalTime afterHoursClose =
+                EARLY_CLOSE.containsKey(tradingDate)
+                        ? EARLY_CLOSE_AFTER_HOURS_END
+                        : AFTER_HOURS_END;
+        return time.isBefore(afterHoursClose) ? Session.AFTER_HOURS : Session.CLOSED;
     }
 
     /** 정규장 전체 시간 대비 현재까지 경과한 비율. 시간대별 상대 거래량 계산에 사용한다. */
@@ -97,7 +138,13 @@ public final class KiwoomUsMarketHours {
     }
 
     public static LocalDate today() {
-        return LocalDate.now(ET);
+        return tradingDate(LocalDateTime.now(ET));
+    }
+
+    private static LocalDate tradingDate(LocalDateTime easternNow) {
+        return easternNow.toLocalTime().isBefore(DAY_START)
+                ? easternNow.toLocalDate()
+                : easternNow.toLocalDate().plusDays(1);
     }
 
     public static LocalDate previousTradingDay(LocalDate date) {
@@ -126,7 +173,7 @@ public final class KiwoomUsMarketHours {
 
     /** DB LocalDateTime과 같은 시스템 시간대로 환산한 현재 미국 거래일의 시작 시각. */
     public static LocalDateTime currentTradingDateStartInSystemZone() {
-        return today().atStartOfDay(ET)
+        return today().atStartOfDay(KST)
                 .withZoneSameInstant(ZoneId.systemDefault())
                 .toLocalDateTime();
     }
@@ -144,6 +191,12 @@ public final class KiwoomUsMarketHours {
     }
 
     public static String entrySessionKst() {
-        return isDaylightSavingTime() ? "23:00~익일 04:00" : "00:00~05:00";
+        return isDaylightSavingTime()
+                ? "주간 09:00~16:45 · 프리 17:00~22:30 · 정규 22:30~익일 05:00 · 애프터 익일 05:00~07:00"
+                : "주간 10:00~17:45 · 프리 18:00~23:30 · 정규 23:30~익일 06:00 · 애프터 익일 06:00~08:00";
+    }
+
+    public static String currentSessionLabel() {
+        return currentSession().label();
     }
 }

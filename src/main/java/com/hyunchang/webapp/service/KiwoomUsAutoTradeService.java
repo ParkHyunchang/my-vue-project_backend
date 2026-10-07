@@ -382,7 +382,7 @@ public class KiwoomUsAutoTradeService {
         if (!properties.getUs().isStrategyEnabled())
             throw new IllegalStateException("미국주식 전략이 비활성화되어 있습니다.");
         if (!KiwoomUsMarketHours.isEntryWindow())
-            throw new IllegalStateException("미국 정규장 진입 시간(10:00 ET 이후)이 아닙니다.");
+            throw new IllegalStateException("키움 미국주식 거래 가능 세션이 아닙니다.");
         if (state.isEmergencyStopped()) throw new IllegalStateException("API 오류 안전정지가 걸려 있습니다.");
     }
 
@@ -397,7 +397,11 @@ public class KiwoomUsAutoTradeService {
     CandidateScreeningResult filterCandidates(
             List<RankedStock> ranked, KiwoomUsStrategySettings settings, AccountSnapshot account) {
         return filterCandidates(
-                ranked, settings, account, KiwoomUsMarketHours.regularSessionProgress());
+                ranked,
+                settings,
+                account,
+                KiwoomUsMarketHours.regularSessionProgress(),
+                KiwoomUsMarketHours.isRegularSession());
     }
 
     CandidateScreeningResult filterCandidates(
@@ -405,6 +409,15 @@ public class KiwoomUsAutoTradeService {
             KiwoomUsStrategySettings settings,
             AccountSnapshot account,
             double regularSessionProgress) {
+        return filterCandidates(ranked, settings, account, regularSessionProgress, true);
+    }
+
+    private CandidateScreeningResult filterCandidates(
+            List<RankedStock> ranked,
+            KiwoomUsStrategySettings settings,
+            AccountSnapshot account,
+            double regularSessionProgress,
+            boolean applyRelativeVolumeFilter) {
         List<RankedStock> source = ranked == null ? List.of() : ranked;
         Set<String> held = new HashSet<>();
         for (KiwoomUsAccountHolding holding : holdings()) held.add(holding.getSymbol());
@@ -461,8 +474,11 @@ public class KiwoomUsAutoTradeService {
 
         List<VolumeQualified> volume = new ArrayList<>();
         for (RankedStock stock : momentum) {
-            double relativeVolume = stock.relativeVolumeRatio(regularSessionProgress);
-            if (relativeVolume >= settings.getMinVolumeRatio()) {
+            double relativeVolume =
+                    applyRelativeVolumeFilter
+                            ? stock.relativeVolumeRatio(regularSessionProgress)
+                            : stock.volumeRatio();
+            if (!applyRelativeVolumeFilter || relativeVolume >= settings.getMinVolumeRatio()) {
                 volume.add(new VolumeQualified(stock, relativeVolume));
             } else {
                 reject(
@@ -693,6 +709,7 @@ public class KiwoomUsAutoTradeService {
                         indexed.size(),
                         momentum.size(),
                         volume.size(),
+                        applyRelativeVolumeFilter,
                         quality.size(),
                         fundamentalBypassCount,
                         spread.size(),
@@ -1007,13 +1024,36 @@ public class KiwoomUsAutoTradeService {
 
     private void submitSell(
             KiwoomUsAccountHolding holding, int quantity, boolean market, String reason) {
+        boolean effectiveMarket = market && KiwoomUsMarketHours.isRegularSession();
+        BigDecimal orderPrice = effectiveMarket ? null : holding.getCurrentPrice();
+        if (!KiwoomUsMarketHours.isRegularSession()) {
+            try {
+                OrderBookQuote quote =
+                        trade.getOrderBook(holding.getExchange(), holding.getSymbol())
+                                .block(API_TIMEOUT);
+                if (quote == null || quote.bid().signum() <= 0) {
+                    log(
+                            "DATA_MISSING",
+                            null,
+                            holding.getSymbol() + " 비정규장 매도 보류: 유효한 매수 1호가가 없습니다.");
+                    return;
+                }
+                orderPrice = quote.bid();
+            } catch (RuntimeException error) {
+                log(
+                        "DATA_MISSING",
+                        null,
+                        holding.getSymbol() + " 비정규장 매도 호가 조회 실패: " + safe(error));
+                return;
+            }
+        }
         KiwoomUsTradeProposal proposal = new KiwoomUsTradeProposal();
         proposal.setAction(KiwoomUsTradeProposal.Action.SELL);
         proposal.setExchange(holding.getExchange());
         proposal.setSymbol(holding.getSymbol());
         proposal.setStockName(holding.getStockName());
         proposal.setQuantity(quantity);
-        proposal.setLimitPrice(market ? null : holding.getCurrentPrice());
+        proposal.setLimitPrice(orderPrice);
         proposal.setReason(reason);
         proposal = proposalRepository.save(proposal);
         try {
@@ -1024,8 +1064,8 @@ public class KiwoomUsAutoTradeService {
                                             holding.getExchange(),
                                             holding.getSymbol(),
                                             quantity,
-                                            holding.getCurrentPrice(),
-                                            market))
+                                            orderPrice,
+                                            effectiveMarket))
                             .block(API_TIMEOUT);
             String orderNo = text(response, "ord_no", "order_no");
             if (orderNo.isBlank()) {
@@ -1047,7 +1087,9 @@ public class KiwoomUsAutoTradeService {
                             + holding.getSymbol()
                             + " "
                             + quantity
-                            + "주 ("
+                            + "주 "
+                            + (effectiveMarket ? "시장가" : "지정가 $" + orderPrice)
+                            + " ("
                             + reason
                             + ", 주문번호 "
                             + orderNo
@@ -1780,6 +1822,7 @@ public class KiwoomUsAutoTradeService {
             int indexCount,
             int momentumCount,
             int volumeCount,
+            boolean relativeVolumeFilterApplied,
             int fundamentalCount,
             int fundamentalBypassCount,
             int spreadCount,
@@ -1795,6 +1838,7 @@ public class KiwoomUsAutoTradeService {
             appendStage(message, "주요지수", liquidCount, indexCount);
             appendStage(message, "등락률", indexCount, momentumCount);
             appendStage(message, "시간보정거래량", momentumCount, volumeCount);
+            if (!relativeVolumeFilterApplied) message.append("(비정규장 미적용)");
             appendStage(message, "PER·ROE", volumeCount, fundamentalCount);
             if (fundamentalBypassCount > 0)
                 message.append("(재무자료 누락 우회 ").append(fundamentalBypassCount).append(')');

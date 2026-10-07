@@ -431,7 +431,7 @@ public class KiwoomUsTradeService {
     public Mono<JsonNode> placeOrder(Order order) {
         if (!KiwoomUsMarketHours.isOpen()) {
             return Mono.error(
-                    new OrderValidationException("미국주식 자동주문은 미국 정규장(09:30~16:00 ET)에만 전송됩니다."));
+                    new OrderValidationException("현재는 키움 미국주식 거래 가능 세션이 아닙니다."));
         }
         if (!properties.getUs().isTradeEnabled()) {
             return Mono.error(
@@ -444,6 +444,10 @@ public class KiwoomUsTradeService {
             return Mono.error(new OrderValidationException("주문 수량은 1주 이상이어야 합니다."));
         if (!order.market() && (order.price() == null || order.price().signum() <= 0)) {
             return Mono.error(new OrderValidationException("지정가 주문에는 양수 가격이 필요합니다."));
+        }
+        if (order.market() && !KiwoomUsMarketHours.isRegularSession()) {
+            return Mono.error(
+                    new OrderValidationException("주간·프리·애프터마켓에서는 지정가 주문만 전송할 수 있습니다."));
         }
         String side = order.side() == null ? "" : order.side().toUpperCase();
         String apiId =
