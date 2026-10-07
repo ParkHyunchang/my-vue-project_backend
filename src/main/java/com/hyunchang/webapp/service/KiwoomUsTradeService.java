@@ -396,11 +396,31 @@ public class KiwoomUsTradeService {
 
     /** 미국주식 현재가 10호가(usa20101)에서 매도·매수 1호가를 조회한다. */
     public Mono<OrderBookQuote> getOrderBook(String exchange, String symbol) {
+        String normalizedExchange = normalizeExchange(exchange);
+        String normalizedSymbol = normalizeSymbol(symbol);
         Map<String, String> body =
                 Map.of(
-                        "stex_tp", normalizeExchange(exchange),
-                        "stk_cd", normalizeSymbol(symbol));
-        return read("usa20101", "/api/us/mrkcond", body).map(this::orderBookQuote);
+                        "stex_tp", normalizedExchange,
+                        "stk_cd", normalizedSymbol);
+        return read("usa20101", "/api/us/mrkcond", body)
+                .map(response -> orderBookQuote(response, normalizedExchange, normalizedSymbol))
+                .doOnNext(
+                        quote ->
+                                log.debug(
+                                        "[미국자동매매][호가 조회 정상][usa20101] symbol={}, exchange={}, bid={}, ask={}",
+                                        normalizedSymbol,
+                                        normalizedExchange,
+                                        quote.bid(),
+                                        quote.ask()))
+                .doOnError(
+                        error -> {
+                            if (error instanceof OrderBookDataException) return;
+                            log.warn(
+                                    "[미국자동매매][호가 API 조회 실패][usa20101] symbol={}, exchange={}, reason={}",
+                                    normalizedSymbol,
+                                    normalizedExchange,
+                                    error.getMessage());
+                        });
     }
 
     public Mono<KrwOrderServiceStatus> getKrwOrderServiceStatus() {
@@ -611,10 +631,14 @@ public class KiwoomUsTradeService {
         return result;
     }
 
-    private OrderBookQuote orderBookQuote(JsonNode response) {
+    private OrderBookQuote orderBookQuote(
+            JsonNode response, String normalizedExchange, String normalizedSymbol) {
         BigDecimal ask =
                 findDecimal(
                         response,
+                        // usa20101 공식 응답 필드. 아래 항목은 과거/호환 응답용 별칭이다.
+                        "fpr_sel_bid",
+                        "sel_1bid",
                         "sel_fpr_bid",
                         "sel_1th_pre_bid",
                         "sel_1th_bid",
@@ -624,6 +648,9 @@ public class KiwoomUsTradeService {
         BigDecimal bid =
                 findDecimal(
                         response,
+                        // usa20101 공식 응답 필드. 아래 항목은 과거/호환 응답용 별칭이다.
+                        "fpr_buy_bid",
+                        "buy_1bid",
                         "buy_fpr_bid",
                         "buy_1th_pre_bid",
                         "buy_1th_bid",
@@ -633,7 +660,28 @@ public class KiwoomUsTradeService {
         ask = ask.abs();
         bid = bid.abs();
         if (ask.signum() <= 0 || bid.signum() <= 0 || ask.compareTo(bid) < 0) {
-            throw new IllegalStateException("미국주식 최우선 호가를 확인할 수 없습니다.");
+            String detail =
+                    "symbol="
+                            + normalizedSymbol
+                            + ", exchange="
+                            + normalizedExchange
+                            + ", date="
+                            + text(response, "dt")
+                            + ", bidTime="
+                            + text(response, "bid_tm")
+                            + ", current="
+                            + text(response, "cur_prc")
+                            + ", ask="
+                            + text(response, "fpr_sel_bid", "sel_1bid")
+                            + ", bid="
+                            + text(response, "fpr_buy_bid", "buy_1bid")
+                            + ", returnMessage="
+                            + text(response, "return_msg");
+            log.warn(
+                    "[미국자동매매][호가 데이터 누락][usa20101] API 정상 응답에서 유효한 최우선 호가를 찾지 못했습니다. {}",
+                    detail);
+            throw new OrderBookDataException(
+                    "키움 호가 API는 정상 응답했지만 유효한 최우선 호가가 없습니다. " + detail);
         }
         return new OrderBookQuote(bid, ask);
     }
@@ -896,6 +944,12 @@ public class KiwoomUsTradeService {
 
     private static final class OrderValidationException extends IllegalStateException {
         private OrderValidationException(String message) {
+            super(message);
+        }
+    }
+
+    private static final class OrderBookDataException extends IllegalStateException {
+        private OrderBookDataException(String message) {
             super(message);
         }
     }
