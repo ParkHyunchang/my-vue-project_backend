@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 public class KiwoomUsTechnicalSignalService {
     private final KiwoomUsTradeService trade;
     private final Map<String, CachedBars> cache = new ConcurrentHashMap<>();
+    private BenchmarkSnapshot cycleBenchmarks;
 
     public KiwoomUsTechnicalSignalService(KiwoomUsTradeService trade) {
         this.trade = trade;
@@ -28,13 +29,46 @@ public class KiwoomUsTechnicalSignalService {
             KiwoomUsStrategySettings settings) {
         LocalDate session = KiwoomUsMarketHours.today();
         try {
-            // A benchmark outage must not trigger a separate stock request for every candidate.
-            var spy = bars("NA", "SPY", session);
-            var qqq = bars("ND", "QQQ", session);
-            return calculate(bars(exchange, symbol, session), spy, qqq, quote, settings, session);
+            BenchmarkSnapshot benchmarks = benchmarks(session);
+            if (!benchmarks.available()) return Signal.unavailable(benchmarks.failureReason());
+            return calculate(
+                    bars(exchange, symbol, session),
+                    benchmarks.spy(),
+                    benchmarks.qqq(),
+                    quote,
+                    settings,
+                    session);
         } catch (RuntimeException error) {
-            return Signal.unavailable("일봉 확인 실패: " + error.getClass().getSimpleName());
+            return Signal.unavailable("일봉 확인 실패: " + failureReason(error));
         }
+    }
+
+    /** Resolves SPY and QQQ once for the current screening cycle, including one cached failure. */
+    public synchronized BenchmarkStatus prepareBenchmarksForCycle() {
+        cycleBenchmarks = null;
+        BenchmarkSnapshot snapshot = benchmarks(KiwoomUsMarketHours.today());
+        return new BenchmarkStatus(snapshot.available(), snapshot.failureReason());
+    }
+
+    private synchronized BenchmarkSnapshot benchmarks(LocalDate session) {
+        if (cycleBenchmarks != null && cycleBenchmarks.session().equals(session))
+            return cycleBenchmarks;
+        try {
+            cycleBenchmarks =
+                    new BenchmarkSnapshot(
+                            session,
+                            bars("NA", "SPY", session),
+                            bars("ND", "QQQ", session),
+                            null);
+        } catch (RuntimeException error) {
+            cycleBenchmarks =
+                    new BenchmarkSnapshot(
+                            session,
+                            null,
+                            null,
+                            "기준지수 일봉 조회 실패: " + failureReason(error));
+        }
+        return cycleBenchmarks;
     }
 
     private List<DailyBar> bars(String exchange, String symbol, LocalDate session) {
@@ -106,7 +140,9 @@ public class KiwoomUsTechnicalSignalService {
     }
 
     private static void validate(List<DailyBar> bars, LocalDate session) {
-        if (bars == null || bars.size() < 51) throw new IllegalStateException("일봉 51개 이상 필요");
+        int actual = bars == null ? 0 : bars.size();
+        if (actual < 51)
+            throw new IllegalStateException("완료 일봉 부족: 실제 " + actual + "개/필요 51개");
         LocalDate previous = null;
         for (DailyBar bar : bars) {
             if (!bar.valid()
@@ -153,7 +189,25 @@ public class KiwoomUsTechnicalSignalService {
         return sum / 14;
     }
 
+    private static String failureReason(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null) current = current.getCause();
+        String message = current.getMessage();
+        return message == null || message.isBlank()
+                ? current.getClass().getSimpleName()
+                : message;
+    }
+
     private record CachedBars(LocalDate session, List<DailyBar> bars) {}
+
+    private record BenchmarkSnapshot(
+            LocalDate session, List<DailyBar> spy, List<DailyBar> qqq, String failureReason) {
+        private boolean available() {
+            return failureReason == null;
+        }
+    }
+
+    public record BenchmarkStatus(boolean available, String failureReason) {}
 
     public record Signal(
             boolean available,

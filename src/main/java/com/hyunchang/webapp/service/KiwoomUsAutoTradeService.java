@@ -632,6 +632,21 @@ public class KiwoomUsAutoTradeService {
 
         List<Candidate> result = new ArrayList<>();
         if (riskCapacity) {
+            KiwoomUsTechnicalSignalService.BenchmarkStatus benchmarkStatus = null;
+            if (settings.getSignalMode() != SignalMode.LEGACY && !cooldownPassed.isEmpty()) {
+                benchmarkStatus = technicalSignals.prepareBenchmarksForCycle();
+                if (!benchmarkStatus.available())
+                    log(
+                            "TECHNICAL_SIGNAL",
+                            null,
+                            "["
+                                    + settings.getSignalMode()
+                                    + "] "
+                                    + benchmarkStatus.failureReason()
+                                    + "; 후보 "
+                                    + cooldownPassed.size()
+                                    + "개 기술 평가 중단");
+            }
             for (SpreadQualified item : cooldownPassed) {
                 RankedStock stock = item.quality().volume().stock();
                 var fundamental = item.quality().fundamental();
@@ -640,18 +655,20 @@ public class KiwoomUsAutoTradeService {
                     signal =
                             technicalSignals.evaluate(
                                     stock.exchange(), stock.symbol(), item.quote(), settings);
-                    log(
-                            "TECHNICAL_SIGNAL",
-                            null,
-                            stockLabel(stock)
-                                    + " ["
-                                    + settings.getSignalMode()
-                                    + "] "
-                                    + signal.reason()
-                                    + "; 상대강도="
-                                    + signal.relativeStrengthPercent());
+                    if (benchmarkStatus == null || benchmarkStatus.available())
+                        log(
+                                "TECHNICAL_SIGNAL",
+                                null,
+                                stockLabel(stock)
+                                        + " ["
+                                        + settings.getSignalMode()
+                                        + "] "
+                                        + signal.reason()
+                                        + "; 상대강도="
+                                        + signal.relativeStrengthPercent());
                     if (settings.getSignalMode() == SignalMode.TREND && !signal.accepted()) {
-                        reject(stock, "시장·상대강도·돌파", signal.reason());
+                        if (benchmarkStatus == null || benchmarkStatus.available())
+                            reject(stock, "시장·상대강도·돌파", signal.reason());
                         continue;
                     }
                     if (settings.getSignalMode() == SignalMode.TREND

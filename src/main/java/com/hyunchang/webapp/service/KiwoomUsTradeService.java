@@ -31,6 +31,7 @@ import reactor.core.publisher.Mono;
 @Service
 public class KiwoomUsTradeService {
     private static final Logger log = LoggerFactory.getLogger(KiwoomUsTradeService.class);
+    private static final long DAILY_BAR_LOOKBACK_DAYS = 120;
     public static final String USD_CASH_SOURCE = "D+0 USD 외화예수금(d0_usd_fx_entr)";
     public static final double USD_ONLY_MAX_SPEND_PERCENT = 99.0;
     public static final BigDecimal USD_ONLY_SPEND_RATIO = new BigDecimal("0.99");
@@ -155,30 +156,44 @@ public class KiwoomUsTradeService {
 
     /** Official usa06012: adjusted USD daily OHLC; excludes unfinished ET session. */
     public Mono<List<DailyBar>> getDailyBars(String exchange, String symbol) {
+        LocalDate session = KiwoomUsMarketHours.today();
+        LocalDate startDate = session.minusDays(DAILY_BAR_LOOKBACK_DAYS);
+        String normalizedExchange = normalizeExchange(exchange);
+        String normalizedSymbol = normalizeSymbol(symbol);
         return readPages(
                         "usa06012",
                         "/api/us/chart",
                         Map.of(
                                 "stex_tp",
-                                normalizeExchange(exchange),
+                                normalizedExchange,
                                 "stk_cd",
-                                normalizeSymbol(symbol),
+                                normalizedSymbol,
                                 "strt_dt",
-                                KiwoomUsMarketHours.today()
-                                        .format(DateTimeFormatter.BASIC_ISO_DATE),
+                                startDate.format(DateTimeFormatter.BASIC_ISO_DATE),
                                 "upd_stkpc_tp",
                                 "1",
                                 "exrt_appl_tp",
                                 "0"),
                         100)
-                .map(this::dailyBars);
+                .map(response -> dailyBars(response, session))
+                .doOnError(
+                        error ->
+                                logDailyBarFailure(
+                                        error,
+                                        normalizedExchange,
+                                        normalizedSymbol,
+                                        startDate));
     }
 
     List<DailyBar> dailyBars(JsonNode response) {
+        return dailyBars(response, KiwoomUsMarketHours.today());
+    }
+
+    private List<DailyBar> dailyBars(JsonNode response, LocalDate session) {
         Map<LocalDate, DailyBar> bars = new LinkedHashMap<>();
         for (JsonNode row : response.path("result_list")) {
             LocalDate date = LocalDate.parse(text(row, "dt"), DateTimeFormatter.BASIC_ISO_DATE);
-            if (!date.isBefore(KiwoomUsMarketHours.today())) continue;
+            if (!date.isBefore(session)) continue;
             DailyBar bar =
                     new DailyBar(
                             date,
@@ -191,6 +206,36 @@ public class KiwoomUsTradeService {
             bars.put(date, bar);
         }
         return bars.values().stream().sorted(Comparator.comparing(DailyBar::date)).toList();
+    }
+
+    private void logDailyBarFailure(
+            Throwable error, String exchange, String symbol, LocalDate startDate) {
+        KiwoomApiException apiError = findKiwoomApiException(error);
+        if (apiError != null) {
+            log.warn(
+                    "[미국자동매매][DAILY_BAR_API_FAILED] apiId=usa06012, return_code={}, return_msg={}, exchange={}, symbol={}, start_date={}",
+                    apiError.returnCode(),
+                    apiError.returnMessage(),
+                    exchange,
+                    symbol,
+                    startDate.format(DateTimeFormatter.BASIC_ISO_DATE));
+            return;
+        }
+        log.warn(
+                "[미국자동매매][DAILY_BAR_API_FAILED] apiId=usa06012, return_code=UNKNOWN, return_msg={}, exchange={}, symbol={}, start_date={}",
+                error.getMessage(),
+                exchange,
+                symbol,
+                startDate.format(DateTimeFormatter.BASIC_ISO_DATE));
+    }
+
+    private KiwoomApiException findKiwoomApiException(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            if (current instanceof KiwoomApiException apiError) return apiError;
+            current = current.getCause();
+        }
+        return null;
     }
 
     private Mono<JsonNode> readPages(String apiId, String path, Map<String, ?> body, int rowLimit) {
@@ -796,12 +841,10 @@ public class KiwoomUsTradeService {
                                                             ? Mono.just(entity)
                                                             : Mono.error(
                                                                     new KiwoomApiException(
-                                                                            "키움 미국주식 API 오류("
-                                                                                    + apiId
-                                                                                    + "): "
-                                                                                    + response.path(
-                                                                                                    "return_msg")
-                                                                                            .asText()));
+                                                                            apiId,
+                                                                            code,
+                                                                            response.path("return_msg")
+                                                                                    .asText()));
                                                 }));
     }
 
@@ -937,8 +980,33 @@ public class KiwoomUsTradeService {
     }
 
     private static final class KiwoomApiException extends IllegalStateException {
+        private final Integer returnCode;
+        private final String returnMessage;
+
         private KiwoomApiException(String message) {
             super(message);
+            this.returnCode = null;
+            this.returnMessage = message;
+        }
+
+        private KiwoomApiException(String apiId, int returnCode, String returnMessage) {
+            super(
+                    "키움 미국주식 API 오류("
+                            + apiId
+                            + ", return_code="
+                            + returnCode
+                            + "): "
+                            + returnMessage);
+            this.returnCode = returnCode;
+            this.returnMessage = returnMessage;
+        }
+
+        private Integer returnCode() {
+            return returnCode;
+        }
+
+        private String returnMessage() {
+            return returnMessage;
         }
     }
 
