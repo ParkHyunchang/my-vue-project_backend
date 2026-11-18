@@ -34,6 +34,8 @@ class KiwoomUsSignalModeTest {
                                         BigDecimal.TEN, BigDecimal.TEN)));
         when(signals.evaluate(anyString(), anyString(), any(), any()))
                 .thenReturn(KiwoomUsTechnicalSignalService.Signal.unavailable("일봉 누락"));
+        when(signals.prepareBenchmarksForCycle())
+                .thenReturn(new KiwoomUsTechnicalSignalService.BenchmarkStatus(true, ""));
         settings.setFundamentalFilterEnabled(false);
         service =
                 new KiwoomUsAutoTradeService(

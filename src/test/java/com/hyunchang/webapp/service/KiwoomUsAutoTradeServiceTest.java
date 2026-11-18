@@ -22,7 +22,6 @@ import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 import reactor.core.publisher.Mono;
@@ -165,7 +164,13 @@ class KiwoomUsAutoTradeServiceTest {
         KiwoomUsAuditService audit = mock(KiwoomUsAuditService.class);
         when(holdings.findByActiveTrueOrderByIdAsc()).thenReturn(List.of());
         when(indexUniverse.isEligible("MISSING")).thenReturn(true);
-        when(fundamentals.find("MISSING")).thenReturn(Optional.empty());
+        when(fundamentals.lookup("MISSING"))
+                .thenReturn(
+                        new KiwoomUsFundamentalService.LookupResult(
+                                null,
+                                KiwoomUsFundamentalService.LookupStatus.DATA_UNAVAILABLE,
+                                "TEST",
+                                "재무 데이터 없음"));
 
         KiwoomUsAutoTradeService service =
                 new KiwoomUsAutoTradeService(

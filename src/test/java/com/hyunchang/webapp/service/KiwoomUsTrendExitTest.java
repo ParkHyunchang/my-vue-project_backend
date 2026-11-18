@@ -185,7 +185,10 @@ class KiwoomUsTrendExitTest {
         h.sync("mixed", 10, 10, new BigDecimal("80"), new BigDecimal("105"), 25);
         when(trade.placeOrder(any()))
                 .thenReturn(Mono.just(new ObjectMapper().readTree("{\"ord_no\":\"sell1\"}")));
-        ReflectionTestUtils.invokeMethod(service, "evaluateExits");
+        try (var hours = mockStatic(KiwoomUsMarketHours.class, CALLS_REAL_METHODS)) {
+            hours.when(KiwoomUsMarketHours::isRegularSession).thenReturn(true);
+            ReflectionTestUtils.invokeMethod(service, "evaluateExits");
+        }
         var order = ArgumentCaptor.forClass(KiwoomUsTradeService.Order.class);
         verify(trade).placeOrder(order.capture());
         assertEquals(3, order.getValue().quantity());
@@ -206,7 +209,10 @@ class KiwoomUsTrendExitTest {
         ReflectionTestUtils.setField(h, "trendStartedOn", null);
         when(trade.placeOrder(any()))
                 .thenReturn(Mono.just(new ObjectMapper().readTree("{\"ord_no\":\"sell3\"}")));
-        ReflectionTestUtils.invokeMethod(service, "evaluateExits");
+        try (var hours = mockStatic(KiwoomUsMarketHours.class, CALLS_REAL_METHODS)) {
+            hours.when(KiwoomUsMarketHours::isRegularSession).thenReturn(true);
+            ReflectionTestUtils.invokeMethod(service, "evaluateExits");
+        }
         verify(trade).placeOrder(argThat(o -> o.quantity() == 3 && o.market()));
     }
 
@@ -251,6 +257,7 @@ class KiwoomUsTrendExitTest {
                 .thenReturn(Mono.just(new ObjectMapper().readTree("{\"ord_no\":\"sell2\"}")));
         try (var hours = mockStatic(KiwoomUsMarketHours.class, CALLS_REAL_METHODS)) {
             hours.when(KiwoomUsMarketHours::today).thenReturn(LocalDate.of(2026, 9, 14));
+            hours.when(KiwoomUsMarketHours::isRegularSession).thenReturn(true);
             ReflectionTestUtils.invokeMethod(service, "evaluateExits");
         }
         verify(trade).placeOrder(argThat(o -> o.quantity() == 3 && o.market()));

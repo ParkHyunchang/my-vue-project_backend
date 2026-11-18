@@ -2,13 +2,15 @@
 
 Spring Boot + MySQL 기반 백엔드 API 서버입니다.
 
+AI 팀 작업 지침은 [AGENTS.md](AGENTS.md), 공동 운영 문서는 [프론트엔드 저장소의 운영 안내](../my-vue-project/docs/ai-team/README.md)를 참고합니다. 공동 문서 링크는 두 저장소를 형제 폴더로 체크아웃한 로컬 환경 기준입니다.
+
 ---
 
 ## 기술 스택
 
 | 항목 | 버전/기술 |
 |------|----------|
-| Language | Java 17 |
+| Language | Java 21 |
 | Framework | Spring Boot 3.2.0 |
 | Database | MySQL 8.0 + Spring Data JPA |
 | Security | Spring Security + JWT |
@@ -17,6 +19,12 @@ Spring Boot + MySQL 기반 백엔드 API 서버입니다.
 ---
 
 ## 로컬 실행
+
+### 운영 연결 없는 테스트
+
+`JAVA_HOME`을 JDK 21로 설정한 뒤 `.\test-isolated.ps1`을 실행합니다. 전체 앱을 시작하지 않고 mock/H2 및 네트워크 차단을 사용하는 테스트 전용 환경입니다. 준비·제약·실패 처리 방법은 [TESTING.md](TESTING.md)를 참고합니다.
+
+아래 애플리케이션 실행은 테스트 격리 환경과 별개이며 서버 DB를 사용할 수 있습니다.
 
 ### 실행
 

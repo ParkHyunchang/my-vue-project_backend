@@ -1,5 +1,6 @@
 package com.hyunchang.webapp.service;
 
+import com.hyunchang.webapp.dto.TodoDeletePreview;
 import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.entity.todo.TodoHistory;
 import com.hyunchang.webapp.repository.TodoRepository;
@@ -172,18 +173,25 @@ public class TodoService {
         return updatedTodo;
     }
 
-    @Transactional
-    public int deleteAllCompleted() {
-        long count = todoRepository.countByDoneTrue();
-        if (count == 0) {
-            log.info(
-                    "[TODO] user={}({}), BULK_DELETE_COMPLETED count=0 (no-op)",
-                    SecurityUtils.getCurrentUserId(),
-                    SecurityUtils.getCurrentUserRoleName());
-            return 0;
-        }
+    public TodoDeletePreview previewCompletedDeletion(String q, Integer priority, String category) {
+        List<Long> ids =
+                todoRepository.findCompletedIds(
+                        q == null || q.isBlank() ? null : q.trim(),
+                        priority,
+                        category == null || category.isBlank() ? null : category);
+        return new TodoDeletePreview(ids, ids.size());
+    }
 
-        int deleted = todoRepository.deleteAllByDoneTrue();
+    @Transactional
+    public int deleteCompleted(List<Long> ids) {
+        if (ids == null
+                || ids.isEmpty()
+                || ids.size() > 10000
+                || ids.stream().anyMatch(id -> id == null || id <= 0)) {
+            throw new IllegalArgumentException("삭제할 완료 항목을 다시 확인해주세요. (최대 10,000건)");
+        }
+        int deleted = todoRepository.deleteCompletedByIds(ids.stream().distinct().toList());
+        if (deleted == 0) return 0;
 
         TodoHistory history = new TodoHistory();
         history.setAction("BULK_DELETE_COMPLETED");

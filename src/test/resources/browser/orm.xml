@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm" version="3.1">
+    <!-- Test DB syntax only: production Todo uses MySQL's explicit charset/collation. -->
+    <entity class="com.hyunchang.webapp.entity.Todo" access="FIELD">
+        <attributes>
+            <basic name="description"><column name="description" column-definition="TEXT"/></basic>
+        </attributes>
+    </entity>
+</entity-mappings>

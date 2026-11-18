@@ -87,6 +87,30 @@
         </dependency>
     </dependencies>
 
+    <profiles>
+        <profile>
+            <id>isolated-tests</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <!-- Java 21 only: start instrumentation before Mockito, and deny test sockets. -->
+                            <argLine>-javaagent:"${settings.localRepository}/net/bytebuddy/byte-buddy-agent/${byte-buddy.version}/byte-buddy-agent-${byte-buddy.version}.jar" -Djava.security.manager=com.hyunchang.webapp.isolation.TestNetworkGuard -Dio.netty.transport.noNative=true</argLine>
+                            <forkCount>1</forkCount>
+                            <reuseForks>true</reuseForks>
+                            <forkedProcessTimeoutInSeconds>180</forkedProcessTimeoutInSeconds>
+                            <systemPropertyVariables>
+                                <isolated.tests>true</isolated.tests>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
     <build>
         <plugins>
             <!-- Google Java Style (AOSP 변형: 4칸 들여쓰기) 포매팅 강제. mvn spotless:apply 로 정리 -->

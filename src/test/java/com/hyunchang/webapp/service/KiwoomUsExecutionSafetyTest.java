@@ -212,12 +212,16 @@ class KiwoomUsExecutionSafetyTest {
         p.syncFill(3, 0, BigDecimal.TEN);
         service.syncHoldings();
         assertEquals(3, h.getManagedQuantity());
-        ReflectionTestUtils.invokeMethod(service, "evaluateExits");
+        try (var hours = mockStatic(KiwoomUsMarketHours.class, CALLS_REAL_METHODS)) {
+            hours.when(KiwoomUsMarketHours::isRegularSession).thenReturn(true);
+            ReflectionTestUtils.invokeMethod(service, "evaluateExits");
+        }
         ArgumentCaptor<KiwoomUsTradeService.Order> order =
                 ArgumentCaptor.forClass(KiwoomUsTradeService.Order.class);
         verify(trade).placeOrder(order.capture());
         assertEquals(3, order.getValue().quantity());
         assertEquals("SELL", order.getValue().side());
+        assertTrue(order.getValue().market());
     }
 
     @Test
@@ -232,6 +236,7 @@ class KiwoomUsExecutionSafetyTest {
         when(properties.isConfigured()).thenReturn(true);
         try (var hours = mockStatic(KiwoomUsMarketHours.class)) {
             hours.when(KiwoomUsMarketHours::isOpen).thenReturn(true);
+            hours.when(KiwoomUsMarketHours::isRegularSession).thenReturn(true);
             service.scheduledAccountAndExitSync();
         }
         verify(trade).placeOrder(any());

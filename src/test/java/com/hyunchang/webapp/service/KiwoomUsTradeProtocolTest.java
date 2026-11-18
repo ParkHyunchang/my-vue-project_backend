@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
+import com.hyunchang.webapp.util.KiwoomApiRateLimiter;
 import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -157,11 +158,16 @@ class KiwoomUsTradeProtocolTest {
                                 "{\"return_code\":0,\"list\":[{\"stk_cd\":\"TEST\",\"stex_tp\":\"NY\"}]}",
                                 "N",
                                 ""));
-        try (var hours = mockStatic(KiwoomUsMarketHours.class)) {
+        // The mocked HTTP exchange needs no pacing. Keep it on this thread so the
+        // Eastern-date mock also applies inside the reactive lookup callback.
+        try (var pacing = mockStatic(KiwoomApiRateLimiter.class);
+                var hours = mockStatic(KiwoomUsMarketHours.class)) {
+            pacing.when(() -> KiwoomApiRateLimiter.reserveDelayMs(anyLong())).thenReturn(0L);
             hours.when(KiwoomUsMarketHours::today).thenReturn(LocalDate.of(2026, 10, 2));
             assertEquals("ND", trade.holdings(trade.getBalance().block()).getFirst().exchange());
             hours.when(KiwoomUsMarketHours::today).thenReturn(LocalDate.of(2026, 10, 3));
             assertEquals("NY", trade.holdings(trade.getBalance().block()).getFirst().exchange());
+            assertEquals(4, requests.size());
         }
     }
 

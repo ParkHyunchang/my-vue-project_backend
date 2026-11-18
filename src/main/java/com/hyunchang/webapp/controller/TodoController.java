@@ -2,6 +2,7 @@ package com.hyunchang.webapp.controller;
 
 import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
+import com.hyunchang.webapp.dto.TodoDeleteRequest;
 import com.hyunchang.webapp.dto.TodoRequest;
 import com.hyunchang.webapp.entity.Todo;
 import com.hyunchang.webapp.service.TodoService;
@@ -103,10 +104,19 @@ public class TodoController {
         return ApiResponses.deleted();
     }
 
-    @DeleteMapping("/completed")
-    public ResponseEntity<?> deleteAllCompleted() {
+    @GetMapping("/completed/preview")
+    public ResponseEntity<?> previewCompletedDeletion(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer priority,
+            @RequestParam(required = false) String category) {
         if (!hasAccess()) return forbidden();
-        int deleted = todoService.deleteAllCompleted();
+        return ResponseEntity.ok(todoService.previewCompletedDeletion(q, priority, category));
+    }
+
+    @DeleteMapping("/completed")
+    public ResponseEntity<?> deleteAllCompleted(@RequestBody TodoDeleteRequest request) {
+        if (!hasAccess()) return forbidden();
+        int deleted = todoService.deleteCompleted(request.ids());
         return ResponseEntity.ok(Map.of("deleted", deleted));
     }
 }

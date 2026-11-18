@@ -33,9 +33,18 @@ public interface TodoRepository extends JpaRepository<Todo, Long> {
             "SELECT DISTINCT t.category FROM Todo t WHERE t.category IS NOT NULL AND t.category <> '' ORDER BY t.category ASC")
     List<String> findDistinctCategories();
 
-    long countByDoneTrue();
+    @Query(
+            "SELECT t.id FROM Todo t WHERE t.done = true "
+                    + "AND (:q IS NULL OR LOWER(t.title) LIKE LOWER(CONCAT('%', :q, '%')) "
+                    + "OR LOWER(COALESCE(t.description, '')) LIKE LOWER(CONCAT('%', :q, '%'))) "
+                    + "AND (:priority IS NULL OR t.priority = :priority) "
+                    + "AND (:category IS NULL OR t.category = :category) ORDER BY t.id")
+    List<Long> findCompletedIds(
+            @Param("q") String q,
+            @Param("priority") Integer priority,
+            @Param("category") String category);
 
     @Modifying
-    @Query("DELETE FROM Todo t WHERE t.done = true")
-    int deleteAllByDoneTrue();
+    @Query("DELETE FROM Todo t WHERE t.done = true AND t.id IN :ids")
+    int deleteCompletedByIds(@Param("ids") List<Long> ids);
 }
