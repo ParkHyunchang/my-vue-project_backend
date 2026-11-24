@@ -11,6 +11,7 @@ import com.hyunchang.webapp.util.TtlCache;
 import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -597,45 +598,65 @@ public class YahooFinanceService {
 
     /** 포트폴리오 개별 종목 시세 조회 (v8 chart). */
     public StockPriceDto fetchQuote(String symbol, String currency) {
-        try {
-            String url =
-                    "https://query1.finance.yahoo.com/v8/finance/chart/"
-                            + symbol
-                            + "?interval=1d&range=1d";
-
-            HttpHeaders headers = buildBrowserHeaders(null);
-            ResponseEntity<String> resp =
-                    restTemplate.exchange(
-                            url, HttpMethod.GET, new HttpEntity<>(headers), String.class);
-
-            JsonNode meta =
-                    objectMapper
-                            .readTree(resp.getBody())
-                            .path("chart")
-                            .path("result")
-                            .get(0)
-                            .path("meta");
-
-            double price = meta.path("regularMarketPrice").asDouble(0);
-            double prevClose = meta.path("chartPreviousClose").asDouble(0);
-            if (prevClose == 0) prevClose = meta.path("previousClose").asDouble(0);
-            double change = price - prevClose;
-            double changePct = (prevClose > 0) ? change / prevClose * 100.0 : 0;
-
-            if (price == 0) return null;
-
-            return StockPriceDto.builder()
-                    .symbol(symbol)
-                    .price(price)
-                    .change(Math.round(change * 100.0) / 100.0)
-                    .changePercent(Math.round(changePct * 100.0) / 100.0)
-                    .currency(currency)
-                    .build();
-
-        } catch (Exception e) {
-            log.warn("Yahoo Finance v8 chart 시세 조회 실패 [{}]: {}", symbol, e.getMessage());
-            return null;
+        if (symbol == null || symbol.isBlank()) return null;
+        // A transient failure on one Yahoo edge must not fail every portfolio quote.
+        // Keep retries bounded; never substitute zero or an older close for the current price.
+        for (String host : List.of("query1", "query2")) {
+            try {
+                String url =
+                        "https://"
+                                + host
+                                + ".finance.yahoo.com/v8/finance/chart/"
+                                + URLEncoder.encode(symbol, StandardCharsets.UTF_8)
+                                + "?interval=1d&range=1d";
+                HttpHeaders headers = buildBrowserHeaders("https://finance.yahoo.com/");
+                ResponseEntity<String> resp =
+                        restTemplate.exchange(
+                                URI.create(url),
+                                HttpMethod.GET,
+                                new HttpEntity<>(headers),
+                                String.class);
+                if (resp.getBody() == null || resp.getBody().isBlank()) continue;
+                JsonNode root = objectMapper.readTree(resp.getBody());
+                if (root == null) continue;
+                JsonNode chart = root.path("chart");
+                if (!chart.path("error").isMissingNode() && !chart.path("error").isNull()) {
+                    log.warn("Yahoo chart response error [{}] host={}", symbol, host);
+                    continue;
+                }
+                JsonNode meta = chart.path("result").path(0).path("meta");
+                double price = meta.path("regularMarketPrice").asDouble(Double.NaN);
+                if (!Double.isFinite(price) || price <= 0) continue;
+                double prevClose = meta.path("chartPreviousClose").asDouble(Double.NaN);
+                if (!Double.isFinite(prevClose) || prevClose <= 0) {
+                    prevClose = meta.path("previousClose").asDouble(Double.NaN);
+                }
+                // No comparable close means no defensible change calculation.
+                if (!Double.isFinite(prevClose) || prevClose <= 0) continue;
+                double change = price - prevClose;
+                double changePct = change / prevClose * 100.0;
+                return StockPriceDto.builder()
+                        .symbol(symbol)
+                        .price(price)
+                        .change(Math.round(change * 100.0) / 100.0)
+                        .changePercent(Math.round(changePct * 100.0) / 100.0)
+                        .currency(currency)
+                        .build();
+            } catch (HttpStatusCodeException e) {
+                log.warn(
+                        "Yahoo chart HTTP failure [{}] host={} status={}",
+                        symbol,
+                        host,
+                        e.getStatusCode().value());
+            } catch (RestClientException | IOException e) {
+                log.warn(
+                        "Yahoo chart request failure [{}] host={} type={}",
+                        symbol,
+                        host,
+                        e.getClass().getSimpleName());
+            }
         }
+        return null;
     }
 
     /** 히트맵용 단일 종목 조회 (v8 chart, 국내주식 전용). */
@@ -730,10 +751,7 @@ public class YahooFinanceService {
             JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, false);
             if (fallback != null) {
                 cacheFundamentalsResult(
-                        cacheKey,
-                        fallback,
-                        "YAHOO_V7",
-                        "Yahoo 인증 실패, 비인증 v7 quote 조회 성공");
+                        cacheKey, fallback, "YAHOO_V7", "Yahoo 인증 실패, 비인증 v7 quote 조회 성공");
                 logFundamentalsFallback(requestedSymbol, "AUTH_FAILED", fallback);
                 return fallback;
             }
@@ -769,18 +787,14 @@ public class YahooFinanceService {
                             .path("result")
                             .path(0);
             if (!result.isMissingNode() && !result.isNull()) {
-                cacheFundamentalsResult(
-                        cacheKey, result, "YAHOO_V10", "quoteSummary 조회 성공");
+                cacheFundamentalsResult(cacheKey, result, "YAHOO_V10", "quoteSummary 조회 성공");
                 return result;
             }
 
             JsonNode fallback = fetchFundamentalsFromQuote(requestedSymbol, true);
             if (fallback != null) {
                 cacheFundamentalsResult(
-                        cacheKey,
-                        fallback,
-                        "YAHOO_V7",
-                        "v10 응답 없음, v7 quote 조회 성공");
+                        cacheKey, fallback, "YAHOO_V7", "v10 응답 없음, v7 quote 조회 성공");
                 logFundamentalsFallback(requestedSymbol, "EMPTY_RESPONSE", fallback);
                 return fallback;
             }
@@ -820,8 +834,7 @@ public class YahooFinanceService {
         fundamentalsDiagnostics.put(key, new FundamentalsDiagnostic(status, source, detail));
     }
 
-    private void cacheFundamentalsResult(
-            String key, JsonNode value, String source, String detail) {
+    private void cacheFundamentalsResult(String key, JsonNode value, String source, String detail) {
         String missing = missingTradingFundamentals(value);
         if (missing.isBlank()) {
             fundamentalsCache.put(key, value);
@@ -830,8 +843,7 @@ public class YahooFinanceService {
             return;
         }
         partialFundamentalsCache.put(key, value);
-        rememberFundamentalsDiagnostic(
-                key, "FIELDS_MISSING", source, detail + ", 누락=" + missing);
+        rememberFundamentalsDiagnostic(key, "FIELDS_MISSING", source, detail + ", 누락=" + missing);
     }
 
     private void logFundamentalsFallback(String symbol, String v10Cause, JsonNode fallback) {
