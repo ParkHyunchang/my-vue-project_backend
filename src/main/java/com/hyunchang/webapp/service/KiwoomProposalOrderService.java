@@ -89,8 +89,7 @@ public class KiwoomProposalOrderService {
             return fail("주문 초안 상태에서만 수량과 가격을 수정할 수 있습니다.");
         if (quantity <= 0 || limitPrice == null || limitPrice <= 0)
             return fail("수량과 지정가는 1 이상이어야 합니다.");
-        if (limitPrice * quantity > props.getStrategy().getMaxOrderAmount())
-            return fail("수정한 주문 금액이 전략 최대 한도를 초과합니다.");
+        if (exceedsOrderLimit(limitPrice, quantity)) return fail("수정한 주문 금액이 전략 최대 한도를 초과합니다.");
         p.updateDraft(quantity, limitPrice);
         proposals.save(p);
         audit.log("ORDER_DRAFT_UPDATED", p.getId(), "주문 초안의 수량 또는 가격을 수정했습니다.");
@@ -150,6 +149,14 @@ public class KiwoomProposalOrderService {
                     orderConditionSummary(p));
             return ok(p, "주문 전송 요청이 완료되었습니다.");
         } catch (Exception e) {
+            if (uncertainSubmission(e)) {
+                p.orderUnknown("Broker submission outcome could not be confirmed");
+                proposals.save(p);
+                state.emergencyStop();
+                audit.log("ORDER_UNKNOWN", p.getId(), "전송 결과를 확인할 수 없어 주문 대사 전까지 안전 중지했습니다.");
+                events.publishEvent("error", "주문 접수 여부를 확인할 수 없습니다. 주문 내역 대사가 필요합니다.");
+                return fail("주문 접수 여부가 불명확합니다. 재전송하지 말고 증권사 주문 내역을 확인하세요.");
+            }
             String failure = trim(e.getMessage());
             if (p.getAction() == KiwoomTradeProposal.Action.SELL)
                 failure = trim(failure + " | " + sellAvailabilityDiagnostic(p.getStockCode()));
@@ -248,7 +255,8 @@ public class KiwoomProposalOrderService {
 
     public synchronized Result amend(long id, int quantity, Long limitPrice) {
         KiwoomTradeProposal p = find(id);
-        if (state.isEmergencyStopped()) return fail("안전 자동중지 상태에서는 주문을 정정할 수 없습니다.");
+        String block = submissionBlockReason();
+        if (block != null) return fail(block);
         if (!props.isTradeEnabled()) return fail("주문 전송이 비활성화되어 있습니다.");
         if (!isOpenOrder(p)) return fail("미체결·부분체결 상태의 주문만 정정할 수 있습니다.");
         if (p.getBrokerOrderNo() == null || p.getBrokerOrderNo().isBlank())
@@ -257,8 +265,7 @@ public class KiwoomProposalOrderService {
                 || quantity > p.getRemainingQuantity()
                 || limitPrice == null
                 || limitPrice <= 0) return fail("정정 수량은 남은 수량 이내, 지정가는 1 이상이어야 합니다.");
-        if (limitPrice * quantity > props.getStrategy().getMaxOrderAmount())
-            return fail("정정 주문 금액이 전략 최대 한도를 초과합니다.");
+        if (exceedsOrderLimit(limitPrice, quantity)) return fail("정정 주문 금액이 전략 최대 한도를 초과합니다.");
         try {
             JsonNode response =
                     trade.amendOrder(
@@ -307,7 +314,8 @@ public class KiwoomProposalOrderService {
     }
 
     private String preflightError(KiwoomTradeProposal p) {
-        if (state.isEmergencyStopped()) return "안전 자동중지 상태에서는 주문을 전송할 수 없습니다.";
+        String block = submissionBlockReason();
+        if (block != null) return block;
         if (!props.isTradeEnabled()) return "주문 전송이 비활성화되어 있습니다.";
         if (hasGuards(p)) return guardBlockMessage(p, "주문 초안을 전송할 수 없습니다.");
         if (!KiwoomMarketHours.isOpen()) return "장 운영 시간(평일 09:00~15:30 KST)에만 주문을 전송할 수 있습니다.";
@@ -328,7 +336,13 @@ public class KiwoomProposalOrderService {
             if (state.isDailyLossTriggered()) return "일일 손실 한도에 도달했습니다. 오늘은 신규 매수를 전송할 수 없습니다.";
             long deposit = availableDeposit();
             if (deposit <= 0) return "주문 직전 예수금을 확인하지 못했습니다.";
-            long amount = p.getLimitPrice() * p.getQuantity();
+            long amount;
+            try {
+                amount = Math.multiplyExact(p.getLimitPrice(), (long) p.getQuantity());
+            } catch (ArithmeticException error) {
+                return "주문 금액이 허용 계산 범위를 초과합니다.";
+            }
+            if (amount <= 0) return "주문 금액은 양수여야 합니다.";
             if (amount > props.getStrategy().getMaxOrderAmount())
                 return "Buy order amount exceeds the strategy limit.";
             if (amount > deposit) return "주문 금액이 현재 주문 가능 예수금을 초과합니다.";
@@ -368,12 +382,45 @@ public class KiwoomProposalOrderService {
         return null;
     }
 
+    /** Shared by the proposal workflow and the legacy direct-order API. */
+    public String submissionBlockReason() {
+        if (state.isEmergencyStopped()) return "안전 자동중지 상태에서는 주문을 전송할 수 없습니다.";
+        if (!proposals.findByStatusIn(List.of(KiwoomTradeProposal.Status.ORDER_UNKNOWN)).isEmpty())
+            return "접수 여부가 불명확한 주문이 있습니다. 증권사 주문 확인 후 상태 정합성을 복구해야 재개할 수 있습니다.";
+        return null;
+    }
+
     private long availableDeposit() {
         try {
             return findNumber(trade.getDeposit().block(Duration.ofSeconds(10)));
         } catch (Exception ignored) {
             return 0;
         }
+    }
+
+    private boolean exceedsOrderLimit(long price, int quantity) {
+        try {
+            return Math.multiplyExact(price, (long) quantity)
+                    > props.getStrategy().getMaxOrderAmount();
+        } catch (ArithmeticException error) {
+            return true;
+        }
+    }
+
+    private boolean uncertainSubmission(Throwable error) {
+        for (Throwable current = error; current != null; current = current.getCause()) {
+            if (current instanceof java.util.concurrent.TimeoutException
+                    || current instanceof java.io.IOException
+                    || current
+                            instanceof
+                            org.springframework.web.reactive.function.client
+                                    .WebClientRequestException
+                    || current
+                            instanceof
+                            org.springframework.web.reactive.function.client
+                                    .WebClientResponseException) return true;
+        }
+        return false;
     }
 
     private long findNumber(JsonNode node) {

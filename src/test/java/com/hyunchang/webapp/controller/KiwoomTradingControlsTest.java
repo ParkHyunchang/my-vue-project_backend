@@ -187,6 +187,7 @@ class KiwoomTradingControlsTest {
                 settings,
                 mock(KiwoomStrategyAuditService.class),
                 exits,
-                mock(KiwoomAccountHoldingSyncService.class));
+                mock(KiwoomAccountHoldingSyncService.class),
+                mock(com.hyunchang.webapp.service.KiwoomProposalOrderService.class));
     }
 }

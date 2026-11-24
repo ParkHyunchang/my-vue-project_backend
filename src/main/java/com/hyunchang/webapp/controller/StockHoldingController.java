@@ -1,10 +1,13 @@
 package com.hyunchang.webapp.controller;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.entity.StockHolding;
 import com.hyunchang.webapp.service.StockHoldingService;
 import com.hyunchang.webapp.service.StockService;
+import com.hyunchang.webapp.util.ExactLongDeserializer;
+import com.hyunchang.webapp.util.HoldingInput;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -65,7 +68,11 @@ public class StockHoldingController {
     }
 
     public record HoldingRequest(
-            String market, String name, String symbol, Long quantity, Double avgPrice) {}
+            String market,
+            String name,
+            String symbol,
+            @JsonDeserialize(using = ExactLongDeserializer.class) Long quantity,
+            Double avgPrice) {}
 
     @Operation(summary = "보유 종목 추가")
     @PostMapping("/holdings")
@@ -85,10 +92,15 @@ public class StockHoldingController {
             return ResponseEntity.badRequest().body("시장, 종목명, 심볼은 필수입니다.");
         }
 
+        if (!HoldingInput.validMarket(request.market())
+                || !HoldingInput.validPrice(request.avgPrice())) {
+            return ResponseEntity.badRequest().body("시장과 평균 매입가를 확인해 주세요.");
+        }
+
         StockHolding created =
                 stockHoldingService.addHolding(
                         userId,
-                        request.market().toUpperCase(),
+                        request.market().trim().toUpperCase(java.util.Locale.ROOT),
                         request.name().trim(),
                         request.symbol().trim().toUpperCase(),
                         request.quantity(),
@@ -106,7 +118,7 @@ public class StockHoldingController {
         Object qtyObj = body.get("quantity");
         Long quantity = null;
         if (qtyObj instanceof Number n) {
-            quantity = n.longValue();
+            quantity = HoldingInput.exactLong(n);
         }
         if (quantity == null || quantity <= 0) {
             return ResponseEntity.badRequest().body("보유수량은 1 이상이어야 합니다.");
@@ -118,6 +130,8 @@ public class StockHoldingController {
             avgPrice = n.doubleValue();
         }
 
+        if (!HoldingInput.validPrice(avgObj))
+            return ResponseEntity.badRequest().body("평균 매입가를 확인해 주세요.");
         StockHolding updated = stockHoldingService.updateHolding(userId, id, quantity, avgPrice);
         return ResponseEntity.ok(updated);
     }

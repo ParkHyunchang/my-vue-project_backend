@@ -5,6 +5,7 @@ import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.KiwoomAccountHoldingSyncService;
 import com.hyunchang.webapp.service.KiwoomAuthService;
 import com.hyunchang.webapp.service.KiwoomPositionExitService;
+import com.hyunchang.webapp.service.KiwoomProposalOrderService;
 import com.hyunchang.webapp.service.KiwoomStrategyAuditService;
 import com.hyunchang.webapp.service.KiwoomStrategyService;
 import com.hyunchang.webapp.service.KiwoomStrategySettingsService;
@@ -12,7 +13,6 @@ import com.hyunchang.webapp.service.KiwoomTradeService;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.service.kiwoom.KiwoomWebsocketClient;
 import com.hyunchang.webapp.util.KiwoomMarketHours;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.slf4j.Logger;
@@ -46,6 +46,7 @@ public class KiwoomAutoTradeController {
     private final KiwoomStrategyAuditService audit;
     private final KiwoomPositionExitService exits;
     private final KiwoomAccountHoldingSyncService accountHoldings;
+    private final KiwoomProposalOrderService proposalOrders;
 
     public KiwoomAutoTradeController(
             KiwoomProperties properties,
@@ -57,7 +58,8 @@ public class KiwoomAutoTradeController {
             KiwoomStrategySettingsService settings,
             KiwoomStrategyAuditService audit,
             KiwoomPositionExitService exits,
-            KiwoomAccountHoldingSyncService accountHoldings) {
+            KiwoomAccountHoldingSyncService accountHoldings,
+            KiwoomProposalOrderService proposalOrders) {
         this.properties = properties;
         this.authService = authService;
         this.tradeService = tradeService;
@@ -68,6 +70,7 @@ public class KiwoomAutoTradeController {
         this.audit = audit;
         this.exits = exits;
         this.accountHoldings = accountHoldings;
+        this.proposalOrders = proposalOrders;
     }
 
     @GetMapping("/status")
@@ -187,41 +190,28 @@ public class KiwoomAutoTradeController {
 
     @GetMapping("/summary")
     public Mono<Map<String, Object>> summary() {
-        return Mono.zip(tradeService.getDeposit(), tradeService.getBalance())
+        return Mono.zip(tradeService.getDepositForDisplay(), tradeService.getBalanceForDisplay())
                 .map(
                         data -> {
-                            KiwoomTradeService.AccountAsset totalAsset =
-                                    tradeService.accountAsset(data.getT1(), data.getT2());
-                            KiwoomAutoTradeState.AssetChange assetChange =
-                                    state.assetChangeFromPreviousClose(totalAsset.amount());
-                            Map<String, Object> summary = new LinkedHashMap<>();
-                            summary.put("totalAsset", totalAsset.amount());
+                            Map<String, Object> summary =
+                                    com.hyunchang.webapp.service.kiwoom.KiwoomDisplaySummary
+                                            .domestic(data.getT1(), data.getT2());
+                            KiwoomAutoTradeState.AssetChange change = null;
+                            Object total = summary.get("totalAsset");
+                            if (total instanceof java.math.BigDecimal amount) {
+                                try {
+                                    change =
+                                            state.assetChangeFromPreviousClose(
+                                                    amount.longValueExact());
+                                } catch (ArithmeticException ignored) {
+                                    /* outside display change range */
+                                }
+                            }
                             summary.put(
-                                    "totalAssetSource",
-                                    "추정예탁자산".equals(totalAsset.source())
-                                            ? "키움 기준 · 결제 예정금액 포함"
-                                            : "예수금 + 보유주식 평가액");
-                            summary.put(
-                                    "totalAssetChange",
-                                    assetChange == null ? null : assetChange.amount());
+                                    "totalAssetChange", change == null ? null : change.amount());
                             summary.put(
                                     "totalAssetChangePercent",
-                                    assetChange == null ? null : assetChange.percent());
-                            summary.put("deposit", number(data.getT1(), "entr"));
-                            summary.put("d1Deposit", number(data.getT1(), "d1_entra"));
-                            summary.put("d2Deposit", number(data.getT1(), "d2_entra"));
-                            summary.put(
-                                    "orderAvailable",
-                                    number(data.getT1(), "ord_alow_amt", "ord_psbl_cash", "entr"));
-                            summary.put(
-                                    "profitLoss",
-                                    tradeService.totalEvaluationProfitLoss(data.getT2()));
-                            summary.put(
-                                    "stockProfitRate",
-                                    tradeService.totalEvaluationProfitRate(data.getT2()));
-                            summary.put(
-                                    "totalEvaluation",
-                                    tradeService.totalEvaluationAmount(data.getT2()));
+                                    change == null ? null : change.percent());
                             return summary;
                         });
     }
@@ -273,7 +263,15 @@ public class KiwoomAutoTradeController {
     @PostMapping("/orders")
     @PreAuthorize("hasRole('ADMIN')")
     public Mono<JsonNode> placeOrder(@RequestBody KiwoomTradeService.OrderRequest request) {
-        return tradeService.placeOrder(request);
+        return Mono.defer(
+                () -> {
+                    String blocked = proposalOrders.submissionBlockReason();
+                    if (blocked != null)
+                        return Mono.error(
+                                new org.springframework.web.server.ResponseStatusException(
+                                        org.springframework.http.HttpStatus.CONFLICT, blocked));
+                    return tradeService.placeOrder(request);
+                });
     }
 
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -281,11 +279,6 @@ public class KiwoomAutoTradeController {
         return websocketClient
                 .events()
                 .map(event -> ServerSentEvent.builder(event).event("kiwoom").build());
-    }
-
-    private long number(JsonNode node, String... fields) {
-        for (String field : fields) if (node.hasNonNull(field)) return node.path(field).asLong();
-        return 0L;
     }
 
     public record ControlRequest(boolean enabled) {}

@@ -47,6 +47,8 @@ class KiwoomDisplayReadTest {
             assertThrows(RuntimeException.class, () -> kr.getDepositForDisplay().block());
             assertThrows(RuntimeException.class, () -> us.getBalanceForDisplay().block());
             assertThrows(RuntimeException.class, () -> us.getDepositForDisplay().block());
+            assertThrows(
+                    RuntimeException.class, () -> us.getKrwOrderServiceStatusForDisplay().block());
             verifyNoInteractions(krState, usState);
         }
     }

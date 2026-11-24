@@ -6,6 +6,7 @@ import com.hyunchang.webapp.entity.PortfolioAssetType;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.GeneralHoldingRepository;
 import com.hyunchang.webapp.repository.UserRepository;
+import com.hyunchang.webapp.util.HoldingInput;
 import com.hyunchang.webapp.util.SecurityUtils;
 import java.util.List;
 import org.slf4j.Logger;
@@ -56,6 +57,7 @@ public class GeneralHoldingService {
             String symbol,
             Long quantity,
             Double avgPrice) {
+        HoldingInput.validate(market, quantity, avgPrice);
         User user =
                 userRepository
                         .findByUserId(userId)
@@ -94,6 +96,7 @@ public class GeneralHoldingService {
                         .orElseThrow(
                                 () -> new IllegalArgumentException("General holding not found."));
 
+        HoldingInput.validate(holding.getMarket(), quantity, avgPrice);
         holding.setQuantity(quantity);
         holding.setAvgPrice(
                 PortfolioAssetType.CASH.name().equals(holding.getAssetType()) ? 1.0 : avgPrice);

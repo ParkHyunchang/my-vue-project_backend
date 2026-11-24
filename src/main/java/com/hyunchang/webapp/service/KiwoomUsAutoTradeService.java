@@ -230,9 +230,15 @@ public class KiwoomUsAutoTradeService {
 
     private synchronized AccountSnapshot captureAccountSnapshot(boolean updateHoldings) {
         requireResearchAccountScope();
-        JsonNode deposit = trade.getDepositDetail().block(API_TIMEOUT);
-        JsonNode balance = trade.getBalance().block(API_TIMEOUT);
-        JsonNode confirmedDeposit = trade.getDepositDetail().block(API_TIMEOUT);
+        JsonNode deposit =
+                (updateHoldings ? trade.getDepositDetail() : trade.getDepositForDisplay())
+                        .block(API_TIMEOUT);
+        JsonNode balance =
+                (updateHoldings ? trade.getBalance() : trade.getBalanceForDisplay())
+                        .block(API_TIMEOUT);
+        JsonNode confirmedDeposit =
+                (updateHoldings ? trade.getDepositDetail() : trade.getDepositForDisplay())
+                        .block(API_TIMEOUT);
         if (deposit == null || !deposit.equals(confirmedDeposit))
             throw new IllegalStateException("예수금 조회 사이 계좌가 변경되어 평가를 보류합니다. 다음 동기화에서 다시 확인합니다.");
         UsdCash cash = trade.usdCash(deposit);
@@ -292,7 +298,11 @@ public class KiwoomUsAutoTradeService {
                         holdingsSyncedAt);
         KrwOrderServiceStatus krwOrderServiceStatus;
         try {
-            krwOrderServiceStatus = trade.getKrwOrderServiceStatus().block(API_TIMEOUT);
+            krwOrderServiceStatus =
+                    (updateHoldings
+                                    ? trade.getKrwOrderServiceStatus()
+                                    : trade.getKrwOrderServiceStatusForDisplay())
+                            .block(API_TIMEOUT);
         } catch (RuntimeException error) {
             krwOrderServiceStatus =
                     new KrwOrderServiceStatus(
@@ -313,7 +323,7 @@ public class KiwoomUsAutoTradeService {
                         "",
                         LocalDateTime.now(),
                         buyingPower);
-        if (openOrders.isEmpty()) {
+        if (updateHoldings && openOrders.isEmpty()) {
             if (fullAccountPolicy()) requireKnownBrokerOrders();
             risk.observe(snapshot.totalAssetUsd());
         }
@@ -333,16 +343,12 @@ public class KiwoomUsAutoTradeService {
             if (cached == null) {
                 return new AccountSnapshot(
                         new UsdCash(
-                                BigDecimal.ZERO,
-                                KiwoomUsTradeService.USD_CASH_SOURCE,
-                                BigDecimal.ZERO,
-                                true,
-                                ""),
-                        BigDecimal.ZERO,
-                        BigDecimal.ZERO,
-                        BigDecimal.ZERO,
-                        BigDecimal.ZERO,
-                        BigDecimal.ZERO,
+                                null, KiwoomUsTradeService.USD_CASH_SOURCE, null, false, notice),
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
                         0,
                         0,
                         new KrwOrderServiceStatus("UNKNOWN", "확인 대기", notice),

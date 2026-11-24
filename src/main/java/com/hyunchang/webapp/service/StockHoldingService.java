@@ -4,6 +4,7 @@ import com.hyunchang.webapp.entity.StockHolding;
 import com.hyunchang.webapp.entity.User;
 import com.hyunchang.webapp.repository.StockHoldingRepository;
 import com.hyunchang.webapp.repository.UserRepository;
+import com.hyunchang.webapp.util.HoldingInput;
 import com.hyunchang.webapp.util.SecurityUtils;
 import java.util.ArrayList;
 import java.util.List;
@@ -40,6 +41,7 @@ public class StockHoldingService {
             String symbol,
             Long quantity,
             Double avgPrice) {
+        HoldingInput.validate(market, quantity, avgPrice);
         User user =
                 userRepository
                         .findByUserId(userId)
@@ -80,6 +82,7 @@ public class StockHoldingService {
             diffs.add(String.format("avgPrice %s→%s", holding.getAvgPrice(), avgPrice));
         }
 
+        HoldingInput.validate(holding.getMarket(), quantity, avgPrice);
         holding.setQuantity(quantity);
         holding.setAvgPrice(avgPrice);
         StockHolding saved = stockHoldingRepository.save(holding);

@@ -487,28 +487,36 @@ public class KiwoomUsTradeService {
     }
 
     public Mono<KrwOrderServiceStatus> getKrwOrderServiceStatus() {
-        return getOrderableQuantity("ND", "AAPL", BigDecimal.ONE)
-                .map(
-                        response -> {
-                            String value = text(response, "krw_ord_rqst_yn").toUpperCase();
-                            return switch (value) {
-                                case "Y" ->
-                                        new KrwOrderServiceStatus(
-                                                "APPLIED",
-                                                "신청됨",
-                                                "원화주문 서비스가 신청되어 있어 자동매매 매수를 차단합니다.");
-                                case "N" ->
-                                        new KrwOrderServiceStatus(
-                                                "CANCELED",
-                                                "해지됨",
-                                                "원화주문 서비스 해지 상태입니다. 환전된 USD만 사용합니다.");
-                                default ->
-                                        new KrwOrderServiceStatus(
-                                                "UNKNOWN",
-                                                "확인 불가",
-                                                "원화주문 서비스 상태를 명확히 확인할 수 없어 실제 매수를 차단합니다.");
-                            };
-                        });
+        return krwOrderServiceStatus(getOrderableQuantity("ND", "AAPL", BigDecimal.ONE));
+    }
+
+    public Mono<KrwOrderServiceStatus> getKrwOrderServiceStatusForDisplay() {
+        return krwOrderServiceStatus(
+                requestOnce(
+                        "ust31490",
+                        "/api/us/ordr",
+                        Map.of("stex_tp", "ND", "stk_cd", "AAPL", "uv", "1"),
+                        true));
+    }
+
+    private Mono<KrwOrderServiceStatus> krwOrderServiceStatus(Mono<JsonNode> responseSource) {
+        return responseSource.map(
+                response -> {
+                    String value = text(response, "krw_ord_rqst_yn").toUpperCase();
+                    return switch (value) {
+                        case "Y" ->
+                                new KrwOrderServiceStatus(
+                                        "APPLIED", "신청됨", "원화주문 서비스가 신청되어 있어 자동매매 매수를 차단합니다.");
+                        case "N" ->
+                                new KrwOrderServiceStatus(
+                                        "CANCELED", "해지됨", "원화주문 서비스 해지 상태입니다. 환전된 USD만 사용합니다.");
+                        default ->
+                                new KrwOrderServiceStatus(
+                                        "UNKNOWN",
+                                        "확인 불가",
+                                        "원화주문 서비스 상태를 명확히 확인할 수 없어 실제 매수를 차단합니다.");
+                    };
+                });
     }
 
     public Mono<JsonNode> placeOrder(Order order) {

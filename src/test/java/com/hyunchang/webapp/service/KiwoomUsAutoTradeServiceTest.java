@@ -50,7 +50,7 @@ class KiwoomUsAutoTradeServiceTest {
     @Test
     void accountSummaryReturnsAnUnavailableSnapshotDuringSettlementWindow() {
         KiwoomUsTradeService trade = mock(KiwoomUsTradeService.class);
-        when(trade.getDepositDetail())
+        when(trade.getDepositForDisplay())
                 .thenReturn(Mono.error(new IllegalStateException("572070: 수도결제중입니다")));
         KiwoomUsAutoTradeService service =
                 service(

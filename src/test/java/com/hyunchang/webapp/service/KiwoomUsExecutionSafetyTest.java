@@ -86,15 +86,15 @@ class KiwoomUsExecutionSafetyTest {
     @Test
     void summaryExplainsTheSameReservedCashAndCapitalUsedForSizing() throws Exception {
         var balance = json.readTree("{\"tot_evlt_amt\":\"1500\"}");
-        when(trade.getDepositDetail()).thenReturn(Mono.just(balance));
-        when(trade.getBalance()).thenReturn(Mono.just(balance));
+        when(trade.getDepositForDisplay()).thenReturn(Mono.just(balance));
+        when(trade.getBalanceForDisplay()).thenReturn(Mono.just(balance));
         when(trade.usdCash(balance))
                 .thenReturn(
                         new KiwoomUsTradeService.UsdCash(
                                 new BigDecimal("1000"), "USD", BigDecimal.ZERO, true, ""));
         when(trade.totalEvaluation(balance)).thenReturn(new BigDecimal("1500"));
         when(trade.totalAccountEquity(balance, balance)).thenReturn(new BigDecimal("2500"));
-        when(trade.getKrwOrderServiceStatus())
+        when(trade.getKrwOrderServiceStatusForDisplay())
                 .thenReturn(
                         Mono.just(
                                 new KiwoomUsTradeService.KrwOrderServiceStatus(
@@ -141,8 +141,9 @@ class KiwoomUsExecutionSafetyTest {
         var capped = service.accountSummary();
         assertEquals(0, new BigDecimal("792").compareTo(capped.perOrderLimitUsd()));
         verify(holdings, never()).save(any());
+        verify(risk, never()).observe(any());
 
-        when(trade.getDepositDetail())
+        when(trade.getDepositForDisplay())
                 .thenReturn(Mono.error(new IllegalStateException("572070: 수도결제중입니다")));
         var cached = service.accountSummary();
         assertFalse(cached.fresh());
@@ -159,6 +160,32 @@ class KiwoomUsExecutionSafetyTest {
         assertThrows(IllegalStateException.class, service::refreshAccountSnapshot);
         verify(risk, never()).observe(any());
         verify(holdings, never()).save(any());
+    }
+
+    @Test
+    void displayDoesNotObserveRiskButScheduledSnapshotStillDoes() throws Exception {
+        var data = json.readTree("{\"return_code\":0,\"result_list\":[]}");
+        when(trade.getDepositForDisplay()).thenReturn(Mono.just(data));
+        when(trade.getBalanceForDisplay()).thenReturn(Mono.just(data));
+        when(trade.getDepositDetail()).thenReturn(Mono.just(data));
+        when(trade.getBalance()).thenReturn(Mono.just(data));
+        var status = new KiwoomUsTradeService.KrwOrderServiceStatus("CANCELED", "해지됨", "");
+        when(trade.getKrwOrderServiceStatusForDisplay()).thenReturn(Mono.just(status));
+        when(trade.getKrwOrderServiceStatus()).thenReturn(Mono.just(status));
+        when(trade.usdCash(data))
+                .thenReturn(
+                        new KiwoomUsTradeService.UsdCash(
+                                BigDecimal.TEN, "USD", BigDecimal.ZERO, true, ""));
+        when(trade.totalEvaluation(data)).thenReturn(BigDecimal.ZERO);
+        when(trade.totalAccountEquity(data, data)).thenReturn(BigDecimal.TEN);
+        when(settings.current()).thenReturn(new KiwoomUsStrategySettings());
+        service.accountSummary();
+        verify(risk, never()).observe(any());
+        verify(trade, never()).getDepositDetail();
+        verify(trade, never()).getBalance();
+        verify(holdings, never()).save(any());
+        service.refreshAccountSnapshot();
+        verify(risk).observe(BigDecimal.TEN);
     }
 
     @Test

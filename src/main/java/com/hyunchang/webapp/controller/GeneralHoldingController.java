@@ -1,10 +1,13 @@
 package com.hyunchang.webapp.controller;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import com.hyunchang.webapp.common.security.MenuAccessGuard;
 import com.hyunchang.webapp.common.web.ApiResponses;
 import com.hyunchang.webapp.dto.GeneralHoldingResponse;
 import com.hyunchang.webapp.entity.PortfolioAssetType;
 import com.hyunchang.webapp.service.GeneralHoldingService;
+import com.hyunchang.webapp.util.ExactLongDeserializer;
+import com.hyunchang.webapp.util.HoldingInput;
 import com.hyunchang.webapp.util.SecurityUtils;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -58,7 +61,7 @@ public class GeneralHoldingController {
             String market,
             String name,
             String symbol,
-            Long quantity,
+            @JsonDeserialize(using = ExactLongDeserializer.class) Long quantity,
             Double avgPrice) {}
 
     @Operation(summary = "Create General holding")
@@ -92,6 +95,8 @@ public class GeneralHoldingController {
             return ResponseEntity.badRequest().body("Quantity must be greater than 0.");
         }
 
+        if (!HoldingInput.validPrice(body.get("avgPrice")))
+            return ResponseEntity.badRequest().body("평균 매입가를 확인해 주세요.");
         Double avgPrice = numberAsDouble(body.get("avgPrice"));
         GeneralHoldingResponse updated =
                 generalHoldingService.updateHolding(
@@ -146,6 +151,11 @@ public class GeneralHoldingController {
                 && (request.market() == null || request.market().isBlank())) {
             return ResponseEntity.badRequest().body("Market is required.");
         }
+        if (!HoldingInput.validPrice(request.avgPrice())
+                || (assetType == PortfolioAssetType.STOCK
+                        && !HoldingInput.validMarket(request.market()))) {
+            return ResponseEntity.badRequest().body("시장과 평균 매입가를 확인해 주세요.");
+        }
         return null;
     }
 
@@ -154,7 +164,7 @@ public class GeneralHoldingController {
     }
 
     private Long numberAsLong(Object value) {
-        return value instanceof Number n ? n.longValue() : null;
+        return HoldingInput.exactLong(value);
     }
 
     private Double numberAsDouble(Object value) {
