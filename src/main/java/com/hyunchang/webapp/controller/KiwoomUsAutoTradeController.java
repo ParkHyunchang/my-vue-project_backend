@@ -76,9 +76,7 @@ public class KiwoomUsAutoTradeController {
         result.put("regularSessionKst", KiwoomUsMarketHours.regularSessionKst());
         result.put("entrySessionKst", KiwoomUsMarketHours.entrySessionKst());
         result.put("easternNow", KiwoomUsMarketHours.now().toString());
-        result.put(
-                "marketHoursPolicy",
-                "키움 지원 주간·프리·정규·애프터 세션 전체에서 후보 탐색·지정가 주문·체결 동기화·매도 감시 실행");
+        result.put("marketHoursPolicy", "키움 지원 주간·프리·정규·애프터 세션 전체에서 후보 탐색·지정가 주문·체결 동기화·매도 감시 실행");
         result.put("calendarPolicy", "NYSE 2026~2028 휴장일·13:00 ET 조기폐장 반영; 미등록 연도는 안전하게 주문 차단");
         result.put("emergencyStopped", state.isEmergencyStopped());
         result.put("dailyLossTriggered", state.isDailyLossTriggered());
@@ -102,8 +100,34 @@ public class KiwoomUsAutoTradeController {
                 "당일 거래대금 상위 50위 중 S&P 500 또는 NASDAQ-100 편입 종목만 허용; PER·ROE, 시간보정 RVOL, 실시간 호가 스프레드 적용");
         result.put("indexUniverse", indexUniverse.status());
         result.put("signalMode", settings.current().getSignalMode());
-        result.put("strategyValidation", "새 추세 전략은 기본 비교 관찰 모드입니다. 지수 초과수익 검증은 별도로 필요합니다.");
+        result.put(
+                "strategyValidation",
+                "실제 신규 매수는 전체계좌 위험정책 활성화와 TREND 선택이 필요합니다. 수익성과 지수 초과수익은 아직 검증되지 않았습니다.");
         return result;
+    }
+
+    @GetMapping("/risk")
+    public com.hyunchang.webapp.dto.KiwoomUsRiskResponse risk() {
+        return service.riskStatus();
+    }
+
+    @PostMapping("/risk/activate")
+    public com.hyunchang.webapp.dto.KiwoomUsRiskResponse activateRisk(
+            @RequestBody com.hyunchang.webapp.dto.KiwoomUsRiskRequests.Activate request) {
+        return service.activateRisk(request.confirmAllHoldings(), request.confirmCapitalFlows());
+    }
+
+    @PostMapping("/risk/capital-flow-review")
+    public com.hyunchang.webapp.dto.KiwoomUsRiskResponse reviewFlow(
+            @RequestBody com.hyunchang.webapp.dto.KiwoomUsRiskRequests.Review request) {
+        return service.reviewCapitalFlow(request.required());
+    }
+
+    @PostMapping("/risk/capital-flow")
+    public com.hyunchang.webapp.dto.KiwoomUsRiskResponse recordFlow(
+            @RequestBody com.hyunchang.webapp.dto.KiwoomUsRiskRequests.CapitalFlow request) {
+        return service.recordCapitalFlow(
+                request.reference(), request.amountUsd(), request.confirm());
     }
 
     @GetMapping("/summary")

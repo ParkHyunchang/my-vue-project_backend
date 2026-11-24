@@ -1,0 +1,8 @@
+# Dockerfile only consumes pom.xml and src. Keep local research and secrets
+# outside the build context, including files ignored by Git.
+**
+!pom.xml
+!src/
+!src/**
+!Dockerfile
+!.dockerignore

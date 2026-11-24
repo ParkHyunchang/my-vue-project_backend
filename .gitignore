@@ -4,6 +4,8 @@
 
 # 빌드 결과물
 /target
+/.paper-runtime/
+/.research-runtime/
 
 # Claude Code
 .claude
@@ -20,4 +22,28 @@ Thumbs.db
 *.log 
 
 # 배포용 tar 파일 무시
-backend_deployment_*.tar.gz 
+backend_deployment_*.tar.gz
+
+# Python caches (keep source and synthetic fixtures)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Downloaded market data and generated research output stay local.
+# Keep Markdown plans/reports so the committed research record remains readable.
+/tools/*_data/**
+!/tools/*_data/**/
+!/tools/*_data/**/*.md
+/tools/*_results/**
+!/tools/*_results/**/
+!/tools/*_results/**/*.md
+/tools/reports/**
+!/tools/reports/**/
+!/tools/reports/**/*.md
+/tools/team17_coverage.json
+/tools/team17_synthetic_validation.json
+/tools/team18_validation.json
+
+# Runtime signing material must never be committed, even outside runtime folders.
+deployment-signing-key
+live-market.json

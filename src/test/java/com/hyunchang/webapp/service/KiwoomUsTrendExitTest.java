@@ -44,7 +44,8 @@ class KiwoomUsTrendExitTest {
                     proposals,
                     mock(KiwoomUsStrategyRunRepository.class),
                     mock(KiwoomUsAuditService.class),
-                    mock(KiwoomUsEventService.class));
+                    mock(KiwoomUsEventService.class),
+                    mock(KiwoomUsAccountRiskService.class));
 
     private KiwoomUsTradeProposal buy() {
         var buy = new KiwoomUsTradeProposal();
@@ -81,6 +82,8 @@ class KiwoomUsTrendExitTest {
         properties.setAccountNo("test");
         properties.getUs().setStrategyEnabled(true);
         when(state.isAutoTrading()).thenReturn(true);
+        when(trade.getOpenOrders())
+                .thenReturn(Mono.just(new ObjectMapper().readTree("{\"result_list\":[]}")));
         var configured = new KiwoomUsStrategySettings();
         configured.setSignalMode(KiwoomUsStrategySettings.SignalMode.TREND);
         configured.setMaxOrderPercent(50);

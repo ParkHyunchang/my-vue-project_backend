@@ -23,6 +23,7 @@ public class KiwoomUsTradeProposal {
 
     public enum Status {
         PROPOSED,
+        SUBMITTING,
         ORDERED,
         PARTIALLY_FILLED,
         FILLED,
@@ -86,6 +87,11 @@ public class KiwoomUsTradeProposal {
         status = Status.ORDERED;
         brokerOrderNo = orderNo;
         brokerResponse = response;
+        orderedAt = LocalDateTime.now();
+    }
+
+    public void submitting() {
+        status = Status.SUBMITTING;
         orderedAt = LocalDateTime.now();
     }
 

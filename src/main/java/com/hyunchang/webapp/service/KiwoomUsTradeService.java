@@ -179,10 +179,7 @@ public class KiwoomUsTradeService {
                 .doOnError(
                         error ->
                                 logDailyBarFailure(
-                                        error,
-                                        normalizedExchange,
-                                        normalizedSymbol,
-                                        startDate));
+                                        error, normalizedExchange, normalizedSymbol, startDate));
     }
 
     List<DailyBar> dailyBars(JsonNode response) {
@@ -495,8 +492,7 @@ public class KiwoomUsTradeService {
 
     public Mono<JsonNode> placeOrder(Order order) {
         if (!KiwoomUsMarketHours.isOpen()) {
-            return Mono.error(
-                    new OrderValidationException("현재는 키움 미국주식 거래 가능 세션이 아닙니다."));
+            return Mono.error(new OrderValidationException("현재는 키움 미국주식 거래 가능 세션이 아닙니다."));
         }
         if (!properties.getUs().isTradeEnabled()) {
             return Mono.error(
@@ -511,8 +507,7 @@ public class KiwoomUsTradeService {
             return Mono.error(new OrderValidationException("지정가 주문에는 양수 가격이 필요합니다."));
         }
         if (order.market() && !KiwoomUsMarketHours.isRegularSession()) {
-            return Mono.error(
-                    new OrderValidationException("주간·프리·애프터마켓에서는 지정가 주문만 전송할 수 있습니다."));
+            return Mono.error(new OrderValidationException("주간·프리·애프터마켓에서는 지정가 주문만 전송할 수 있습니다."));
         }
         String side = order.side() == null ? "" : order.side().toUpperCase();
         String apiId =
@@ -571,8 +566,8 @@ public class KiwoomUsTradeService {
 
     /** Only this field is eligible for buys. Any KRW order setting blocks buys completely. */
     public UsdCash usdCash(JsonNode deposit) {
-        BigDecimal available = decimal(deposit, "d0_usd_fx_entr").max(BigDecimal.ZERO);
-        BigDecimal krwOrderSetting = decimal(deposit, "krw_ord_set_amt").max(BigDecimal.ZERO);
+        BigDecimal available = requiredFundingNumber(deposit, "d0_usd_fx_entr");
+        BigDecimal krwOrderSetting = requiredFundingNumber(deposit, "krw_ord_set_amt");
         boolean usdOnlyBuyAllowed = krwOrderSetting.signum() == 0;
         String blockReason =
                 usdOnlyBuyAllowed
@@ -604,19 +599,96 @@ public class KiwoomUsTradeService {
             throw new UsdOnlyFundingException(
                     "키움 미국주식 원화주문 서비스가 해지된 상태로 확인되지 않아 매수를 차단했습니다." + " 원화주문 서비스를 해지한 뒤 다시 확인하세요.");
         }
-        if (decimal(response, "krw_ord_set_amt").signum() != 0
-                || decimal(response, "krw_ord_alowa_100").signum() != 0
-                || integer(response, "krw_ord_alowq_100") != 0) {
+        if (requiredFundingNumber(response, "krw_ord_set_amt").signum() != 0
+                || requiredFundingNumber(response, "krw_ord_alowa_100").signum() != 0
+                || requiredFundingNumber(response, "krw_ord_alowq_100").signum() != 0) {
             throw new UsdOnlyFundingException("키움 주문가능금액에 원화 자금이 포함되어 있어 매수를 차단했습니다.");
         }
-        int cashOnlyOrderableQuantity = integer(response, "min_ord_alowq");
+        int cashOnlyOrderableQuantity;
+        try {
+            cashOnlyOrderableQuantity =
+                    requiredFundingNumber(response, "min_ord_alowq").intValueExact();
+        } catch (ArithmeticException error) {
+            throw new UsdOnlyFundingException("미수불가 주문가능수량이 유효한 정수가 아닙니다.");
+        }
         if (cashOnlyOrderableQuantity < orderQuantity) {
             throw new UsdOnlyFundingException("환전된 외화 기준 주문가능수량보다 주문수량이 많아 매수를 차단했습니다.");
         }
-        BigDecimal foreignCash = decimal(response, "fc_entra").max(BigDecimal.ZERO);
-        if (orderNotional.compareTo(foreignCash.multiply(USD_ONLY_SPEND_RATIO)) > 0) {
-            throw new UsdOnlyFundingException("종목별 주문가능수량 조회의 외화예수금 안전한도를 초과해 매수를 차단했습니다.");
+        if (requiredFundingNumber(response, "fc_uncl_amt").signum() != 0) {
+            throw new UsdOnlyFundingException("외화미수금이 있어 현금 전용 신규매수를 차단했습니다.");
         }
+        BigDecimal cashLimit =
+                requiredFundingNumber(response, "fc_entra")
+                        .min(requiredFundingNumber(response, "ord_alowa"))
+                        .min(requiredFundingNumber(response, "min_ord_alowa"))
+                        .multiply(USD_ONLY_SPEND_RATIO);
+        if (orderNotional.compareTo(cashLimit) > 0) {
+            throw new UsdOnlyFundingException("실제 주문가능현금·미수불가금액의 안전한도를 초과해 매수를 차단했습니다.");
+        }
+    }
+
+    /** Funding evidence must never use the display parser's missing/invalid-to-zero fallback. */
+    private BigDecimal requiredFundingNumber(JsonNode response, String field) {
+        JsonNode value = response == null ? null : response.get(field);
+        if (value == null || value.isNull() || (!value.isTextual() && !value.isNumber())) {
+            throw new UsdOnlyFundingException("자금 확인 필드가 누락되어 매수를 차단했습니다: " + field);
+        }
+        String raw = value.asText().trim();
+        if (!raw.matches("[+]?([0-9]+|[0-9]{1,3}(,[0-9]{3})+)(\\.[0-9]+)?")) {
+            throw new UsdOnlyFundingException("자금 확인 필드가 유효하지 않아 매수를 차단했습니다: " + field);
+        }
+        try {
+            return new BigDecimal(raw.replace(",", ""));
+        } catch (NumberFormatException error) {
+            throw new UsdOnlyFundingException("자금 확인 필드를 해석하지 못했습니다: " + field);
+        }
+    }
+
+    /**
+     * Trade-date USD equity: final projected cash plus current possessed shares, not settled qty.
+     */
+    public BigDecimal totalAccountEquity(JsonNode deposit, JsonNode balance) {
+        BigDecimal projected = usdCash(deposit).availableUsd();
+        for (String debt : List.of("won_dfr_amt", "won_etc_loana")) {
+            if (requiredFundingNumber(deposit, debt).signum() != 0)
+                throw new UsdOnlyFundingException("부채가 있어 계좌 순자산을 확정할 수 없습니다.");
+        }
+        for (int day = 1; day <= 4; day++) {
+            String prefix = "d" + day + "_usd_";
+            projected =
+                    projected
+                            .add(requiredFundingNumber(deposit, prefix + "sell_excta"))
+                            .subtract(requiredFundingNumber(deposit, prefix + "buy_excta"));
+            BigDecimal reported = requiredFundingNumber(deposit, prefix + "fx_entr");
+            if (projected.subtract(reported).abs().compareTo(new BigDecimal("0.01")) > 0)
+                throw new UsdOnlyFundingException("결제예정금이 일치하지 않아 계좌 손실 판정을 보류합니다.");
+            projected = reported;
+        }
+        if (balance == null
+                || !"USD".equals(balance.path("crnc_code").asText())
+                || !balance.path("result_list").isArray())
+            throw new UsdOnlyFundingException("USD 전체 잔고를 확인하지 못했습니다.");
+        BigDecimal valuation = BigDecimal.ZERO;
+        var symbols = new java.util.HashSet<String>();
+        for (JsonNode row : balance.path("result_list")) {
+            BigDecimal quantity = requiredFundingNumber(row, "poss_qty");
+            try {
+                quantity.intValueExact();
+            } catch (ArithmeticException error) {
+                throw new UsdOnlyFundingException("지원하지 않는 보유수량으로 계좌 위험 관리를 보류합니다.");
+            }
+            if (quantity.signum() == 0) continue;
+            String symbol = row.path("stk_cd").asText("");
+            if (symbol.isBlank()
+                    || !symbols.add(symbol)
+                    || !"USD".equals(row.path("crnc_code").asText()))
+                throw new UsdOnlyFundingException("보유종목 또는 통화 정보가 불완전합니다.");
+            BigDecimal price = requiredFundingNumber(row, "now_pric");
+            if (price.signum() == 0)
+                throw new UsdOnlyFundingException("보유종목의 평가가격이 없어 손실 판정을 보류합니다.");
+            valuation = valuation.add(quantity.multiply(price));
+        }
+        return projected.add(valuation);
     }
 
     public List<Holding> holdings(JsonNode response) {
@@ -722,11 +794,8 @@ public class KiwoomUsTradeService {
                             + text(response, "fpr_buy_bid", "buy_1bid")
                             + ", returnMessage="
                             + text(response, "return_msg");
-            log.warn(
-                    "[미국자동매매][호가 데이터 누락][usa20101] API 정상 응답에서 유효한 최우선 호가를 찾지 못했습니다. {}",
-                    detail);
-            throw new OrderBookDataException(
-                    "키움 호가 API는 정상 응답했지만 유효한 최우선 호가가 없습니다. " + detail);
+            log.warn("[미국자동매매][호가 데이터 누락][usa20101] API 정상 응답에서 유효한 최우선 호가를 찾지 못했습니다. {}", detail);
+            throw new OrderBookDataException("키움 호가 API는 정상 응답했지만 유효한 최우선 호가가 없습니다. " + detail);
         }
         return new OrderBookQuote(bid, ask);
     }
@@ -843,7 +912,8 @@ public class KiwoomUsTradeService {
                                                                     new KiwoomApiException(
                                                                             apiId,
                                                                             code,
-                                                                            response.path("return_msg")
+                                                                            response.path(
+                                                                                            "return_msg")
                                                                                     .asText()));
                                                 }));
     }

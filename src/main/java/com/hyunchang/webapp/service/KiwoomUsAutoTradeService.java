@@ -16,10 +16,14 @@ import com.hyunchang.webapp.service.KiwoomUsTradeService.OrderBookQuote;
 import com.hyunchang.webapp.service.KiwoomUsTradeService.RankedStock;
 import com.hyunchang.webapp.service.KiwoomUsTradeService.UsdCash;
 import com.hyunchang.webapp.service.kiwoom.KiwoomUsAutoTradeState;
+import com.hyunchang.webapp.service.strategybridge.ResearchExecutionPlanner;
+import com.hyunchang.webapp.service.strategybridge.ResearchStrategyEngine;
+import com.hyunchang.webapp.service.strategybridge.UsResearchDeploymentGateway;
 import com.hyunchang.webapp.util.KiwoomUsMarketHours;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -34,6 +38,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -44,6 +49,8 @@ public class KiwoomUsAutoTradeService {
     private static final Duration API_TIMEOUT = Duration.ofSeconds(15);
     private static final Set<KiwoomUsTradeProposal.Status> OPEN_STATUSES =
             Set.of(
+                    KiwoomUsTradeProposal.Status.PROPOSED,
+                    KiwoomUsTradeProposal.Status.SUBMITTING,
                     KiwoomUsTradeProposal.Status.ORDERED,
                     KiwoomUsTradeProposal.Status.PARTIALLY_FILLED,
                     KiwoomUsTradeProposal.Status.CANCEL_REQUESTED,
@@ -61,6 +68,8 @@ public class KiwoomUsAutoTradeService {
     private final KiwoomUsStrategyRunRepository runRepository;
     private final KiwoomUsAuditService audit;
     private final KiwoomUsEventService events;
+    private final KiwoomUsAccountRiskService risk;
+    private UsResearchDeploymentGateway researchDeployment;
     private final AtomicReference<List<Candidate>> lastCandidates =
             new AtomicReference<>(List.of());
     private final AtomicReference<AccountSnapshot> lastAccountSnapshot = new AtomicReference<>();
@@ -84,7 +93,8 @@ public class KiwoomUsAutoTradeService {
             KiwoomUsTradeProposalRepository proposalRepository,
             KiwoomUsStrategyRunRepository runRepository,
             KiwoomUsAuditService audit,
-            KiwoomUsEventService events) {
+            KiwoomUsEventService events,
+            KiwoomUsAccountRiskService risk) {
         this.properties = properties;
         this.trade = trade;
         this.settingsService = settingsService;
@@ -97,6 +107,20 @@ public class KiwoomUsAutoTradeService {
         this.runRepository = runRepository;
         this.audit = audit;
         this.events = events;
+        this.risk = risk;
+    }
+
+    @Autowired(required = false)
+    public void setResearchDeployment(UsResearchDeploymentGateway gateway) {
+        this.researchDeployment = gateway;
+    }
+
+    private boolean researchManaged() {
+        return researchDeployment != null && researchDeployment.managed();
+    }
+
+    private void requireResearchAccountScope() {
+        if (researchManaged()) researchDeployment.requireAccountScope();
     }
 
     @Scheduled(cron = "0 */10 * * * *")
@@ -110,13 +134,21 @@ public class KiwoomUsAutoTradeService {
     public void scheduledAccountAndExitSync() {
         if (!properties.isConfigured() || !KiwoomUsMarketHours.isOpen()) return;
         try {
+            requireResearchAccountScope();
+        } catch (RuntimeException error) {
+            recordExitMonitorError(error);
+            log("ERROR", null, "승인된 연구 계좌 확인 실패: " + safe(error));
+            return;
+        }
+        try {
             reconcileOrders();
         } catch (RuntimeException error) {
             recordOrderReconcileError(error);
             log("ERROR", null, "주문 동기화 실패(독립적인 보유종목 매도 감시는 유지): " + safe(error));
         }
         try {
-            syncHoldings();
+            if (fullAccountPolicy() && !risk.status().triggered()) refreshAccountSnapshot();
+            else syncHoldings();
             evaluateExits();
         } catch (RuntimeException error) {
             recordExitMonitorError(error);
@@ -131,6 +163,7 @@ public class KiwoomUsAutoTradeService {
         run.setTriggeredBy(triggeredBy);
         try {
             validateDecisionReady();
+            if (researchManaged()) return decideResearch(run, allowOrder);
             KiwoomUsStrategySettings settings = settingsService.current();
             AccountSnapshot snapshot = refreshAccountSnapshot();
             if (state.checkDailyLoss(
@@ -196,12 +229,17 @@ public class KiwoomUsAutoTradeService {
     }
 
     private synchronized AccountSnapshot captureAccountSnapshot(boolean updateHoldings) {
+        requireResearchAccountScope();
         JsonNode deposit = trade.getDepositDetail().block(API_TIMEOUT);
         JsonNode balance = trade.getBalance().block(API_TIMEOUT);
+        JsonNode confirmedDeposit = trade.getDepositDetail().block(API_TIMEOUT);
+        if (deposit == null || !deposit.equals(confirmedDeposit))
+            throw new IllegalStateException("예수금 조회 사이 계좌가 변경되어 평가를 보류합니다. 다음 동기화에서 다시 확인합니다.");
         UsdCash cash = trade.usdCash(deposit);
         if (updateHoldings) syncHoldings(balance);
         List<KiwoomUsAccountHolding> active = holdingRepository.findByActiveTrueOrderByIdAsc();
         BigDecimal stockEvaluation = trade.totalEvaluation(balance);
+        BigDecimal accountEquity = trade.totalAccountEquity(deposit, balance);
         BigDecimal managedEvaluation =
                 active.stream()
                         .filter(KiwoomUsAccountHolding::isManagedByAutoTrade)
@@ -217,7 +255,8 @@ public class KiwoomUsAutoTradeService {
                         .reduce(BigDecimal.ZERO, BigDecimal::add);
         long managedPositions =
                 active.stream().filter(KiwoomUsAccountHolding::isManagedByAutoTrade).count();
-        BigDecimal automatedCapital = cash.availableUsd().add(managedEvaluation);
+        BigDecimal automatedCapital =
+                fullAccountPolicy() ? accountEquity : cash.availableUsd().add(managedEvaluation);
         KiwoomUsStrategySettings settings = settingsService.current();
         List<KiwoomUsTradeProposal> openOrders = proposalRepository.findByStatusIn(OPEN_STATUSES);
         BigDecimal reservedUsd = openBuyReserveUsd(openOrders);
@@ -264,7 +303,7 @@ public class KiwoomUsAutoTradeService {
                         cash,
                         stockEvaluation,
                         managedEvaluation,
-                        cash.availableUsd().add(stockEvaluation),
+                        accountEquity,
                         automatedCapital,
                         perOrderLimit,
                         active.size(),
@@ -274,6 +313,10 @@ public class KiwoomUsAutoTradeService {
                         "",
                         LocalDateTime.now(),
                         buyingPower);
+        if (openOrders.isEmpty()) {
+            if (fullAccountPolicy()) requireKnownBrokerOrders();
+            risk.observe(snapshot.totalAssetUsd());
+        }
         lastAccountSnapshot.set(snapshot);
         return snapshot;
     }
@@ -326,10 +369,12 @@ public class KiwoomUsAutoTradeService {
     }
 
     public UsdCash refreshUsdCash() {
+        requireResearchAccountScope();
         return trade.usdCash(trade.getDepositDetail().block(API_TIMEOUT));
     }
 
     public synchronized void syncHoldings() {
+        requireResearchAccountScope();
         syncHoldings(trade.getBalance().block(API_TIMEOUT));
     }
 
@@ -351,7 +396,11 @@ public class KiwoomUsAutoTradeService {
 
     public long unresolvedUnknownOrders() {
         return proposalRepository
-                .findByStatusIn(List.of(KiwoomUsTradeProposal.Status.UNKNOWN))
+                .findByStatusIn(
+                        List.of(
+                                KiwoomUsTradeProposal.Status.UNKNOWN,
+                                KiwoomUsTradeProposal.Status.SUBMITTING,
+                                KiwoomUsTradeProposal.Status.PROPOSED))
                 .size();
     }
 
@@ -386,12 +435,29 @@ public class KiwoomUsAutoTradeService {
         if (state.isEmergencyStopped()) throw new IllegalStateException("API 오류 안전정지가 걸려 있습니다.");
     }
 
+    private boolean isUnresolvedSubmission(KiwoomUsTradeProposal proposal) {
+        return proposal.getStatus() == KiwoomUsTradeProposal.Status.UNKNOWN
+                || proposal.getStatus() == KiwoomUsTradeProposal.Status.SUBMITTING
+                || proposal.getStatus() == KiwoomUsTradeProposal.Status.PROPOSED;
+    }
+
     public void validateRestart() {
         boolean unresolved =
                 proposalRepository.findByStatusIn(OPEN_STATUSES).stream()
-                        .anyMatch(p -> p.getStatus() == KiwoomUsTradeProposal.Status.UNKNOWN);
+                        .anyMatch(p -> isUnresolvedSubmission(p));
         if (unresolved)
             throw new IllegalStateException("주문 결과 불확실(UNKNOWN) 내역을 확인한 뒤 신규 매수를 재개하세요.");
+        refreshAccountSnapshot();
+        risk.requireBuyAllowed();
+        requireKnownBrokerOrders();
+        if (researchManaged()) {
+            if (!researchDeployment.enabled())
+                throw new IllegalStateException("연구 전략 실계좌 연결이 비활성입니다.");
+            researchDeployment.executionContext();
+            return;
+        }
+        if (settingsService.current().getSignalMode() != SignalMode.TREND)
+            throw new IllegalStateException("실제 매수는 TREND만 허용됩니다.");
     }
 
     CandidateScreeningResult filterCandidates(
@@ -429,7 +495,7 @@ public class KiwoomUsAutoTradeService {
         LocalDateTime cooldown = LocalDateTime.now().minusDays(settings.getSymbolCooldownDays());
         BigDecimal cashLimit = account.perOrderLimitUsd();
         boolean riskCapacity =
-                account.managedPositionCount()
+                (fullAccountPolicy() ? account.positionCount() : account.managedPositionCount())
                                 + pendingBuys.stream()
                                         .filter(symbol -> !held.contains(symbol))
                                         .count()
@@ -717,7 +783,11 @@ public class KiwoomUsAutoTradeService {
         result.sort(
                 Comparator.comparingDouble(Candidate::score)
                         .reversed()
-                        .thenComparingInt(Candidate::rank));
+                        .thenComparingInt(Candidate::rank)
+                        // Quote requests complete concurrently. Equal scores and broker ranks
+                        // must not turn response arrival order into a stock-selection rule.
+                        .thenComparing(Candidate::symbol)
+                        .thenComparing(Candidate::exchange));
 
         CandidateScreeningStats stats =
                 new CandidateScreeningStats(
@@ -787,17 +857,22 @@ public class KiwoomUsAutoTradeService {
     private synchronized KiwoomUsTradeProposal submitBuy(
             Candidate candidate, KiwoomUsStrategySettings settings) {
         validateDecisionReady();
+        if (settings.getSignalMode() != SignalMode.TREND)
+            throw new IllegalStateException("실제 신규 매수는 TREND 정책에서만 허용됩니다.");
         if (!state.isAutoTrading()) throw new IllegalStateException("신규 매수가 중지되었습니다.");
         reconcileOrders();
         AccountSnapshot latestAccount = refreshAccountSnapshot();
+        risk.requireBuyAllowed();
+        requireKnownBrokerOrders();
         Set<String> occupied = new HashSet<>();
         for (var holding : holdings()) {
             if (holding.getSymbol().equals(candidate.symbol()))
                 throw new IllegalStateException("이미 보유한 종목입니다.");
-            if (holding.isManagedByAutoTrade()) occupied.add(holding.getSymbol());
+            if (fullAccountPolicy() || holding.isManagedByAutoTrade())
+                occupied.add(holding.getSymbol());
         }
         for (var order : proposalRepository.findByStatusIn(OPEN_STATUSES)) {
-            if (order.getStatus() == KiwoomUsTradeProposal.Status.UNKNOWN)
+            if (isUnresolvedSubmission(order))
                 throw new IllegalStateException("확인되지 않은 주문이 있어 신규 매수를 차단합니다.");
             if (order.getAction() == KiwoomUsTradeProposal.Action.BUY)
                 occupied.add(order.getSymbol());
@@ -881,7 +956,9 @@ public class KiwoomUsAutoTradeService {
                                 : "")
                         + "; 자금원="
                         + KiwoomUsTradeService.USD_CASH_SOURCE);
+        proposal.submitting();
         proposal = proposalRepository.save(proposal);
+        proposalRepository.flush();
         try {
             JsonNode response =
                     trade.placeOrder(
@@ -920,7 +997,7 @@ public class KiwoomUsAutoTradeService {
                             + ")");
             return proposal;
         } catch (RuntimeException error) {
-            if (proposal.getStatus() == KiwoomUsTradeProposal.Status.PROPOSED) {
+            if (proposal.getStatus() == KiwoomUsTradeProposal.Status.SUBMITTING) {
                 if (KiwoomUsTradeService.isUsdOnlyFundingBlocked(error)) {
                     proposal.failed(safe(error));
                     proposalRepository.save(proposal);
@@ -937,24 +1014,315 @@ public class KiwoomUsAutoTradeService {
         }
     }
 
+    /**
+     * Approved research rules share the existing broker/ledger/risk boundaries, not legacy signals.
+     */
+    private synchronized DecisionResult decideResearch(
+            KiwoomUsStrategyRun run, boolean allowOrder) {
+        if (!researchDeployment.enabled())
+            return finishRun(
+                    run,
+                    "RESEARCH_DISABLED",
+                    "연구 전략 실계좌 연결이 비활성입니다. 기존 전략으로 대체 실행하지 않습니다.",
+                    0,
+                    null);
+        if (!KiwoomUsMarketHours.isRegularSession())
+            return finishRun(run, "RESEARCH_WAIT", "연구 전략은 정규장에만 실행합니다.", 0, null);
+        var context = researchDeployment.executionContext();
+        if (context.signalDate() == null
+                || !context.signalDate()
+                        .equals(KiwoomUsMarketHours.previousTradingDay(KiwoomUsMarketHours.today()))
+                || context.marketGeneratedAt() == null
+                || context.marketGeneratedAt().isAfter(Instant.now().plusSeconds(60))
+                || context.marketGeneratedAt().isBefore(Instant.now().minus(Duration.ofDays(4))))
+            throw new IllegalStateException("직전 완료 거래일의 검증된 연구 자료가 필요합니다.");
+        reconcileOrders();
+        AccountSnapshot account = refreshAccountSnapshot();
+        risk.requireBuyAllowed();
+        requireKnownBrokerOrders();
+        if (!proposalRepository.findByStatusIn(OPEN_STATUSES).isEmpty())
+            throw new IllegalStateException("이전 주문 대사가 끝난 뒤 연구 전략을 실행합니다.");
+        var riskState = risk.status();
+        if (riskState == null
+                || !riskState.enabled()
+                || riskState.triggered()
+                || !riskState.capitalFlowConfirmed())
+            throw new IllegalStateException("전체 보유 관리와 10% 손실 차단 정책 확인이 필요합니다.");
+        if (!account.cash().usdOnlyBuyAllowed())
+            throw new IllegalStateException(account.cash().blockReason());
+        var settings = settingsService.current();
+        if (state.checkDailyLoss(
+                account.totalAssetUsd().doubleValue(), settings.getDailyLossLimitPercent()))
+            throw new IllegalStateException("일일 손실 한도 도달");
+        Map<String, ResearchExecutionPlanner.Position> positions = new LinkedHashMap<>();
+        Map<String, String> exchanges = new LinkedHashMap<>();
+        for (String symbol : ResearchStrategyEngine.SYMBOLS)
+            exchanges.put(symbol, ResearchExecutionPlanner.exchange(symbol));
+        for (var holding : holdings()) {
+            if (holding.getSyncedAt() == null
+                    || holding.getSyncedAt().isBefore(LocalDateTime.now().minusSeconds(90)))
+                throw new IllegalStateException("최신 전체 보유 수량 확인이 필요합니다.");
+            if (positions.put(
+                            holding.getSymbol(),
+                            new ResearchExecutionPlanner.Position(
+                                    holding.getExchange(),
+                                    holding.getQuantity(),
+                                    holding.getSellableQuantity()))
+                    != null) throw new IllegalStateException("같은 종목의 복수 거래소 보유는 확인 후 처리합니다.");
+            exchanges.put(holding.getSymbol(), holding.getExchange());
+        }
+        Map<String, ResearchExecutionPlanner.Quote> quotes = new LinkedHashMap<>();
+        for (var item : exchanges.entrySet()) {
+            OrderBookQuote quote =
+                    trade.getOrderBook(item.getValue(), item.getKey()).block(API_TIMEOUT);
+            if (quote == null
+                    || !Double.isFinite(quote.spreadPercent())
+                    || quote.spreadPercent() > settings.getMaxSpreadPercent())
+                throw new IllegalStateException("연구 전략의 최신 호가/스프레드 확인 필요: " + item.getKey());
+            quotes.put(item.getKey(), new ResearchExecutionPlanner.Quote(quote.bid(), quote.ask()));
+        }
+        var plan =
+                ResearchExecutionPlanner.plan(
+                        context,
+                        account.totalAssetUsd(),
+                        riskState.peakEquityUsd(),
+                        account.cash().availableUsd(),
+                        positions,
+                        quotes);
+        run.setCandidateSummary(
+                context.candidateId() + "@" + context.version() + ":" + plan.mode());
+        if (!allowOrder)
+            return finishRun(
+                    run,
+                    "PREVIEW",
+                    "승인 연구 전략 주문 계획만 확인했습니다. 실행 기록과 계좌는 변경하지 않습니다.",
+                    plan.orders().size(),
+                    null);
+        if (!state.isAutoTrading())
+            return finishRun(
+                    run, "PAUSED", "승인 전략이 있으나 자동매매가 꺼져 있습니다.", plan.orders().size(), null);
+        if (!researchDeployment.claim(
+                context.deploymentId(),
+                context.signalDate(),
+                context.marketHash(),
+                plan.nextStateJson()))
+            return finishRun(run, "ALREADY_PROCESSED", "이미 처리했거나 승인 상태가 바뀐 연구 실행입니다.", 0, null);
+        Long lastProposal = null;
+        try {
+            for (var order : plan.orders()) {
+                validateDecisionReady();
+                if (!state.isAutoTrading() || !KiwoomUsMarketHours.isRegularSession())
+                    throw new IllegalStateException("연구 주문 준비 중 자동매매 또는 정규장이 종료됐습니다.");
+                risk.requireBuyAllowed();
+                syncHoldings();
+                int expected =
+                        positions.containsKey(order.symbol())
+                                ? positions.get(order.symbol()).quantity()
+                                : 0;
+                var current =
+                        holdings().stream()
+                                .filter(h -> h.getSymbol().equals(order.symbol()))
+                                .findFirst();
+                if (current.map(KiwoomUsAccountHolding::getQuantity).orElse(0) != expected)
+                    throw new IllegalStateException("계획 이후 보유 수량이 변경됐습니다: " + order.symbol());
+                if (order.side().equals("SELL")
+                        && (current.isEmpty()
+                                || current.get().getSellableQuantity() < order.quantity()))
+                    throw new IllegalStateException("주문 직전 매도 가능 수량이 부족합니다.");
+                OrderBookQuote fresh =
+                        trade.getOrderBook(order.exchange(), order.symbol()).block(API_TIMEOUT);
+                if (fresh == null
+                        || !Double.isFinite(fresh.spreadPercent())
+                        || fresh.spreadPercent() > settings.getMaxSpreadPercent())
+                    throw new IllegalStateException("주문 직전 호가 확인 실패");
+                BigDecimal price = order.side().equals("BUY") ? fresh.ask() : fresh.bid();
+                if (price == null
+                        || price.signum() <= 0
+                        || price.subtract(order.price())
+                                        .abs()
+                                        .divide(order.price(), 8, RoundingMode.HALF_UP)
+                                        .doubleValue()
+                                > .005)
+                    throw new IllegalStateException("연구 계획 이후 호가가 0.5% 이상 변했습니다.");
+                // Buy limit remains the reviewed ask; a quote rise never grows the original cash
+                // budget.
+                if (order.side().equals("BUY")) {
+                    UsdCash cash = refreshUsdCash();
+                    BigDecimal available =
+                            cash.availableUsd()
+                                    .subtract(openBuyReserveUsd())
+                                    .max(BigDecimal.ZERO)
+                                    .multiply(new BigDecimal("0.99"));
+                    BigDecimal cost =
+                            order.price()
+                                    .multiply(BigDecimal.valueOf(order.quantity()))
+                                    .multiply(new BigDecimal("1.00125"));
+                    if (!cash.usdOnlyBuyAllowed() || cost.compareTo(available) > 0)
+                        throw new IllegalStateException("주문 직전 USD 주문 가능 현금이 부족하거나 원화주문이 활성화됐습니다.");
+                    price = order.price();
+                }
+                lastProposal = submitResearchOrder(order, price, context).getId();
+            }
+            researchDeployment.finish(
+                    context.deploymentId(),
+                    context.signalDate(),
+                    "COMPLETED",
+                    "주문 " + plan.orders().size() + "건 접수; 체결은 기존 대사에서 별도 확인");
+            return finishRun(
+                    run,
+                    plan.orders().isEmpty() ? "RESEARCH_HOLD" : "ORDERED",
+                    "승인 연구 전략 실행을 기록했습니다. 접수는 체결을 의미하지 않습니다.",
+                    plan.orders().size(),
+                    lastProposal);
+        } catch (RuntimeException error) {
+            state.emergencyStop("연구 전략 실행 중단: " + safe(error));
+            try {
+                researchDeployment.finish(
+                        context.deploymentId(), context.signalDate(), "FAILED", safe(error));
+            } catch (RuntimeException ignored) {
+                log("ERROR", lastProposal, "연구 실행 결과 저장 실패: 수동 대사 필요");
+            }
+            throw error;
+        }
+    }
+
+    private KiwoomUsTradeProposal submitResearchOrder(
+            ResearchExecutionPlanner.Order order,
+            BigDecimal price,
+            UsResearchDeploymentGateway.ExecutionContext context) {
+        KiwoomUsTradeProposal proposal = new KiwoomUsTradeProposal();
+        proposal.setAction(KiwoomUsTradeProposal.Action.valueOf(order.side()));
+        proposal.setExchange(order.exchange());
+        proposal.setSymbol(order.symbol());
+        proposal.setStockName(order.symbol());
+        proposal.setQuantity(order.quantity());
+        proposal.setLimitPrice(price);
+        proposal.setReason(
+                "[RESEARCH] "
+                        + context.candidateId()
+                        + " version="
+                        + context.version()
+                        + " signal="
+                        + context.signalDate());
+        proposal.submitting();
+        proposal = proposalRepository.saveAndFlush(proposal);
+        try {
+            JsonNode response =
+                    trade.placeOrder(
+                                    new KiwoomUsTradeService.Order(
+                                            order.side(),
+                                            order.exchange(),
+                                            order.symbol(),
+                                            order.quantity(),
+                                            price,
+                                            false))
+                            .block(API_TIMEOUT);
+            String number = text(response, "ord_no", "order_no");
+            if (number.isBlank()) throw new IllegalStateException("연구 주문 접수번호 확인 실패");
+            proposal.ordered(number, response.toString());
+            proposalRepository.saveAndFlush(proposal);
+            log(
+                    "RESEARCH_ORDER",
+                    proposal.getId(),
+                    order.side()
+                            + " "
+                            + order.symbol()
+                            + " "
+                            + order.quantity()
+                            + "주; "
+                            + context.candidateId());
+            return proposal;
+        } catch (RuntimeException error) {
+            if (KiwoomUsTradeService.isDefinitiveOrderFailure(error)
+                    || KiwoomUsTradeService.isUsdOnlyFundingBlocked(error)) {
+                proposal.failed(safe(error));
+                proposalRepository.saveAndFlush(proposal);
+            } else markAmbiguousOrder(proposal, error, "연구 " + order.side());
+            throw error;
+        }
+    }
+
+    private boolean fullAccountPolicy() {
+        return risk.status() != null && risk.status().enabled();
+    }
+
+    public com.hyunchang.webapp.dto.KiwoomUsRiskResponse riskStatus() {
+        requireResearchAccountScope();
+        return risk.status();
+    }
+
+    public synchronized com.hyunchang.webapp.dto.KiwoomUsRiskResponse activateRisk(
+            boolean holdings, boolean flows) {
+        reconcileOrders();
+        if (unresolvedUnknownOrders() > 0) throw new IllegalStateException("미확인 주문 대사가 필요합니다.");
+        requireNoOpenOrdersForRiskBaseline();
+        var account = captureAccountSnapshot(true);
+        var activated = risk.activate(account.totalAssetUsd(), holdings, flows);
+        state.setAutoTrading(false);
+        log(
+                "ACCOUNT_RISK_ACTIVATED",
+                null,
+                "전체 미국 보유 관리 및 고점 대비 10% 위험정책 활성화. 신규매수는 별도 시작이 필요합니다.");
+        return activated;
+    }
+
+    public com.hyunchang.webapp.dto.KiwoomUsRiskResponse reviewCapitalFlow(boolean required) {
+        requireResearchAccountScope();
+        return risk.requireFlowReview(required);
+    }
+
+    public synchronized com.hyunchang.webapp.dto.KiwoomUsRiskResponse recordCapitalFlow(
+            String reference, BigDecimal amount, boolean confirmed) {
+        // Review suspends risk observation while the new cash movement is registered.
+        requireNoOpenOrdersForRiskBaseline();
+        var account = captureAccountSnapshot(true);
+        return risk.recordFlow(reference, amount, confirmed, account.totalAssetUsd());
+    }
+
     private synchronized void evaluateExits() {
+        if (fullAccountPolicy() && risk.status().triggered()) {
+            liquidateAccount();
+            return;
+        }
+        // A research deployment owns normal exits for every existing holding. Never fall back
+        // to unrelated legacy profit/holding-period exits when it is paused or revoked.
+        if (researchManaged()) {
+            lastExitMonitorAt = LocalDateTime.now();
+            lastExitMonitorError = "";
+            return;
+        }
+        if (fullAccountPolicy()) {
+            if (proposalRepository.findByStatusIn(OPEN_STATUSES).stream()
+                    .anyMatch(this::isUnresolvedSubmission)) return;
+            requireKnownBrokerOrders();
+        }
         KiwoomUsStrategySettings settings = settingsService.current();
         for (KiwoomUsAccountHolding holding : holdings()) {
-            if (!holding.isManagedByAutoTrade() || holding.getManagedQuantity() <= 0) continue;
+            if (!fullAccountPolicy()
+                    && (!holding.isManagedByAutoTrade() || holding.getManagedQuantity() <= 0))
+                continue;
             if (holding.getSyncedAt() == null
                     || holding.getSyncedAt().isBefore(LocalDateTime.now().minusSeconds(90)))
                 continue;
-            if (holding.getTrendExitPlan() != null) {
+            boolean wholeAccount = fullAccountPolicy();
+            boolean mixedHolding =
+                    wholeAccount && holding.getManagedQuantity() < holding.getQuantity();
+            // A strategy lot's entry cost/ATR plan cannot price an entire mixed account position.
+            // Whole-account policy manages that position using the broker's total-position P&L.
+            if (holding.getTrendExitPlan() != null && !mixedHolding) {
                 evaluateTrendExit(holding);
                 continue;
             }
             double stopPercent =
-                    holding.getPlannedStopLossPercent() == null
+                    mixedHolding || holding.getPlannedStopLossPercent() == null
                             ? settings.getStopLossPercent()
                             : Math.min(
                                     settings.getStopLossPercent(),
                                     holding.getPlannedStopLossPercent());
-            double pnl = holding.managedProfitLossPercent();
+            double pnl =
+                    wholeAccount
+                            ? holding.getProfitLossPercent()
+                            : holding.managedProfitLossPercent();
             if (!Double.isFinite(pnl)) {
                 log(
                         "DATA_MISSING",
@@ -974,7 +1342,10 @@ public class KiwoomUsAutoTradeService {
             if (holding.getSellableQuantity() <= 0) continue;
             String reason = null;
             boolean market = false;
-            int quantity = Math.min(holding.getSellableQuantity(), holding.getManagedQuantity());
+            int quantity =
+                    fullAccountPolicy()
+                            ? holding.getSellableQuantity()
+                            : Math.min(holding.getSellableQuantity(), holding.getManagedQuantity());
             if (pnl <= -stopPercent) {
                 reason = "손절 " + format(pnl) + "%";
                 market = true;
@@ -983,7 +1354,13 @@ public class KiwoomUsAutoTradeService {
             } else if (pnl >= settings.getTakeProfitPercent()
                     && !holding.isFirstTakeProfitCompleted()) {
                 reason = "1차 익절 " + format(pnl) + "%";
-                quantity = Math.min(quantity, holding.remainingFirstTakeProfitQuantity());
+                quantity =
+                        Math.min(
+                                quantity,
+                                fullAccountPolicy()
+                                        ? holding.remainingFirstTakeProfitQuantity(
+                                                holding.getQuantity())
+                                        : holding.remainingFirstTakeProfitQuantity());
                 holdingRepository.save(holding);
             } else if (holding.getPositionOpenedAt() != null
                     && holding.getPositionOpenedAt()
@@ -992,7 +1369,11 @@ public class KiwoomUsAutoTradeService {
                 reason = "최대 보유기간 " + settings.getMaxHoldingDays() + "일 도달";
                 market = true;
             }
-            if (reason != null && quantity > 0) submitSell(holding, quantity, market, reason);
+            if (reason != null && quantity > 0) {
+                if (mixedHolding && holding.getTrendExitPlan() != null)
+                    reason += "; 혼합 보유 전체 계좌 손익 기준(자동매수 ATR 계획 미적용)";
+                submitSell(holding, quantity, market, reason);
+            }
         }
         lastExitMonitorAt = LocalDateTime.now();
         lastExitMonitorError = "";
@@ -1028,7 +1409,10 @@ public class KiwoomUsAutoTradeService {
                 requestOrderCancellation(openSell.get(), "추세 손절 전환을 위한 기존 지정가 매도 취소");
             return;
         }
-        int quantity = Math.min(holding.getSellableQuantity(), holding.getManagedQuantity());
+        int quantity =
+                fullAccountPolicy()
+                        ? holding.getSellableQuantity()
+                        : Math.min(holding.getSellableQuantity(), holding.getManagedQuantity());
         if (quantity <= 0 || (!stopped && !expired)) return;
         String reason =
                 stopped
@@ -1039,11 +1423,76 @@ public class KiwoomUsAutoTradeService {
         submitSell(holding, quantity, true, reason);
     }
 
+    private void requireNoOpenOrdersForRiskBaseline() {
+        requireResearchAccountScope();
+        requireKnownBrokerOrders();
+        if (!proposalRepository.findByStatusIn(OPEN_STATUSES).isEmpty())
+            throw new IllegalStateException("미체결/미확정 주문이 없는 안정된 계좌에서 위험 기준과 입출금을 확인하세요.");
+    }
+
+    private List<JsonNode> verifiedOpenOrderRows() {
+        JsonNode response = trade.getOpenOrders().block(API_TIMEOUT);
+        if (response == null || !response.path("result_list").isArray())
+            throw new IllegalStateException("미체결 주문 목록 형식을 확인할 수 없습니다.");
+        List<JsonNode> records = new ArrayList<>();
+        for (JsonNode row : response.path("result_list")) {
+            if (!row.isObject() || text(row, "ord_no", "order_no").isBlank())
+                throw new IllegalStateException("미체결 주문 행의 주문번호가 없어 주문을 보류합니다.");
+            records.add(row);
+        }
+        return records;
+    }
+
+    private void requireKnownBrokerOrders() {
+        List<JsonNode> records = verifiedOpenOrderRows();
+        var open = proposalRepository.findByStatusIn(OPEN_STATUSES);
+        for (var row : records) {
+            String number = text(row, "ord_no", "order_no");
+            if (!number.isBlank()
+                    && open.stream().noneMatch(p -> number.equals(p.getBrokerOrderNo())))
+                throw new IllegalStateException("외부 미체결 주문을 먼저 확인/정리하세요. 예약 현금을 추정하여 주문하지 않습니다.");
+        }
+    }
+
+    private void liquidateAccount() {
+        requireResearchAccountScope();
+        state.emergencyStop("전체 계좌 고점 대비 10% 하락: 신규매수 차단 및 전체 청산 감시");
+        var open = proposalRepository.findByStatusIn(OPEN_STATUSES);
+        for (var proposal : open) {
+            if (proposal.getAction() == KiwoomUsTradeProposal.Action.BUY
+                    && !isUnresolvedSubmission(proposal)
+                    && proposal.getStatus() != KiwoomUsTradeProposal.Status.CANCEL_REQUESTED)
+                requestOrderCancellation(proposal, "계좌 위험 한도 발동 매수 취소");
+        }
+        if (open.stream().anyMatch(this::isUnresolvedSubmission)) return;
+        // A broker order outside our ledger cannot safely be attributed or duplicated.
+        List<JsonNode> brokerOpen = verifiedOpenOrderRows();
+        for (var row : brokerOpen) {
+            String orderNo = text(row, "ord_no", "order_no");
+            if (!orderNo.isBlank()
+                    && open.stream().noneMatch(p -> orderNo.equals(p.getBrokerOrderNo()))) {
+                log("RISK_REVIEW", null, "외부 미체결 주문 확인 필요: 자동 청산을 보류합니다.");
+                return;
+            }
+        }
+        for (var holding : holdings()) {
+            if (holding.getSyncedAt() == null
+                    || holding.getSyncedAt().isBefore(LocalDateTime.now().minusSeconds(90)))
+                continue;
+            if (findOpenSell(holding.getSymbol()).isPresent() || holding.getSellableQuantity() <= 0)
+                continue;
+            submitSell(holding, holding.getSellableQuantity(), false, "전체 계좌 10% 위험 한도 청산");
+        }
+        risk.liquidationComplete(
+                holdings().isEmpty() && proposalRepository.findByStatusIn(OPEN_STATUSES).isEmpty());
+    }
+
     private void submitSell(
             KiwoomUsAccountHolding holding, int quantity, boolean market, String reason) {
-        boolean effectiveMarket = market && KiwoomUsMarketHours.isRegularSession();
+        boolean effectiveMarket =
+                market && KiwoomUsMarketHours.isRegularSession() && !fullAccountPolicy();
         BigDecimal orderPrice = effectiveMarket ? null : holding.getCurrentPrice();
-        if (!KiwoomUsMarketHours.isRegularSession()) {
+        if (!KiwoomUsMarketHours.isRegularSession() || (fullAccountPolicy() && !effectiveMarket)) {
             try {
                 OrderBookQuote quote =
                         trade.getOrderBook(holding.getExchange(), holding.getSymbol())
@@ -1072,7 +1521,9 @@ public class KiwoomUsAutoTradeService {
         proposal.setQuantity(quantity);
         proposal.setLimitPrice(orderPrice);
         proposal.setReason(reason);
+        proposal.submitting();
         proposal = proposalRepository.save(proposal);
+        proposalRepository.flush();
         try {
             JsonNode response =
                     trade.placeOrder(
@@ -1112,7 +1563,7 @@ public class KiwoomUsAutoTradeService {
                             + orderNo
                             + ")");
         } catch (RuntimeException error) {
-            if (proposal.getStatus() == KiwoomUsTradeProposal.Status.PROPOSED) {
+            if (proposal.getStatus() == KiwoomUsTradeProposal.Status.SUBMITTING) {
                 if (KiwoomUsTradeService.isDefinitiveOrderFailure(error)) {
                     proposal.failed(safe(error));
                     proposalRepository.save(proposal);
@@ -1136,11 +1587,20 @@ public class KiwoomUsAutoTradeService {
     }
 
     public synchronized void reconcileOrders() {
+        requireResearchAccountScope();
         List<KiwoomUsTradeProposal> open = proposalRepository.findByStatusIn(OPEN_STATUSES);
         if (open.isEmpty()) {
             lastOrderReconciledAt = LocalDateTime.now();
             lastOrderReconcileError = "";
             return;
+        }
+        for (var proposal : open) {
+            if (proposal.getStatus() == KiwoomUsTradeProposal.Status.SUBMITTING
+                    || proposal.getStatus() == KiwoomUsTradeProposal.Status.PROPOSED) {
+                proposal.unknown("프로세스 재시작 또는 중단된 발송: 증권사 접수 여부 확인 필요");
+                proposalRepository.saveAndFlush(proposal);
+                state.emergencyStop("중단된 주문 발송이 있어 대사 전 신규 매수를 차단합니다.");
+            }
         }
         JsonNode fills = trade.getTodayFills().block(API_TIMEOUT);
         JsonNode unfilled = trade.getOpenOrders().block(API_TIMEOUT);
@@ -1509,6 +1969,7 @@ public class KiwoomUsAutoTradeService {
     }
 
     private synchronized void syncHoldings(JsonNode balance) {
+        requireResearchAccountScope();
         List<Holding> brokerHoldings = trade.holdings(balance);
         Set<String> present = new HashSet<>();
         for (Holding source : brokerHoldings) {

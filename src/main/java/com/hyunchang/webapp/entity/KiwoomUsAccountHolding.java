@@ -240,8 +240,12 @@ public class KiwoomUsAccountHolding {
     }
 
     public int remainingFirstTakeProfitQuantity() {
+        return remainingFirstTakeProfitQuantity(managedQuantity);
+    }
+
+    public int remainingFirstTakeProfitQuantity(int eligibleQuantity) {
         if (firstTakeProfitTargetQuantity == 0)
-            firstTakeProfitTargetQuantity = Math.max(1, managedQuantity / 2);
+            firstTakeProfitTargetQuantity = Math.max(1, eligibleQuantity / 2);
         return Math.max(0, firstTakeProfitTargetQuantity - firstTakeProfitFilledQuantity);
     }
 

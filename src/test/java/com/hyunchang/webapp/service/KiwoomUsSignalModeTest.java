@@ -50,7 +50,8 @@ class KiwoomUsSignalModeTest {
                         proposals,
                         mock(KiwoomUsStrategyRunRepository.class),
                         mock(KiwoomUsAuditService.class),
-                        mock(KiwoomUsEventService.class));
+                        mock(KiwoomUsEventService.class),
+                        mock(KiwoomUsAccountRiskService.class));
     }
 
     private KiwoomUsAutoTradeService.CandidateScreeningResult screen() {

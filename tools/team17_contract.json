@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "dataset_kinds": ["synthetic", "real_point_in_time"],
+  "top_required": ["schema_version", "dataset_kind", "initialization", "settings", "initial_risk_equity_usd", "frames"],
+  "frame_required": ["id", "at", "actions", "observed_at", "account", "rankings", "quotes", "fundamentals", "universe", "completed_bars", "broker"],
+  "settings_required": ["maxOrderPercent", "maxPositions", "dailyMaxBuys", "minChangePercent", "maxChangePercent", "minVolumeRatio", "fundamentalFilterEnabled", "maxForwardPe", "minRoePercent", "maxSpreadPercent", "stopLossPercent", "takeProfitPercent", "takeProfitPercent2", "maxHoldingDays", "symbolCooldownDays", "dailyLossLimitPercent", "signalMode", "minRelativeStrengthPercent", "riskPerTradePercent", "atrStopMultiplier", "maxEntryExtensionAtr", "trailingStopAtrMultiplier", "trailingActivationR", "maxHoldingTradingDays"],
+  "ranking_required": ["rank", "exchange", "symbol", "name", "currentPrice", "changePercent", "accumulatedVolume", "previousVolume", "tradedValue"],
+  "broker_required": ["open_orders", "fills", "history", "orderability", "write_responses"],
+  "fundamental_statuses": ["CACHE_FRESH", "YAHOO_REFRESHED", "CACHE_STALE_FALLBACK", "FIELDS_MISSING", "REQUEST_FAILED", "CACHE_EXPIRED", "DATA_UNAVAILABLE"],
+  "metadata_required": ["sources", "expected_frame_ids", "gaps", "point_in_time", "initial_state", "corporate_actions", "external_cashflows", "benchmark", "evaluations", "replay_evidence"],
+  "pit_required": ["ranking_pagination_complete", "rank_volume_clock_evidence", "quote_archive_evidence", "fundamental_publication_and_lookup_status", "universe_membership_and_delisting_history", "bar_availability_and_adjustment_basis", "settings_effective_history", "broker_event_sequence_and_cost_model"],
+  "initial_state_required": ["holdings_management_state", "pending_orders", "risk_state", "daily_state", "cooldowns"],
+  "evaluation_required": ["at", "equity_usd", "external_flow_usd", "flow_timing", "fees_usd", "dividend_usd", "decision_ids", "valuation_complete"],
+  "fundamental_missing_rule": "Missing history must never be fabricated as an unavailable lookup to bypass the actual service filter.",
+  "fixed_guards": {"synthetic_proves_performance": false, "structural_validation_enables_performance": false, "declaration_certifies_pit_provenance": false, "credential_fields_allowed": false}
+}
