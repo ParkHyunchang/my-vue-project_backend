@@ -1,6 +1,8 @@
 package com.hyunchang.webapp.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.hyunchang.webapp.config.KiwoomProperties;
 import com.hyunchang.webapp.service.kiwoom.KiwoomAutoTradeState;
 import com.hyunchang.webapp.util.KiwoomApiRateLimiter;
@@ -9,11 +11,13 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.OptionalLong;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -41,6 +45,126 @@ public class KiwoomTradeService {
         this.authService = authService;
         this.state = state;
         this.webClient = webClientBuilder.build();
+    }
+
+    /** Read-only display transport: never updates automatic-trading state or persistence. */
+    public Mono<JsonNode> getDepositForDisplay() {
+        return displayPage(
+                "kt00001", Map.of("qry_tp", "3"), "", "", null, new HashSet<>(), 0, true);
+    }
+
+    public Mono<JsonNode> getBalanceForDisplay() {
+        return Mono.defer(
+                () ->
+                        displayPage(
+                                "kt00018",
+                                Map.of("qry_tp", "2", "dmst_stex_tp", "KRX"),
+                                "",
+                                "",
+                                null,
+                                new HashSet<>(),
+                                0,
+                                true));
+    }
+
+    private Mono<JsonNode> displayPage(
+            String apiId,
+            Map<String, String> body,
+            String continuation,
+            String nextKey,
+            ObjectNode collected,
+            Set<String> seenKeys,
+            int page,
+            boolean retryToken) {
+        return authService
+                .getAccessToken()
+                .flatMap(
+                        token ->
+                                requestDelay()
+                                        .then(
+                                                webClient
+                                                        .post()
+                                                        .uri(
+                                                                properties.getRestBaseUrl()
+                                                                        + "/api/dostk/acnt")
+                                                        .contentType(MediaType.APPLICATION_JSON)
+                                                        .header("authorization", "Bearer " + token)
+                                                        .header("api-id", apiId)
+                                                        .headers(
+                                                                headers -> {
+                                                                    if (!continuation.isBlank())
+                                                                        headers.set(
+                                                                                "cont-yn",
+                                                                                continuation);
+                                                                    if (!nextKey.isBlank())
+                                                                        headers.set(
+                                                                                "next-key",
+                                                                                nextKey);
+                                                                })
+                                                        .bodyValue(body)
+                                                        .retrieve()
+                                                        .toEntity(JsonNode.class))
+                                        .flatMap(
+                                                entity -> {
+                                                    JsonNode response = entity.getBody();
+                                                    if (response == null
+                                                            || !response.hasNonNull("return_code"))
+                                                        return Mono.error(
+                                                                new IllegalStateException(
+                                                                        "Invalid display response"));
+                                                    if (retryToken && isInvalidToken(response)) {
+                                                        authService.invalidateAccessToken(token);
+                                                        return displayPage(
+                                                                apiId,
+                                                                body,
+                                                                continuation,
+                                                                nextKey,
+                                                                collected,
+                                                                seenKeys,
+                                                                page,
+                                                                false);
+                                                    }
+                                                    if (response.path("return_code").asInt(-1) != 0)
+                                                        return Mono.error(
+                                                                new IllegalStateException(
+                                                                        "Broker display query failed"));
+                                                    if ("kt00001".equals(apiId))
+                                                        return Mono.just(response);
+                                                    JsonNode rows =
+                                                            response.path(
+                                                                    "acnt_evlt_remn_indv_tot");
+                                                    if (!rows.isArray()
+                                                            || !(response instanceof ObjectNode))
+                                                        return Mono.error(
+                                                                new IllegalStateException(
+                                                                        "Incomplete display holdings"));
+                                                    ObjectNode result =
+                                                            collected == null
+                                                                    ? ((ObjectNode) response)
+                                                                            .deepCopy()
+                                                                    : collected;
+                                                    if (collected != null)
+                                                        result.withArray("acnt_evlt_remn_indv_tot")
+                                                                .addAll((ArrayNode) rows);
+                                                    if (!"Y"
+                                                            .equalsIgnoreCase(
+                                                                    entity.getHeaders()
+                                                                            .getFirst("cont-yn")))
+                                                        return Mono.just(result);
+                                                    String key =
+                                                            entity.getHeaders()
+                                                                    .getFirst("next-key");
+                                                    if (key == null
+                                                            || key.isBlank()
+                                                            || !seenKeys.add(key)
+                                                            || page >= 19)
+                                                        return Mono.error(
+                                                                new IllegalStateException(
+                                                                        "Incomplete display pagination"));
+                                                    return displayPage(
+                                                            apiId, body, "Y", key, result, seenKeys,
+                                                            page + 1, true);
+                                                }));
     }
 
     /** 예수금 상세(kt00001)를 조회합니다. 계좌는 App Key 발급 시 연동된 계좌가 사용됩니다. */

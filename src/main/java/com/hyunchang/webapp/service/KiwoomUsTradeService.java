@@ -55,6 +55,27 @@ public class KiwoomUsTradeService {
         this.webClient = builder.build();
     }
 
+    /** Display-only reads deliberately bypass automatic-trading health counters and persistence. */
+    public Mono<JsonNode> getDepositForDisplay() {
+        return requestOnce("ust21160", "/api/us/acnt", Map.of(), true);
+    }
+
+    public Mono<JsonNode> getBalanceForDisplay() {
+        // Preserve fractional quantities and provider exchange labels; no trading parser/lookup.
+        return Mono.defer(
+                () ->
+                        readPages(
+                                "ust21070",
+                                "/api/us/acnt",
+                                Map.of("stex_tp", "", "stk_cd", ""),
+                                "",
+                                "",
+                                null,
+                                new HashSet<>(),
+                                0,
+                                0));
+    }
+
     public Mono<JsonNode> getDepositDetail() {
         return read("ust21160", "/api/us/acnt", Map.of());
     }
