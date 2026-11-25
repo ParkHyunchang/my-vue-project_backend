@@ -11,4 +11,12 @@ public interface AccountHoldingRepository extends JpaRepository<AccountHolding, 
     Optional<AccountHolding> findByIdAndAccountId(Long id, Long accountId);
 
     boolean existsByAccountIdAndMarketAndSymbol(Long accountId, String market, String symbol);
+
+    long countByAccountUserUserId(String userId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query(
+            "delete from AccountHolding h where h.account.id in (select a.id from PortfolioAccount a where a.user.userId = :userId)")
+    int deleteManualByUserId(
+            @org.springframework.data.repository.query.Param("userId") String userId);
 }

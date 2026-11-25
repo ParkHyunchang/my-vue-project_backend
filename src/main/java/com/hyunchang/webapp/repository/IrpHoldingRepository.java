@@ -12,4 +12,12 @@ public interface IrpHoldingRepository extends JpaRepository<IrpHolding, Long> {
     List<IrpHolding> findByUserUserIdOrderByIdAsc(String userId);
 
     Optional<IrpHolding> findByIdAndUserUserId(Long id, String userId);
+
+    long countByUserUserId(String userId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query(
+            "delete from IrpHolding h where h.user.id in (select u.id from User u where u.userId = :userId)")
+    int deleteManualByUserId(
+            @org.springframework.data.repository.query.Param("userId") String userId);
 }

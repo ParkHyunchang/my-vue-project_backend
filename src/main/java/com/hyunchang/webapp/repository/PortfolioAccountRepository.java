@@ -9,4 +9,12 @@ public interface PortfolioAccountRepository extends JpaRepository<PortfolioAccou
     List<PortfolioAccount> findByUserUserIdOrderByIdAsc(String userId);
 
     Optional<PortfolioAccount> findByAccountKeyAndUserUserId(String key, String userId);
+
+    long countByUserUserId(String userId);
+
+    @org.springframework.data.jpa.repository.Modifying
+    @org.springframework.data.jpa.repository.Query(
+            "delete from PortfolioAccount h where h.user.id in (select u.id from User u where u.userId = :userId)")
+    int deleteManualByUserId(
+            @org.springframework.data.repository.query.Param("userId") String userId);
 }
